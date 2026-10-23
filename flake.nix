@@ -55,6 +55,17 @@
             makeWrapperArgs+=("''${qtWrapperArgs[@]}")
           '';
 
+          # AppGlider writes its own ~/.local/share/applications entry using
+          # sys.executable, which here is the bare store Python without the
+          # Qt/PySide6 wrapper environment, so the menu entry cannot start.
+          # Point it at the wrapped `appglider` on PATH instead (this also
+          # survives rebuilds, unlike a store path).
+          postPatch = ''
+            substituteInPlace src/appglider/app.py \
+              --replace-fail 'return [sys.executable, "-O", "-m", "appglider"]' \
+                             'return ["appglider"]'
+          '';
+
           postInstall = ''
             install -Dm644 packaging/appglider.desktop \
               $out/share/applications/appglider.desktop
