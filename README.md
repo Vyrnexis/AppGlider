@@ -52,6 +52,11 @@ newer (technically, glibc 2.35 or newer). That covers current Ubuntu, Linux Mint
 Debian 12 and Arch. It includes everything else it needs. If it will not start and the
 message mentions FUSE, add `--appimage-extract-and-run` after the file name.
 
+**Nix:** the repository has a flake (community-contributed, not tested on aarch64-linux).
+Run `nix run github:Vyrnexis/AppGlider`, or add `packages.default` or `overlays.default`
+to your configuration. AppGlider installs and launches ordinary AppImages, so on NixOS
+also enable `programs.appimage.enable = true;` with `binfmt = true;`.
+
 ## First steps
 
 AppGlider starts empty. Add apps in either of two ways:

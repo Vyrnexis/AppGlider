@@ -97,7 +97,7 @@
       apps = forAllSystems (pkgs: {
         default = {
           type = "app";
-          program = "${self.packages.${pkgs.system}.default}/bin/appglider";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/appglider";
         };
       });
 
@@ -123,6 +123,6 @@
         };
       });
 
-      formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
+      formatter = forAllSystems (pkgs: pkgs.nixfmt);
     };
 }
