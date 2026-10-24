@@ -385,6 +385,52 @@ class LibraryTests(unittest.TestCase):
         stack.enter_context(patch.object(self.window, "isActiveWindow", return_value=False))
         return stack.enter_context(patch.object(self.window.tray, "showMessage"))
 
+    def test_held_update_is_hidden_until_released(self) -> None:
+        window = self.window
+        shown = self.notifier()
+        self.settings.setValue("notifications/updates", True)
+        self.waiting_update()
+        card = window.cards[APP.id]
+        self.assertEqual(window.tabs.tabText(2), "Updates (1)")
+        card.hold_action.trigger()
+        self.assertEqual(window.tabs.tabText(2), "Updates (0)")
+        self.assertFalse(window.tray_has_updates)
+        self.assertEqual(window.tray.icon().cacheKey(), window.tray_icons[0].cacheKey())
+        card = window.cards[APP.id]
+        self.assertTrue(card.update_button.isHidden())
+        self.assertTrue(window.update_all_button.isHidden())
+        self.assertEqual(card.installed_version.caption.text(), "Held")
+        self.assertEqual(card.checked.text(), "Held · v1.1.0 available")
+        self.assertEqual(card.hold_action.text(), "Release hold")
+        with patch("appglider.window.discover_releases") as discover:
+            window.update_all()
+            self.assertIsNone(window.task)
+            window.notify_updates()
+            shown.assert_not_called()
+            card.hold_action.trigger()
+            discover.assert_not_called()
+        card = window.cards[APP.id]
+        self.assertEqual(window.tabs.tabText(2), "Updates (1)")
+        self.assertFalse(card.update_button.isHidden())
+        self.assertEqual(card.update_button.text(), "Update")
+        self.assertEqual(card.hold_action.text(), "Hold at current version")
+
+    def test_hold_is_disabled_while_busy_and_details_show_it(self) -> None:
+        self.waiting_update()
+        card = self.window.cards[APP.id]
+        installed = self.window.installed[APP.id]
+        card.set_state(installed, self.window.releases[APP.id], True)
+        self.assertFalse(card.hold_action.isEnabled())
+        app = replace(APP, hold_updates=True)
+        release = self.window.releases[APP.id]
+        dialog = DetailsDialog(app, self.window, installed, release)
+        self.addCleanup(dialog.deleteLater)
+        self.assertTrue(dialog.hold_label.isVisibleTo(dialog))
+        self.assertEqual(dialog.hold_label.text(), "Held at v1.0.0 · v1.1.0 available")
+        plain = DetailsDialog(APP, self.window, installed, release)
+        self.addCleanup(plain.deleteLater)
+        self.assertFalse(plain.hold_label.isVisibleTo(plain))
+
     def test_update_notifications_are_opt_in_and_sent_once_per_new_version(self) -> None:
         window = self.window
         shown = self.notifier()

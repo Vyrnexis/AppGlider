@@ -77,6 +77,42 @@ class LibraryTests(unittest.TestCase):
         with patch("appglider.releases.request", return_value=io.BytesIO(data)):
             return self.library.install(APP, release, Event(), ignore_progress)
 
+    def test_update_hold_round_trip_is_lazy_and_cleared_on_uninstall(self) -> None:
+        path = self.library.data_dir / "update-holds.json"
+        self.library.set_update_hold(APP.id, False)
+        self.assertFalse(path.exists())
+        with self.assertRaises(ValueError):
+            self.library.set_update_hold(APP.id, True)  # not installed
+        self.install("1.0.0")
+        self.library.set_update_hold(APP.id, True)
+        self.assertEqual(json.loads(path.read_text()), {APP.id: True})
+        self.assertTrue(self.library.apps[0].hold_updates)
+        self.library.set_update_hold(APP.id, False)
+        self.assertFalse(self.library.apps[0].hold_updates)
+        self.library.set_update_hold(APP.id, True)
+        self.library.remove(APP)
+        self.assertFalse(self.library.apps[0].hold_updates)
+        self.assertEqual(json.loads(path.read_text()), {})
+
+    def test_unmanaged_installs_cannot_be_held(self) -> None:
+        location = self.external / "photocraft.AppImage"
+        location.write_bytes(appimage_bytes())
+        self.library._save({APP.id: Installed(location, None, False)})
+        with self.assertRaisesRegex(ValueError, "installed by AppGlider"):
+            self.library.set_update_hold(APP.id, True)
+        self.library.set_update_hold(APP.id, False)
+
+    def test_corrupt_update_holds_are_preserved_and_block_changes(self) -> None:
+        self.install("1.0.0")
+        path = self.library.data_dir / "update-holds.json"
+        for text in ("{broken", '{"x": 1}'):
+            path.write_text(text)
+            with self.assertRaisesRegex(ValueError, "preserved"):
+                self.library.set_update_hold(APP.id, True)
+            with self.assertRaisesRegex(ValueError, "preserved"):
+                self.library.set_release_preference(APP.id, True)
+            self.assertEqual(path.read_text(), text)
+
     def test_unregistered_appimages_are_not_part_of_the_library(self) -> None:
         external = self.external / f"photocraft-1.2.0-linux-{architecture()}.AppImage"
         external.write_bytes(appimage_bytes())

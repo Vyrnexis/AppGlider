@@ -40,8 +40,13 @@ The numbers always show your whole library, even while you are searching. The se
 matches names, descriptions and repository names.
 
 Each app is a card. Click an app's name to open its details, where you can see its other
-releases. The **⋯** menu on a card has Pin to top, Application preferences, Roll back to
-previous version, Uninstall and the menu-shortcut repair.
+releases. The **⋯** menu on a card has Pin to top, Application preferences, Hold at current
+version, Roll back to previous version, Uninstall and the menu-shortcut repair.
+
+**Holding a version.** **⋯ → Hold at current version** keeps an installed app where it is.
+AppGlider still checks a held app, but it never offers an update, counts it, notifies you or
+includes it in **Update all**; the card says "Held" and shows which version is waiting.
+Choose **Release hold** to update again. The hold is removed when you uninstall the app.
 
 **Sorting and pinning.** The **Sort** box above the cards orders them by name (the default),
 installed apps first, apps with updates first, or the order you added them. **⋯ → Pin to

@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from threading import Event
@@ -202,6 +203,7 @@ class AppCard(QFrame):
     install_requested = Signal(str)
     shortcut_requested = Signal(str)
     rollback_requested = Signal(str)
+    hold_requested = Signal(str)
     remove_requested = Signal(str)
     preferences_requested = Signal(str)
     pin_requested = Signal(str)
@@ -272,6 +274,8 @@ class AppCard(QFrame):
         self.pin_action.triggered.connect(lambda: self.pin_requested.emit(app.id))
         self.preferences_action = menu.addAction("Application preferences…")
         self.preferences_action.triggered.connect(lambda: self.preferences_requested.emit(app.id))
+        self.hold_action = menu.addAction("Hold at current version")
+        self.hold_action.triggered.connect(lambda: self.hold_requested.emit(app.id))
         menu.addSeparator()
         self.shortcut_action = menu.addAction("Create/repair menu shortcut")
         self.shortcut_action.triggered.connect(lambda: self.shortcut_requested.emit(app.id))
@@ -344,9 +348,21 @@ class AppCard(QFrame):
         action_row = self.installed_row if installed else self.available_row
         if action_row.indexOf(self.action_button) < 0:
             action_row.addWidget(self.action_button)
-        newer = bool(installed and release and release.newer_than(installed.version))
+        held = bool(installed and self.app.hold_updates)
+        newer_release = bool(installed and release and release.newer_than(installed.version))
+        newer = newer_release and not held
         choice = info.choice(self.app.include_prereleases) if info else None
-        self.build_required = bool(choice and choice.build_required)
+        self.build_required = bool(choice and choice.build_required) and not held
+        pending = ""
+        if held and installed:
+            if newer_release and release:
+                pending = release.version
+            elif (
+                choice
+                and choice.build_required
+                and version_key(choice.version) > version_key(installed.version)
+            ):
+                pending = choice.version
         self.action_button.setText("Launch" if installed else "Install")
         self.action_button.setAccessibleName(
             f"{'Launch' if installed else 'Install'} {self.app.name}"
@@ -362,6 +378,12 @@ class AppCard(QFrame):
             )
         )
         self.remove_action.setEnabled(bool(not busy and installed and installed.managed))
+        self.hold_action.setText(
+            "Release hold" if self.app.hold_updates else "Hold at current version"
+        )
+        self.hold_action.setEnabled(
+            bool(not busy and (self.app.hold_updates or (installed and installed.managed)))
+        )
         self.shortcut_action.setEnabled(bool(not busy and installed and installed.managed))
         self.update_button.setText("Choose build" if self.build_required else "Update")
         self.update_button.setVisible(bool(installed and self.build_required) or newer)
@@ -411,7 +433,7 @@ class AppCard(QFrame):
                     and latest.version == installed.version
                     and latest.is_latest
                 ),
-                caption="Installed",
+                caption="Held" if held else "Installed",
             )
             self.status.setToolTip(f"Installed with AppGlider\n{installed.path}")
         stamp = datetime.fromtimestamp(info.checked_at).strftime("%d %b, %H:%M") if info else ""
@@ -419,6 +441,8 @@ class AppCard(QFrame):
             checked = "Refreshing releases…"
         elif refresh_error:
             checked = f"Refresh failed · checked {stamp}" if stamp else "Release check failed"
+        elif held and pending:
+            checked = f"Held · v{pending} available"
         elif self.build_required:
             checked = "Choose a build before updating"
         elif waiting:
@@ -531,6 +555,9 @@ class DetailsDialog(QDialog):
                 else "Stable releases only"
             ),
         )
+        self.hold_label = QLabel()
+        self.hold_label.setTextFormat(Qt.TextFormat.PlainText)
+        info.addRow("Updates", self.hold_label)
         self.stable_label = VersionLabel()
         self.preview_label = VersionLabel()
         info.addRow("Stable release", self.stable_label)
@@ -577,6 +604,20 @@ class DetailsDialog(QDialog):
             bool(release and release.is_latest),
         )
         self.available_label.setToolTip(release.name if release else "")
+        held = bool(installed and self.app.hold_updates)
+        self.release_form.setRowVisible(self.hold_label, held)
+        if held and installed:
+            text = f"Held at v{installed.version or 'unknown'}"
+            choice = info.choice(self.app.include_prereleases) if info else None
+            if release and release.newer_than(installed.version):
+                text += f" · v{release.version} available"
+            elif (
+                choice
+                and choice.build_required
+                and version_key(choice.version) > version_key(installed.version)
+            ):
+                text += f" · v{choice.version} available"
+            self.hold_label.setText(text)
         for label, option in (
             (self.stable_label, info.stable if info else None),
             (self.preview_label, info.preview if info else None),
@@ -1261,6 +1302,7 @@ class LauncherWindow(QMainWindow):
         card.remove_requested.connect(self.remove_app)
         card.preferences_requested.connect(lambda app_id: self.open_repositories(app_id=app_id))
         card.pin_requested.connect(self.toggle_pin)
+        card.hold_requested.connect(self.toggle_hold)
         card.build_requested.connect(self.choose_build)
         return card
 
@@ -1292,6 +1334,23 @@ class LauncherWindow(QMainWindow):
             self.pinned.add(app_id)
         self.settings.setValue("library/pinned", json.dumps(sorted(self.pinned)))
         self.refresh()
+
+    def toggle_hold(self, app_id: str) -> None:
+        app = next((app for app in self.apps if app.id == app_id), None)
+        if app is None or self.task is not None:
+            return
+        held = not app.hold_updates
+        try:
+            self.library.set_update_hold(app_id, held)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Cannot change update hold", str(error))
+            return
+        self.scan_installed()
+        self.footer.setText(
+            f"{app.name} is held at its current version."
+            if held
+            else f"{app.name} is no longer held."
+        )
 
     def show_launcher(self) -> None:
         if self.isMinimized():
@@ -1524,11 +1583,13 @@ class LauncherWindow(QMainWindow):
             )
 
     def has_update(self, app_id: str) -> bool:
+        app = next((app for app in self.apps if app.id == app_id), None)
+        if app is not None and app.hold_updates:
+            return False
         installed, release = self.installed.get(app_id), self.releases.get(app_id)
         if installed and release:
             return release.newer_than(installed.version)
         info = self.release_infos.get(app_id)
-        app = next((app for app in self.apps if app.id == app_id), None)
         choice = info.choice(app.include_prereleases) if info and app else None
         return bool(
             installed
@@ -1559,6 +1620,15 @@ class LauncherWindow(QMainWindow):
                     self.release_infos.pop(app_id, None)
                     self.release_errors.pop(app_id, None)
                 for app in apps:
+                    kept = self.cards.get(app.id)
+                    if (
+                        kept is not None
+                        and kept.app != app
+                        and replace(kept.app, hold_updates=app.hold_updates) == app
+                    ):
+                        # Only the hold changed: keep the card and the release it knows.
+                        kept.app = app
+                        continue
                     if app.id not in self.cards or self.cards[app.id].app != app:
                         old = self.cards.pop(app.id, None)
                         if old is not None:

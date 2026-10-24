@@ -21,6 +21,7 @@ class App:
     asset_stem: str = ""
     include_prereleases: bool = False
     build_variant: str = ""
+    hold_updates: bool = False
 
     @property
     def icon(self) -> Path:
@@ -140,34 +141,47 @@ def load_build_preferences(path: Path) -> dict[str, str]:
         raise ValueError(f"Cannot read {path}. The file was preserved: {error}") from error
 
 
-def load_release_preferences(path: Path) -> dict[str, bool]:
+def _load_flags(path: Path, label: str) -> dict[str, bool]:
     if not path.exists():
         return {}
     try:
         if path.stat().st_size > 1024 * 1024:
-            raise ValueError("The release preferences file is too large.")
+            raise ValueError(f"The {label} file is too large.")
         data = json.loads(path.read_text())
         if not isinstance(data, dict) or any(
             not isinstance(key, str) or len(key) > 256 or type(value) is not bool
             for key, value in data.items()
         ):
-            raise ValueError("Invalid release preferences.")
+            raise ValueError(f"Invalid {label}.")
         return data
     except (OSError, ValueError) as error:
         raise ValueError(f"Cannot read {path}. The file was preserved: {error}") from error
 
 
+def load_release_preferences(path: Path) -> dict[str, bool]:
+    return _load_flags(path, "release preferences")
+
+
+def load_update_holds(path: Path) -> dict[str, bool]:
+    return _load_flags(path, "update holds")
+
+
 def load_apps(
-    path: Path, preferences_path: Path | None = None, builds_path: Path | None = None
+    path: Path,
+    preferences_path: Path | None = None,
+    builds_path: Path | None = None,
+    holds_path: Path | None = None,
 ) -> tuple[App, ...]:
     apps = _load_apps(path)
     preferences = load_release_preferences(preferences_path) if preferences_path else {}
     builds = load_build_preferences(builds_path) if builds_path else {}
+    holds = load_update_holds(holds_path) if holds_path else {}
     return tuple(
         replace(
             app,
             include_prereleases=preferences.get(app.id, False),
             build_variant=builds.get(app.id, ""),
+            hold_updates=holds.get(app.id, False),
         )
         for app in apps
     )

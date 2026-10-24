@@ -24,6 +24,7 @@ from appglider.catalog import (
     load_apps,
     load_build_preferences,
     load_release_preferences,
+    load_update_holds,
     valid_build_variant,
 )
 from appglider.catalogfile import CatalogEntry, entry_for
@@ -147,6 +148,7 @@ class Library:
             self.data_dir / "repositories.json",
             self.data_dir / "release-preferences.json",
             self.data_dir / "build-preferences.json",
+            self.data_dir / "update-holds.json",
         )
         stamps = tuple(file_stamp(path) for path in paths)
         if self._catalog is not None and self._catalog[0] == stamps:
@@ -192,6 +194,27 @@ class Library:
                 raise ValueError("This application is not in the catalog.")
             self._save_release_preference(app_id, include)
 
+    def _save_update_hold(self, app_id: str, held: bool) -> None:
+        if type(held) is not bool:
+            raise ValueError("Invalid update hold.")
+        path = self.data_dir / "update-holds.json"
+        holds = load_update_holds(path)
+        if held:
+            holds[app_id] = True
+        else:
+            holds.pop(app_id, None)
+        if holds or path.exists():
+            atomic_json(path, holds)
+
+    def set_update_hold(self, app_id: str, held: bool) -> None:
+        with self._lock():
+            if app_id not in {app.id for app in self.apps}:
+                raise ValueError("This application is not in the catalog.")
+            record = self.records().get(app_id)
+            if held and (record is None or not record.managed):
+                raise ValueError("Only applications installed by AppGlider can be held.")
+            self._save_update_hold(app_id, held)
+
     def icon_path(self, app: App) -> Path:
         path = self.data_dir / "icons" / f"{app.id}.png"
         if not path.parent.is_symlink() and not path.is_symlink():
@@ -226,6 +249,7 @@ class Library:
             self.records()
             self._save_release_preference(app.id, app.include_prereleases)
             self._save_build_variant(app.id, app.build_variant)
+            self._save_update_hold(app.id, app.hold_updates)
             self._save_repositories((*apps, app))
 
     def plan_import(self, entries: Sequence[CatalogEntry]) -> ImportPlan:
@@ -262,6 +286,7 @@ class Library:
                 for app in added:
                     self._save_release_preference(app.id, app.include_prereleases)
                     self._save_build_variant(app.id, app.build_variant)
+                    self._save_update_hold(app.id, app.hold_updates)
                 self._save_repositories((*apps, *added))
             return plan
 
@@ -283,6 +308,8 @@ class Library:
                 self._save_release_preference(app_id, False)
             with contextlib.suppress(OSError):
                 self._save_build_variant(app_id, "")
+            with contextlib.suppress(OSError):
+                self._save_update_hold(app_id, False)
             with contextlib.suppress(OSError):
                 icon = self.data_dir / "icons" / f"{app_id}.png"
                 if not icon.parent.is_symlink():
@@ -756,6 +783,10 @@ class Library:
                 with contextlib.suppress(OSError):
                     path.parent.rmdir()
             self._remove_empty_root(root)
+            try:
+                self._save_update_hold(app.id, False)
+            except (OSError, ValueError) as error:
+                errors.append(str(error))
             shortcut = self.desktop_dir / f"appglider-{app.id}.desktop"
             try:
                 if (

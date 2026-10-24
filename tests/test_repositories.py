@@ -142,6 +142,17 @@ class CatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid"):
             self.library.add_repository(replace(CUSTOM, id="../../escape"))
 
+    def test_removing_or_readding_a_repository_clears_a_stale_update_hold(self):
+        self.library.add_repository(CUSTOM)
+        holds = self.library.data_dir / "update-holds.json"
+        holds.write_text(json.dumps({CUSTOM.id: True}))
+        self.assertTrue(self.library.apps[-1].hold_updates)
+        self.library.remove_repository(CUSTOM.id)
+        self.assertEqual(json.loads(holds.read_text()), {})
+        holds.write_text(json.dumps({CUSTOM.id: True}))
+        self.library.add_repository(CUSTOM)
+        self.assertFalse(self.library.apps[-1].hold_updates)
+
     def test_corrupt_catalog_is_preserved_and_blocks_mutations(self):
         self.library.add_repository(CUSTOM)
         path = self.library.data_dir / "repositories.json"
