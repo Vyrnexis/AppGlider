@@ -51,13 +51,12 @@ from appglider.jobs import TaskResult
 from appglider.library import Installed, Library
 from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
 from appglider.releases import Release
-from appglider.repositories_dialog import RepositoriesPanel
+from appglider.settings_page import SettingsPage
 from appglider.storage import atomic_json
 from appglider.window import (
     ORDER_MIME,
     LauncherWindow,
     OrphansDialog,
-    SettingsDialog,
     appearance_choice,
     check_interval_hours,
     custom_order,
@@ -111,26 +110,16 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(window.empty.isHidden())
         self.assertEqual(window.library_count.text(), "0")
 
-        def close_dialog(observed: list[bool]) -> None:
-            active = self.qt.activeModalWidget()
-            if isinstance(active, SettingsDialog):
-                observed.append(active.repositories.adding)
-                active.reject()
-
-        observed: list[bool] = []
-        QTimer.singleShot(0, lambda: close_dialog(observed))
         window.welcome_add_button.click()
-        self.assertEqual(observed, [True])
+        self.assertIs(window.pages.currentWidget(), window.add_page)
+        self.assertTrue(window.add_page.adding)
 
-        opened: list[bool] = []
-        with patch.object(RepositoriesPanel, "import_catalog", autospec=True) as importer:
-            QTimer.singleShot(50, lambda: close_dialog(opened))
+        with patch.object(SettingsPage, "import_catalog", autospec=True) as importer:
             window.welcome_import_button.click()
         importer.assert_called_once()
-        self.assertEqual(opened, [False])
+        self.assertIs(window.pages.currentWidget(), window.add_page)
 
-        with patch.object(RepositoriesPanel, "import_example_catalog", autospec=True) as example:
-            QTimer.singleShot(50, lambda: close_dialog([]))
+        with patch.object(SettingsPage, "import_example_catalog", autospec=True) as example:
             window.welcome_example_button.click()
         example.assert_called_once()
 
@@ -146,7 +135,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.window.windowTitle(), "AppGlider")
         self.assertFalse(self.window.windowIcon().isNull())
         self.assertFalse(self.window.tray.icon().isNull())
-        self.assertEqual(self.window.findChild(QLabel, "pageTitle").text(), "Library")
+        self.assertEqual(self.window.page_title.text(), "Library")
         image = QImage(str(APP_ICON))
         self.assertTrue(image.hasAlphaChannel())
         self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
@@ -780,18 +769,14 @@ class LibraryTests(unittest.TestCase):
         show.assert_called_once()
 
     def test_notification_setting_defaults_off_and_saves(self) -> None:
-        seen: list[bool] = []
-
-        def choose() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                seen.append(dialog.notify_updates.isChecked())
-                dialog.notify_updates.setChecked(True)
-                dialog.accept()
-
-        QTimer.singleShot(0, choose)
-        self.window.open_settings()
-        self.assertEqual(seen, [False])
+        page = self.window.settings_page
+        self.assertFalse(page.notify_updates.isChecked())
+        self.assertEqual(page.notify_updates.accessibleName(), "Notify me about new updates")
+        page.notify_updates.click()
+        self.assertTrue(self.settings.value("notifications/updates", type=bool))
+        page.notify_updates.click()
+        self.assertFalse(self.settings.value("notifications/updates", type=bool))
+        page.notify_updates.click()
         self.assertTrue(self.settings.value("notifications/updates", type=bool))
         self.assertEqual(notified_versions(self.settings), {})
         for garbage in ("not json", "[]", '{"a": 1}'):
@@ -803,39 +788,19 @@ class LibraryTests(unittest.TestCase):
     def test_update_check_interval_defaults_to_six_hours_and_saves(self) -> None:
         self.assertEqual(self.window.update_timer.interval(), 6 * 3600 * 1000)
         self.assertTrue(self.window.update_timer.isActive())
-        seen: list[tuple[list[str], int]] = []
-
-        def choose(hours: int) -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                seen.append(
-                    (
-                        [
-                            dialog.check_interval.itemText(i)
-                            for i in range(dialog.check_interval.count())
-                        ],
-                        dialog.check_interval.currentData(),
-                    )
-                )
-                dialog.check_interval.setCurrentIndex(dialog.check_interval.findData(hours))
-                dialog.accept()
-
-        QTimer.singleShot(0, lambda: choose(12))
-        self.window.open_settings()
+        combo = self.window.settings_page.check_interval
         self.assertEqual(
-            seen[0],
-            (
-                ["Every hour", "Every 3 hours", "Every 6 hours", "Every 12 hours", "Every 24 hours",
-                 "Only when I choose"],
-                6,
-            ),
+            [combo.itemText(i) for i in range(combo.count())],
+            ["Every hour", "Every 3 hours", "Every 6 hours", "Every 12 hours", "Every 24 hours",
+             "Only when I choose"],
         )  # fmt: skip
+        self.assertEqual(combo.currentData(), 6)
+        combo.setCurrentIndex(combo.findData(12))
         self.assertEqual(self.settings.value("General/check-interval-hours", type=int), 12)
         self.assertEqual(self.window.update_timer.interval(), 12 * 3600 * 1000)
-        QTimer.singleShot(0, lambda: choose(0))
-        self.window.open_settings()
+        combo.setCurrentIndex(combo.findData(0))
+        self.assertEqual(self.settings.value("General/check-interval-hours", type=int), 0)
         self.assertFalse(self.window.update_timer.isActive())
-        self.assertEqual(seen[1][1], 12)
         for stored in ("garbage", "5", "-1"):
             self.settings.setValue("General/check-interval-hours", stored)
             self.window.schedule_update_checks()
@@ -1027,18 +992,11 @@ class LibraryTests(unittest.TestCase):
             window.show_view("missing")
 
     def test_sidebar_status_block_opens_github_settings(self) -> None:
-        observed = []
-
-        def inspect() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                observed.append(dialog.sections.currentItem().text())
-                dialog.reject()
-
         self.assertIn(self.window.status_label.text().split()[0], ("Not", "Automatic", "Checked"))
-        QTimer.singleShot(0, inspect)
         QTest.mouseClick(self.window.status_block, Qt.MouseButton.LeftButton)
-        self.assertEqual(observed, ["GitHub"])
+        self.assertIs(self.window.pages.currentWidget(), self.window.settings_page)
+        self.assertEqual(self.window.settings_page.current_section(), "GitHub")
+        self.assertTrue(self.window.nav_settings.isChecked())
         self.assertEqual(self.window.nav_add.accessibleName(), "Add app")
         self.assertEqual(self.window.check_button.accessibleName(), "Check for updates")
 
@@ -1188,74 +1146,42 @@ class LibraryTests(unittest.TestCase):
             process.poll.assert_not_called()
             warning.assert_not_called()
 
-    def test_settings_save_cancel_and_theme_persistence(self) -> None:
+    def test_settings_apply_immediately_and_persist(self) -> None:
+        page = self.window.settings_page
         folder = str(Path(self.temp.name) / "future-apps")
-
-        def save_settings() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                dialog.theme.setCurrentText("Dark")
-                dialog.folder.setText(folder)
-                dialog.accept()
-
-        QTimer.singleShot(0, save_settings)
-        self.window.open_settings()
+        self.assertTrue(self.window.nav_settings.isEnabled())
+        QTest.mouseClick(self.window.nav_settings, Qt.MouseButton.LeftButton)
+        self.assertIs(self.window.pages.currentWidget(), page)
+        page.theme.buttons[2].click()
         self.assertEqual(self.settings.value("appearance/theme"), "Dark")
-        self.assertEqual(self.settings.value("installation/folder"), folder)
-        self.assertFalse(Path(folder).exists())
         self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#15181e")
+        page.folder.setText(folder)
+        page.folder.editingFinished.emit()
+        self.assertEqual(self.settings.value("installation/folder"), folder)
+        self.assertEqual(self.window.library.apps_dir, Path(folder))
+        self.assertFalse(Path(folder).exists())
         self.settings.sync()
         reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
         self.assertEqual(reopened.value("appearance/theme"), "Dark")
-
-        def cancel_settings() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                dialog.theme.setCurrentText("Light")
-                self.assertEqual(
-                    self.qt.palette().color(QPalette.ColorRole.Window).name(), "#eef0f4"
-                )
-                self.assertEqual(self.settings.value("appearance/theme"), "Dark")
-                dialog.reject()
-
-        QTimer.singleShot(0, cancel_settings)
-        self.window.open_settings()
-        self.assertEqual(self.settings.value("appearance/theme"), "Dark")
-        self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#15181e")
+        self.assertEqual(reopened.value("installation/folder"), folder)
+        page.theme.buttons[1].click()
+        self.assertEqual(self.settings.value("appearance/theme"), "Light")
+        self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#eef0f4")
 
     def test_appearance_choices_switch_and_persist(self) -> None:
         def window_colour() -> str:
             return self.qt.palette().color(QPalette.ColorRole.Window).name()
 
-        def choose(theme: str) -> None:
-            def change() -> None:
-                dialog = self.qt.activeModalWidget()
-                if isinstance(dialog, SettingsDialog):
-                    self.assertEqual(
-                        [dialog.theme.itemText(i) for i in range(dialog.theme.count())],
-                        ["System", "Light", "Dark"],
-                    )
-                    dialog.theme.setCurrentText(theme)
-                    dialog.accept()
-
-            QTimer.singleShot(0, change)
-            self.window.open_settings()
-
         self.settings.remove("appearance/theme")
-
-        def default_choice() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                self.assertEqual(dialog.theme.currentText(), "System")
-                dialog.reject()
-
-        QTimer.singleShot(0, default_choice)
-        self.window.open_settings()
-        for theme, colour in (
-            ("Light", "#eef0f4"),
-            ("Dark", "#15181e"),
-        ):
-            choose(theme)
+        page = SettingsPage(self.window)
+        self.addCleanup(page.deleteLater)
+        self.assertEqual(
+            [button.text() for button in page.theme.buttons], ["System", "Light", "Dark"]
+        )
+        self.assertEqual(page.theme.currentIndex(), 0)
+        self.assertEqual(page.theme.accessibleName(), "Theme")
+        for index, theme, colour in ((2, "Dark", "#15181e"), (1, "Light", "#eef0f4")):
+            self.window.settings_page.theme.buttons[index].click()
             self.assertEqual(self.settings.value("appearance/theme"), theme)
             self.assertEqual(window_colour(), colour)
 
@@ -1278,60 +1204,44 @@ class LibraryTests(unittest.TestCase):
         self.settings.setValue("appearance/accent", "Amber")
         self.assertEqual(appearance_choice(self.settings), ("Dark", "Amber"))
 
-    def test_retired_theme_applies_and_saves_migrated_values(self) -> None:
+    def test_retired_theme_applies_and_shows_migrated_values(self) -> None:
         self.settings.setValue("appearance/theme", "Forest")
         self.window.apply_theme()
         palette = self.qt.palette()
         self.assertEqual(palette.color(QPalette.ColorRole.Window).name(), "#15181e")
         self.assertEqual(palette.color(QPalette.ColorRole.Highlight).name(), "#6fcf97")
-
-        def save() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                self.assertEqual(dialog.theme.currentText(), "Dark")
-                self.assertEqual(dialog.accent.currentText(), "Green")
-                dialog.accept()
-
-        QTimer.singleShot(0, save)
-        self.window.open_settings()
+        page = SettingsPage(self.window)
+        self.addCleanup(page.deleteLater)
+        self.assertEqual(page.theme.buttons[page.theme.currentIndex()].text(), "Dark")
+        self.assertTrue(page.accents["Green"].isChecked())
+        self.assertEqual(self.settings.value("appearance/theme"), "Forest")  # nothing written yet
+        page.accents["Amber"].click()
+        page.accents["Green"].click()
         self.assertEqual(self.settings.value("appearance/theme"), "Dark")
         self.assertEqual(self.settings.value("appearance/accent"), "Green")
 
-    def test_accent_previews_reverts_and_persists(self) -> None:
+    def test_accent_swatches_apply_immediately_and_persist(self) -> None:
         def highlight() -> str:
             return self.qt.palette().color(QPalette.ColorRole.Highlight).name()
 
         self.settings.setValue("appearance/theme", "Light")
         self.window.apply_theme()
         self.assertEqual(highlight(), "#3563d8")
-
-        def cancel() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                self.assertEqual(dialog.accent.accessibleName(), "Accent colour")
-                self.assertEqual(
-                    [dialog.accent.itemText(i) for i in range(dialog.accent.count())],
-                    ["Blue", "Green", "Amber", "Clay"],
-                )
-                dialog.accent.setCurrentText("Clay")
-                self.assertEqual(highlight(), "#9c5434")
-                dialog.reject()
-
-        QTimer.singleShot(0, cancel)
-        self.window.open_settings()
-        self.assertEqual(highlight(), "#3563d8")
-        self.assertIsNone(self.settings.value("appearance/accent"))
-
-        def save() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                dialog.theme.setCurrentText("Dark")
-                dialog.accent.setCurrentText("Amber")
-                dialog.accept()
-
-        QTimer.singleShot(0, save)
-        self.window.open_settings()
+        page = self.window.settings_page
+        self.assertEqual(list(page.accents), ["Blue", "Green", "Amber", "Clay"])
+        for name, button in page.accents.items():
+            self.assertTrue(button.isCheckable())
+            self.assertEqual(button.accessibleName(), f"{name} accent")
+        self.assertTrue(page.accents["Blue"].isChecked())
+        page.accents["Clay"].click()
+        self.assertTrue(page.accents["Clay"].isChecked())
+        self.assertFalse(page.accents["Blue"].isChecked())
+        self.assertEqual(highlight(), "#9c5434")
+        self.assertEqual(self.settings.value("appearance/accent"), "Clay")
+        page.theme.buttons[2].click()
+        page.accents["Amber"].click()
         self.assertEqual(self.settings.value("appearance/accent"), "Amber")
+        self.assertEqual(self.settings.value("appearance/theme"), "Dark")
         self.assertEqual(highlight(), "#d9a35b")
         self.assertIn("#d9a35b", self.qt.styleSheet())
 
@@ -1362,9 +1272,10 @@ class LibraryTests(unittest.TestCase):
             with self.subTest(theme=theme):
                 self.settings.setValue("appearance/theme", theme)
                 self.window.apply_theme()
-                dialog = SettingsDialog(self.settings, self.window, self.window.library)
-                self.addCleanup(dialog.close)
+                dialog = self.window.settings_page
+                self.window.open_settings("Storage")
                 dialog.folder.setText(self.temp.name)
+                dialog.apply_folder()
                 observations = []
 
                 def type_folder_name() -> None:
@@ -1895,32 +1806,99 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(dialogs, [])
         self.assertNotIn(failed.window, self.qt.topLevelWidgets())
 
-    def test_settings_reject_invalid_destination(self) -> None:
-        dialog = SettingsDialog(self.settings, self.window, self.window.library)
-        self.addCleanup(dialog.close)
-        for path in ("", "relative/path", "/bad\npath", self.settings.fileName()):
-            self.settings.sync()
-            dialog.folder.setText(path)
-            with (
-                self.subTest(path=path),
-                patch("appglider.window.QMessageBox.warning") as warning,
-            ):
-                dialog.accept()
-                warning.assert_called_once()
-                self.assertEqual(dialog.result(), 0)
+    def test_invalid_folder_shows_an_inline_error_and_keeps_the_previous_one(self) -> None:
+        page = self.window.settings_page
+        library = self.window.library
+        self.window.open_settings("Storage")
+        good = str(Path(self.temp.name) / "good-apps")
+        page.folder.setText(good)
+        page.folder.editingFinished.emit()
+        self.assertEqual(self.settings.value("installation/folder"), good)
+        self.assertTrue(page.folder_error.isHidden())
+        for path, message in (
+            ("", "Enter an absolute path"),
+            ("relative/path", "Enter an absolute path"),
+            ("/bad\npath", "control characters"),
+            (self.settings.fileName(), "is a file"),
+        ):
+            with self.subTest(path=path):
+                page.folder.setText(path)
+                page.folder.editingFinished.emit()
+                self.assertTrue(page.folder_error.isVisibleTo(page))
+                self.assertIn(message, page.folder_error.text())
+                self.assertEqual(self.settings.value("installation/folder"), good)
+                self.assertEqual(library.apps_dir, Path(good))
+        page.folder.setText(good)
+        page.folder.editingFinished.emit()
+        self.assertTrue(page.folder_error.isHidden())
+
+    def test_folder_and_catalog_changes_wait_for_a_running_task(self) -> None:
+        page = self.window.settings_page
+        theme = page.theme.buttons[2]
+        self.window.task = object()  # type: ignore[assignment]
+        try:
+            self.window.refresh()
+            for widget in (page.folder, page.browse_button, page.import_button):
+                self.assertFalse(widget.isEnabled())
+            for widget in (theme, page.close_to_tray, page.notify_updates, page.check_interval):
+                self.assertTrue(widget.isEnabled())
+            before = self.settings.value("installation/folder")
+            page.folder.setText(str(Path(self.temp.name) / "blocked"))
+            self.assertFalse(page.apply_folder())
+            self.assertEqual(self.settings.value("installation/folder"), before)
+            theme.click()
+            self.assertEqual(self.settings.value("appearance/theme"), "Dark")
+        finally:
+            self.window.task = None
+            self.window.refresh()
+        self.assertTrue(page.folder.isEnabled())
+
+    def test_browse_applies_a_valid_choice_at_once(self) -> None:
+        page = self.window.settings_page
+        chosen = str(Path(self.temp.name) / "browsed")
+        with patch("appglider.settings_page.QFileDialog.getExistingDirectory", return_value=chosen):
+            page.browse_button.click()
+        self.assertEqual(page.folder.text(), chosen)
+        self.assertEqual(self.settings.value("installation/folder"), chosen)
+        with patch("appglider.settings_page.QFileDialog.getExistingDirectory", return_value=""):
+            page.browse_button.click()
+        self.assertEqual(self.settings.value("installation/folder"), chosen)
+
+    def test_about_links_open_the_project_pages(self) -> None:
+        page = self.window.settings_page
+        self.window.open_settings("About")
+        captions = {
+            button.text(): button
+            for button in page.findChildren(QPushButton)
+            if button.text() in ("View AppGlider on GitHub", "Report an issue")
+        }
+        self.assertEqual(set(captions), {"View AppGlider on GitHub", "Report an issue"})
+        opened: list[str] = []
+        with patch(
+            "appglider.settings_page.QDesktopServices.openUrl",
+            side_effect=lambda url: opened.append(url.toString()),
+        ):
+            for button in captions.values():
+                button.click()
+        self.assertEqual(
+            opened,
+            [
+                "https://github.com/Vyrnexis/AppGlider",
+                "https://github.com/Vyrnexis/AppGlider/issues",
+            ],
+        )
+        self.assertIn(APP_VERSION, page.findChild(QLabel, "sectionTitle").text())
+
+    def test_legacy_section_numbers_still_open_the_matching_section(self) -> None:
+        for number, name in ((0, "General"), (3, "GitHub"), (4, "About")):
+            self.window.open_settings(number)
+            self.assertEqual(self.window.settings_page.current_section(), name)
+        self.window.open_settings("Updates")
+        self.assertEqual(self.window.settings_page.current_section(), "Updates")
+        with self.assertRaises(ValueError):
+            self.window.open_settings("Missing")
 
     def test_footer_version_opens_about_and_settings_sections_are_accessible(self) -> None:
-        observations = []
-
-        def inspect_about() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                observations.append(dialog.sections.currentItem().text())
-                for section in range(4):
-                    dialog.sections.setCurrentRow(section)
-                    self.assertEqual(dialog.pages.currentIndex(), section)
-                dialog.reject()
-
         self.assertEqual(self.window.version_button.text(), f"v{APP_VERSION}")
         self.assertEqual(
             self.window.version_button.cursor().shape(), Qt.CursorShape.PointingHandCursor
@@ -1930,41 +1908,20 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(
             self.window.nav_settings.geometry().bottom() < self.window.version_button.y()
         )
-        QTimer.singleShot(0, inspect_about)
         QTest.mouseClick(self.window.version_button, Qt.MouseButton.LeftButton)
-        self.assertEqual(observations, ["About"])
+        page = self.window.settings_page
+        self.assertIs(self.window.pages.currentWidget(), page)
+        self.assertEqual(page.current_section(), "About")
+        self.assertEqual(
+            [button.text() for button in page.sections],
+            ["General", "Updates", "Catalogs", "Storage", "GitHub", "About"],
+        )
+        for section in range(6):
+            page.sections[section].click()
+            self.assertEqual(page.stack.currentIndex(), section)
 
     def test_github_indicator_opens_live_status_without_network_requests(self) -> None:
         observed = []
-
-        def inspect_status() -> None:
-            dialog = self.qt.activeModalWidget()
-            if not isinstance(dialog, SettingsDialog):
-                return
-            try:
-                observed.append(dialog.sections.currentItem().text())
-                observed.append(dialog.github_details.text())
-                github_status.observe_headers(
-                    {
-                        "X-RateLimit-Remaining": "0",
-                        "X-RateLimit-Limit": "60",
-                        "X-RateLimit-Reset": "1600",
-                    }
-                )
-                github_status.release_result("Public GitHub pages", APP.repo, 990)
-                releases._RETRY_AFTER["github.com"] = 1120
-                dialog.github_timer.timeout.emit()
-                self.window.github_timer.timeout.emit()
-                self.qt.processEvents()
-                observed.append(dialog.github_details.text())
-                self.assertEqual(self.window.github_label.text(), "GitHub: limited")
-                self.assertTrue(self.window.status_block.property("limited"))
-                label = dialog.github_details
-                self.assertGreaterEqual(label.height(), label.heightForWidth(label.width()))
-            finally:
-                dialog.reject()
-                self.assertFalse(dialog.github_timer.isActive())
-
         with (
             patch.object(github_status, "_status", github_status.GitHubStatus()),
             patch.object(github_status.time, "time", return_value=1000),
@@ -1976,8 +1933,30 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(
                 self.window.status_block.cursor().shape(), Qt.CursorShape.PointingHandCursor
             )
-            QTimer.singleShot(0, inspect_status)
             QTest.mouseClick(self.window.status_block, Qt.MouseButton.LeftButton)
+            page = self.window.settings_page
+            observed.append(page.current_section())
+            observed.append(page.github_details.text())
+            github_status.observe_headers(
+                {
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Limit": "60",
+                    "X-RateLimit-Reset": "1600",
+                }
+            )
+            github_status.release_result("Public GitHub pages", APP.repo, 990)
+            releases._RETRY_AFTER["github.com"] = 1120
+            self.window.github_timer.timeout.emit()
+            self.qt.processEvents()
+            observed.append(page.github_details.text())
+            self.assertEqual(self.window.github_label.text(), "GitHub: limited")
+            self.assertTrue(self.window.status_block.property("limited"))
+            label = page.github_details
+            self.assertGreaterEqual(label.height(), label.heightForWidth(label.width()))
+            self.window.nav_library.click()  # hidden pages are not refreshed
+            releases._RETRY_AFTER["github.com"] = 1500
+            self.window.github_timer.timeout.emit()
+            self.assertEqual(page.github_details.text(), observed[2])
             request.assert_not_called()
         self.assertEqual(observed[0], "GitHub")
         self.assertIn("unknown", observed[1])
@@ -2058,14 +2037,9 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.window.releases[APP.id], new_release)
 
     def test_close_to_tray_setting_can_be_disabled(self) -> None:
-        def save() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                dialog.close_to_tray.setChecked(False)
-                dialog.accept()
-
-        QTimer.singleShot(0, save)
-        self.window.open_settings()
+        switch = self.window.settings_page.close_to_tray
+        self.assertTrue(switch.isChecked())
+        switch.click()
         self.assertFalse(self.settings.value("General/close-to-tray", True, type=bool))
         with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
             self.window.tray.show()

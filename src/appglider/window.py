@@ -46,14 +46,10 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
-    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
-    QFormLayout,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -82,6 +78,7 @@ from appglider import (
     APP_VERSION,
     github_status,
 )
+from appglider.add_page import AddPage
 from appglider.app_page import AppPage
 from appglider.app_status import app_status
 from appglider.catalog import App
@@ -89,6 +86,12 @@ from appglider.controls import repolish
 from appglider.icons import icon_pixmap
 from appglider.jobs import Task, TaskResult
 from appglider.library import Installed, Library, Orphan
+from appglider.preferences import (
+    ACCENTS,
+    DEFAULT_ACCENT,
+    appearance_choice,
+    check_interval_hours,
+)
 from appglider.release_checks import ReleaseChecks
 from appglider.release_info import (
     ReleaseInfo,
@@ -110,9 +113,10 @@ from appglider.releases import (
     restore_rate_limits,
     version_key,
 )
-from appglider.repositories_dialog import RepositoriesPanel
+from appglider.settings_page import SettingsPage
 
 SIDEBAR_WIDTH = 210
+LEGACY_SECTIONS = {0: "General", 1: "Catalogs", 2: "Storage", 3: "GitHub", 4: "About"}
 CHECK_TOOLTIP = "Check for updates"
 
 
@@ -155,29 +159,6 @@ THEMES: dict[str, dict[str, str]] = {
         "danger": "#c53030",
     },
 }
-# Accent -> (dark value, light value).
-ACCENTS: dict[str, tuple[str, str]] = {
-    "Blue": ("#8fb3ff", "#3563d8"),
-    "Green": ("#6fcf97", "#1f8a4c"),
-    "Amber": ("#d9a35b", "#9a6512"),
-    "Clay": ("#c58b6a", "#9c5434"),
-}
-DEFAULT_ACCENT = "Blue"
-# Retired themes -> (theme, accent) they are read as.
-RETIRED_THEMES = {
-    "Forest": ("Dark", "Green"),
-    "Earthy": ("Dark", "Clay"),
-    "Sandstone": ("Dark", "Amber"),
-}
-CHECK_INTERVALS = (
-    ("Every hour", 1),
-    ("Every 3 hours", 3),
-    ("Every 6 hours", 6),
-    ("Every 12 hours", 12),
-    ("Every 24 hours", 24),
-    ("Only when I choose", 0),
-)
-DEFAULT_CHECK_HOURS = 6
 SORT_CHOICES = (
     ("Name (A–Z)", "name"),
     ("Installed first", "installed"),
@@ -188,29 +169,6 @@ SORT_CHOICES = (
 DEFAULT_SORT = "name"
 PIN_COLOUR = "#e6a817"  # gold, readable on both light and dark themes
 MAX_PINNED = 100
-SYSTEM_THEME = "System"
-THEME_CHOICES = [SYSTEM_THEME, "Light", "Dark"]
-
-
-def appearance_choice(settings: QSettings) -> tuple[str, str]:
-    """Return the saved (theme, accent), mapping retired themes. Never writes settings."""
-    theme = str(settings.value("appearance/theme", SYSTEM_THEME))
-    accent = str(settings.value("appearance/accent", ""))
-    if theme in RETIRED_THEMES:
-        theme, retired_accent = RETIRED_THEMES[theme]
-        accent = accent if accent in ACCENTS else retired_accent
-    if theme not in THEME_CHOICES:
-        theme = SYSTEM_THEME
-    return theme, accent if accent in ACCENTS else DEFAULT_ACCENT
-
-
-def check_interval_hours(settings: QSettings) -> int:
-    """Hours between scheduled update checks; 0 means only when asked."""
-    try:
-        hours = int(str(settings.value("General/check-interval-hours", DEFAULT_CHECK_HOURS)))
-    except ValueError:
-        return DEFAULT_CHECK_HOURS
-    return hours if hours in {value for _, value in CHECK_INTERVALS} else DEFAULT_CHECK_HOURS
 
 
 def sort_mode(settings: QSettings) -> str:
@@ -742,10 +700,6 @@ def chevron_path(colour: str) -> str:
     return glyph_path("chevron", colour, [QPointF(7, 9.5), QPointF(12, 14.5), QPointF(17, 9.5)])
 
 
-def tick_path(colour: str) -> str:
-    return glyph_path("tick", colour, [QPointF(6, 12.5), QPointF(10.5, 17), QPointF(18, 7.5)])
-
-
 def refresh_icon(colour: str) -> QIcon:
     """Draw a circular arrow in the given colour."""
     size = 64
@@ -793,237 +747,6 @@ def nav_entry(text: str, *, badge: bool = False) -> tuple[QPushButton, QLabel]:
         count.setMinimumWidth(18)
     layout.addWidget(count, alignment=Qt.AlignmentFlag.AlignVCenter)
     return button, count
-
-
-class SettingsDialog(QDialog):
-    def __init__(self, settings: QSettings, parent: QWidget, library: Library) -> None:
-        super().__init__(parent)
-        self.pending: Callable[[], None] | None = None
-        self.setWindowTitle("Settings")
-        self.setMinimumSize(860, 620)
-        self.resize(fit_size(1040, 800, screen_area(parent)))
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(20)
-        title = QLabel("Settings")
-        title.setObjectName("dialogTitle")
-        layout.addWidget(title)
-        content = QHBoxLayout()
-        self.sections = QListWidget()
-        self.sections.setObjectName("settingsSections")
-        self.sections.setAccessibleName("Settings sections")
-        self.sections.addItems(["General", "Applications", "Storage", "GitHub", "About"])
-        self.sections.setFixedWidth(150)
-        self.pages = QStackedWidget()
-        self.sections.currentRowChanged.connect(self.pages.setCurrentIndex)
-        content.addWidget(self.sections)
-        content.addWidget(self.pages, stretch=1)
-        layout.addLayout(content, stretch=1)
-        page_layouts = []
-        for _ in range(5):
-            page = QWidget()
-            page_layout = QVBoxLayout(page)
-            page_layout.setContentsMargins(12, 0, 0, 0)
-            page_layout.setSpacing(16)
-            self.pages.addWidget(page)
-            page_layouts.append(page_layout)
-        general, applications_page, storage, github_page, about = page_layouts
-        applications_page.setContentsMargins(12, 0, 0, 0)
-        appearance = QGroupBox("Appearance")
-        appearance_form = QFormLayout(appearance)
-        self.theme = QComboBox()
-        self.theme.setItemDelegate(QStyledItemDelegate(self.theme))
-        self.theme.setAccessibleName("Appearance")
-        self.theme.addItems(THEME_CHOICES)
-        current_theme, current_accent = appearance_choice(settings)
-        self.theme.setCurrentText(current_theme)
-        appearance_form.addRow("Theme", self.theme)
-        self.accent = QComboBox()
-        self.accent.setItemDelegate(QStyledItemDelegate(self.accent))
-        self.accent.setAccessibleName("Accent colour")
-        self.accent.addItems(list(ACCENTS))
-        self.accent.setCurrentText(current_accent)
-        appearance_form.addRow("Accent colour", self.accent)
-        general.addWidget(appearance)
-        window_group = QGroupBox("Window")
-        window_layout = QVBoxLayout(window_group)
-        self.close_to_tray = QCheckBox("Keep AppGlider in the tray when closing its window")
-        self.close_to_tray.setChecked(
-            bool(settings.value("General/close-to-tray", True, type=bool))
-        )
-        self.close_to_tray.setToolTip("Applies when a system tray is available. Use Quit to exit.")
-        window_layout.addWidget(self.close_to_tray)
-        general.addWidget(window_group)
-        updates = QGroupBox("Updates")
-        updates_layout = QVBoxLayout(updates)
-        updates_form = QFormLayout()
-        self.check_interval = QComboBox()
-        self.check_interval.setItemDelegate(QStyledItemDelegate(self.check_interval))
-        self.check_interval.setAccessibleName("Check for updates")
-        for label, hours in CHECK_INTERVALS:
-            self.check_interval.addItem(label, hours)
-        self.check_interval.setCurrentIndex(
-            max(0, self.check_interval.findData(check_interval_hours(settings)))
-        )
-        updates_form.addRow("Check for updates", self.check_interval)
-        updates_layout.addLayout(updates_form)
-        self.notify_updates = QCheckBox("Show a desktop notification when new updates are found")
-        self.notify_updates.setChecked(
-            bool(settings.value("notifications/updates", False, type=bool))
-        )
-        self.notify_updates.setToolTip(
-            "Only for the scheduled checks, while AppGlider is in the background, and once "
-            "for each new version."
-        )
-        updates_layout.addWidget(self.notify_updates)
-        updates_note = QLabel(
-            "Checks the apps you have installed while AppGlider is running, including in the "
-            "tray. Checking an app that has not changed does not use GitHub's request allowance "
-            "(apps with previews turned on still use some), and checks are skipped when few "
-            "requests remain."
-        )
-        updates_note.setObjectName("muted")
-        updates_note.setWordWrap(True)
-        updates_layout.addWidget(updates_note)
-        general.addWidget(updates)
-        downloads = QGroupBox("Downloads")
-        download_layout = QVBoxLayout(downloads)
-        download_layout.addWidget(QLabel("Install new applications in"))
-        default_folder = str(
-            Path(
-                QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)
-            )
-            / "appglider"
-            / "apps"
-        )
-        self.folder = QLineEdit(str(settings.value("installation/folder", default_folder)))
-        self.folder.setAccessibleName("AppImage folder")
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(self.folder)
-        browse = QPushButton("Browse…")
-        browse.clicked.connect(self.browse)
-        folder_row.addWidget(browse)
-        download_layout.addLayout(folder_row)
-        note = QLabel("Existing applications stay in their current folders.")
-        note.setObjectName("muted")
-        note.setWordWrap(True)
-        download_layout.addWidget(note)
-        storage.addWidget(downloads)
-        self.repositories = RepositoriesPanel(library)
-        self.repositories.stopped.connect(self.finish_pending)
-        applications_page.addWidget(self.repositories, stretch=1)
-        github = QGroupBox("GitHub requests")
-        github_layout = QVBoxLayout(github)
-        self.github_details = QLabel()
-        self.github_details.setTextFormat(Qt.TextFormat.PlainText)
-        self.github_details.setWordWrap(True)
-        self.github_details.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
-        self.github_details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.github_details.setAccessibleName("GitHub request status")
-        github_layout.addWidget(self.github_details)
-        github_note = QLabel(
-            "Status updates from existing requests; opening Settings makes no requests. "
-            "Other applications on your network may share the request allowance."
-        )
-        github_note.setObjectName("muted")
-        github_note.setWordWrap(True)
-        github_layout.addWidget(github_note)
-        github_page.addWidget(github)
-        self.github_timer = QTimer(self)
-        self.github_timer.timeout.connect(self.update_github_status)
-        self.finished.connect(self.github_timer.stop)
-        self.github_timer.start(1000)
-        self.update_github_status()
-        app_title = QLabel(f"{APP_NAME} {APP_VERSION}")
-        app_title.setObjectName("sectionTitle")
-        about.addWidget(app_title)
-        about_note = QLabel("A home for your Linux AppImages.\nWritten in Python with Qt.")
-        about_note.setWordWrap(True)
-        about.addWidget(about_note)
-        for caption, url in (
-            ("View AppGlider on GitHub", "https://github.com/Vyrnexis/AppGlider"),
-            ("Report an issue", "https://github.com/Vyrnexis/AppGlider/issues"),
-        ):
-            button = QPushButton(caption)
-            button.clicked.connect(
-                lambda checked=False, url=url: QDesktopServices.openUrl(QUrl(url))
-            )
-            about.addWidget(button)
-        for page_layout in page_layouts:
-            if page_layout is not applications_page:
-                page_layout.addStretch()
-        self.sections.setCurrentRow(0)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
-        self.cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        self.save_button.setObjectName("primary")
-        self.close_button = buttons.addButton("Close", QDialogButtonBox.ButtonRole.AcceptRole)
-        self.close_button.setObjectName("primary")
-        layout.addWidget(buttons)
-        self.sections.currentRowChanged.connect(self.update_buttons)
-        self.update_buttons(self.sections.currentRow())
-
-    def update_github_status(self) -> None:
-        self.github_details.setText(github_request_status()[1])
-
-    def browse(self) -> None:
-        folder = QFileDialog.getExistingDirectory(
-            self, "Choose AppImage folder", self.folder.text()
-        )
-        if folder:
-            self.folder.setText(folder)
-
-    def update_buttons(self, section: int) -> None:
-        """Save and Cancel apply to General and Storage; the other pages save as you go."""
-        editing = section in (0, 2)
-        self.save_button.setVisible(editing)
-        self.cancel_button.setVisible(editing)
-        self.close_button.setVisible(not editing)
-
-    def reject(self) -> None:
-        if self.repositories.stop():
-            super().reject()
-        else:
-            self.pending = super().reject
-            self.stopping()
-
-    def stopping(self) -> None:
-        self.setEnabled(False)
-
-    def finish_pending(self) -> None:
-        self.setEnabled(True)
-        pending, self.pending = self.pending, None
-        if pending is not None:
-            pending()
-
-    def closeEvent(self, event: QCloseEvent) -> None:
-        if self.repositories.task is not None:
-            self.reject()
-            event.ignore()
-            return
-        super().closeEvent(event)
-
-    def accept(self) -> None:
-        if not self.repositories.stop():
-            self.pending = self.accept
-            self.stopping()
-            return
-        if any(ord(c) < 32 or ord(c) == 127 for c in self.folder.text()):
-            QMessageBox.warning(self, "Choose a folder", "The path contains control characters.")
-            return
-        folder = Path(self.folder.text().strip()).expanduser()
-        if not self.folder.text().strip() or not folder.is_absolute():
-            QMessageBox.warning(self, "Choose a folder", "Enter an absolute path or use Browse.")
-            return
-        if folder.exists() and not folder.is_dir():
-            QMessageBox.warning(self, "Choose a folder", "The selected path is a file.")
-            return
-        self.folder.setText(str(folder))
-        super().accept()
 
 
 class LauncherWindow(QMainWindow):
@@ -1103,19 +826,18 @@ class LauncherWindow(QMainWindow):
         self.nav_updates, self.updates_count = nav_entry("Updates", badge=True)
         self.nav_add, _ = nav_entry("Add app")
         self.nav_settings, _ = nav_entry("Settings")
-        for button in (self.nav_library, self.nav_updates):
+        self.nav_group = QButtonGroup(self)
+        self.nav_group.setExclusive(True)
+        for button in (self.nav_library, self.nav_updates, self.nav_add, self.nav_settings):
             button.setCheckable(True)
+            self.nav_group.addButton(button)
         self.nav_library.setChecked(True)
-        nav_group = QButtonGroup(self)
-        nav_group.setExclusive(True)
-        nav_group.addButton(self.nav_library)
-        nav_group.addButton(self.nav_updates)
         self.nav_library.clicked.connect(lambda: self.show_view("library"))
         self.nav_updates.clicked.connect(lambda: self.show_view("updates"))
         self.nav_add.setAccessibleName("Add app")
-        self.nav_add.clicked.connect(lambda: self.open_repositories(adding=True))
+        self.nav_add.clicked.connect(self.open_add_app)
         self.nav_settings.setAccessibleName("Settings")
-        self.nav_settings.clicked.connect(lambda: self.open_settings(0))
+        self.nav_settings.clicked.connect(lambda: self.open_settings("General"))
         for button in (self.nav_library, self.nav_updates, self.nav_add):
             side.addWidget(button)
         side.addStretch()
@@ -1126,7 +848,7 @@ class LauncherWindow(QMainWindow):
         self.status_block.setAccessibleName("GitHub request status")
         self.status_block.setCursor(Qt.CursorShape.PointingHandCursor)
         self.status_block.setFixedHeight(66)
-        self.status_block.clicked.connect(lambda: self.open_settings(3))
+        self.status_block.clicked.connect(lambda: self.open_settings("GitHub"))
         status_layout = QVBoxLayout(self.status_block)
         status_layout.setContentsMargins(8, 8, 8, 6)
         status_layout.setSpacing(4)
@@ -1147,7 +869,7 @@ class LauncherWindow(QMainWindow):
         self.version_button.setAccessibleName(f"About AppGlider {APP_VERSION}")
         self.version_button.setToolTip("About AppGlider")
         self.version_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.version_button.clicked.connect(lambda: self.open_settings(4))
+        self.version_button.clicked.connect(lambda: self.open_settings("About"))
         side.addWidget(self.version_button, alignment=Qt.AlignmentFlag.AlignLeft)
         shell_layout.addWidget(sidebar)
         body = QWidget()
@@ -1165,6 +887,12 @@ class LauncherWindow(QMainWindow):
         self.app_page = AppPage(self)
         self.app_page.back_requested.connect(self.close_app)
         self.pages.addWidget(self.app_page)
+        self.settings_page = SettingsPage(self)
+        self.pages.addWidget(self.settings_page)
+        self.add_page = AddPage(self)
+        self.add_page.added.connect(self.app_added)
+        self.pages.addWidget(self.add_page)
+        self.pages.currentChanged.connect(self.page_changed)
         self.list_scroll = 0
         toolbar = QHBoxLayout()
         toolbar.setSpacing(10)
@@ -1275,20 +1003,16 @@ class LauncherWindow(QMainWindow):
         welcome_buttons.addStretch()
         self.welcome_add_button = QPushButton("+ Add app")
         self.welcome_add_button.setObjectName("primary")
-        self.welcome_add_button.clicked.connect(lambda: self.open_repositories(adding=True))
+        self.welcome_add_button.clicked.connect(self.open_add_app)
         welcome_buttons.addWidget(self.welcome_add_button)
         self.welcome_import_button = QPushButton("Import catalog…")
-        self.welcome_import_button.clicked.connect(
-            lambda: self.open_repositories(import_catalog=True)
-        )
+        self.welcome_import_button.clicked.connect(self.settings_page.import_catalog)
         welcome_buttons.addWidget(self.welcome_import_button)
         self.welcome_example_button = QPushButton("Example catalog")
         self.welcome_example_button.setToolTip(
             "Add the ArtCraft apps and SolidCraft, a ready-made example list."
         )
-        self.welcome_example_button.clicked.connect(
-            lambda: self.open_repositories(import_example=True)
-        )
+        self.welcome_example_button.clicked.connect(self.settings_page.import_example_catalog)
         welcome_buttons.addWidget(self.welcome_example_button)
         welcome_buttons.addStretch()
         welcome_layout.addLayout(welcome_buttons)
@@ -1319,7 +1043,7 @@ class LauncherWindow(QMainWindow):
         self.cards: dict[str, AppRow] = {}
         self.search.textChanged.connect(self.refresh)
         self.filter_installed.toggled.connect(self.refresh)
-        QApplication.styleHints().colorSchemeChanged.connect(self.apply_theme)
+        QApplication.styleHints().colorSchemeChanged.connect(self.system_theme_changed)
         self.tray_icons = (QIcon(str(APP_ICON)), QIcon(str(APP_UPDATE_ICON)))
         self.tray = QSystemTrayIcon(self.tray_icons[0], self)
         self.tray_has_updates = False
@@ -1415,6 +1139,8 @@ class LauncherWindow(QMainWindow):
             self.github_meter.setRange(0, max(1, allowance[1]))
             self.github_meter.setValue(allowance[0])
         self.status_label.setText(self.check_summary())
+        if self.settings_page.isVisible():
+            self.settings_page.update_github_status()
         self.status_block.setToolTip(details + "\nClick for details in Settings → GitHub.")
         if self.status_block.property("limited") != limited:
             self.status_block.setProperty("limited", limited)
@@ -1628,6 +1354,8 @@ class LauncherWindow(QMainWindow):
                 reorder and index + 1 < len(shown) and shown[index + 1].pinned == row.pinned
             )
         self.nav_add.setEnabled(self.task is None)
+        self.settings_page.update_state()
+        self.add_page.update_state()
         self.search.setPlaceholderText(
             f"Search {update_count if updates_view else len(self.apps)} apps"
         )
@@ -1680,7 +1408,7 @@ class LauncherWindow(QMainWindow):
         if view not in ("library", "updates"):
             raise ValueError(f"Unknown view: {view}")
         self.view = view
-        self.close_app()
+        self.show_list()
         (self.nav_updates if view == "updates" else self.nav_library).setChecked(True)
         self.page_title.setText("Updates" if view == "updates" else "Library")
         self.filters.setVisible(view == "library")
@@ -1716,6 +1444,7 @@ class LauncherWindow(QMainWindow):
             self.list_scroll = self.scroll_area.verticalScrollBar().value()
         self.app_page.show_app(app_id, "Updates" if self.view == "updates" else "Library")
         self.pages.setCurrentWidget(self.app_page)
+        (self.nav_updates if self.view == "updates" else self.nav_library).setChecked(True)
         self.app_page.back_button.setFocus()
 
     open_details = open_app
@@ -1731,60 +1460,38 @@ class LauncherWindow(QMainWindow):
         )
         self.scroll_area.verticalScrollBar().setValue(self.list_scroll)
 
-    def open_settings(
-        self,
-        section: int = 0,
-        *,
-        adding: bool = False,
-        import_catalog: bool = False,
-        import_example: bool = False,
-    ) -> None:
-        try:
-            dialog = SettingsDialog(self.settings, self, self.library)
-        except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot open settings", str(error))
+    def show_list(self) -> None:
+        """Return to the Library or Updates list from whichever page is showing."""
+        if self.pages.currentWidget() is self.app_page:
+            self.close_app()
+        else:
+            self.pages.setCurrentIndex(0)
+
+    def page_changed(self) -> None:
+        if self.pages.currentWidget() is not self.add_page:
+            self.add_page.leave()
+
+    def open_settings(self, section: int | str = "General") -> None:
+        """Show the Settings page at a section; the old dialog's numbers still work."""
+        name = LEGACY_SECTIONS[section] if isinstance(section, int) else section
+        self.settings_page.show_section(name)
+        self.pages.setCurrentWidget(self.settings_page)
+        self.nav_settings.setChecked(True)
+        self.settings_page.focus_section()
+
+    def open_add_app(self) -> None:
+        if self.task is not None:
             return
-        panel = dialog.repositories
-        panel.setEnabled(self.task is None)
-        panel.catalog_changed.connect(self.catalog_changed)
-        requested: list[str] = []
+        self.add_page.start()
+        self.pages.setCurrentWidget(self.add_page)
+        self.nav_add.setChecked(True)
 
-        def app_requested(app_id: str) -> None:
-            requested.append(app_id)
-            dialog.accept()
-
-        panel.app_requested.connect(app_requested)
-        dialog.sections.setCurrentRow(section)
-        dialog.theme.currentTextChanged.connect(
-            lambda theme: self.apply_theme(theme, dialog.accent.currentText())
-        )
-        dialog.accent.currentTextChanged.connect(
-            lambda accent: self.apply_theme(dialog.theme.currentText(), accent)
-        )
-        if adding:
-            panel.start_add_repository()
-        if import_catalog:
-            QTimer.singleShot(0, panel.import_catalog)
-        elif import_example:
-            QTimer.singleShot(0, panel.import_example_catalog)
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        if not accepted:
-            self.apply_theme()
-        if accepted:
-            self.settings.setValue("General/close-to-tray", dialog.close_to_tray.isChecked())
-            self.settings.setValue(
-                "General/check-interval-hours", dialog.check_interval.currentData()
-            )
-            self.settings.setValue("notifications/updates", dialog.notify_updates.isChecked())
-            self.schedule_update_checks()
-            self.settings.setValue("appearance/theme", dialog.theme.currentText())
-            self.settings.setValue("appearance/accent", dialog.accent.currentText())
-            self.settings.setValue("installation/folder", dialog.folder.text())
-            self.library.apps_dir = Path(dialog.folder.text())
-            self.apply_theme()
-            self.scan_installed()
-            if requested:
-                self.open_app(requested[0])
+    def app_added(self, app_id: str, warning: str) -> None:
+        self.catalog_changed()
+        app = next((app for app in self.apps if app.id == app_id), None)
+        self.open_app(app_id)
+        if app is not None:
+            self.footer.setText(f"Added {app.name}. Install it from its page.{warning}")
 
     def choose_build(self, app_id: str) -> None:
         """Open the App page and ask which build of the app to use."""
@@ -1802,21 +1509,6 @@ class LauncherWindow(QMainWindow):
                 QMessageBox.warning(self, "Cannot update the library", str(error))
             self.scan_installed()
         dialog.deleteLater()
-
-    def open_repositories(
-        self,
-        adding: bool = False,
-        *,
-        import_catalog: bool = False,
-        import_example: bool = False,
-    ) -> None:
-        if self.task is None:
-            self.open_settings(
-                1,
-                adding=adding,
-                import_catalog=import_catalog,
-                import_example=import_example,
-            )
 
     def has_update(self, app_id: str) -> bool:
         app = next((app for app in self.apps if app.id == app_id), None)
@@ -2248,20 +1940,23 @@ class LauncherWindow(QMainWindow):
             self.quitting = True
             self.close_after_release = True
             self.checks.stop()
+            self.add_page.stop()
             self.tray.hide()
             self.hide()
             event.ignore()
             return
+        self.add_page.stop()
         self.tray.hide()
         super().closeEvent(event)
 
-    def apply_theme(self, preview: str | None = None, accent_preview: str | None = None) -> None:
+    def system_theme_changed(self, scheme: object = None) -> None:
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
         app = QApplication.instance()
         if not isinstance(app, QApplication):
             return
-        saved_theme, saved_accent = appearance_choice(self.settings)
-        theme = preview or saved_theme
-        accent_name = accent_preview or saved_accent
+        theme, accent_name = appearance_choice(self.settings)
         if theme not in THEMES:
             scheme = app.styleHints().colorScheme()
             if scheme == Qt.ColorScheme.Unknown:
@@ -2278,6 +1973,10 @@ class LauncherWindow(QMainWindow):
         ok, warn, danger = tokens["ok"], tokens["warn"], tokens["danger"]
         raised, faint = tokens["raised"], tokens["faint"]
         surface2, held = tokens["surface2"], tokens["held"]
+        swatches = "\n".join(
+            f'QPushButton#swatch[accent="{name}"] {{ background: {pair[0] if dark else pair[1]}; }}'
+            for name, pair in ACCENTS.items()
+        )
         on_accent = background if dark else "#ffffff"
         on_warn = on_accent
         palette = QPalette()
@@ -2307,13 +2006,7 @@ class LauncherWindow(QMainWindow):
             QLabel {{ background: transparent; }}
             QLabel#pageTitle {{ font-size: 22px; font-weight: 650; }}
             QLabel#welcomeTitle {{ font-size: 27px; font-weight: 650; }}
-            QLabel#dialogTitle {{ font-size: 22px; font-weight: 650; }}
             QLabel#sectionTitle {{ font-size: 18px; font-weight: 650; }}
-            QGroupBox {{ background: {surface}; border: 1px solid {border};
-                border-radius: 10px; margin-top: 12px; padding: 18px 14px 14px; }}
-            QWidget#repositoriesPanel QGroupBox {{ padding: 16px 14px 10px; }}
-            QGroupBox::title {{ subcontrol-origin: margin; left: 14px;
-                padding: 0 6px; color: {foreground}; font-weight: 600; }}
             QPushButton#compact {{ padding: 6px 12px; }}
             QComboBox#compact {{ padding: 6px 10px; }}
             QToolButton#checkNow {{ padding: 8px; }}
@@ -2353,19 +2046,12 @@ class LauncherWindow(QMainWindow):
                 border: 1px solid {tint(warn, 0.45)}; border-radius: 10px; }}
             QFrame#updatesBanner QLabel {{ color: {foreground}; }}
             QFrame#updatesBanner QPushButton {{ padding: 7px 14px; }}
-            QFrame#statusStrip {{ background: {surface}; border: 1px solid {border};
-                border-radius: 8px; }}
             QProgressBar {{ background: {background}; border: none; border-radius: 3px; }}
             QProgressBar::chunk {{ background: {accent}; border-radius: 3px; }}
-            QListWidget#repositories {{ background: {surface}; border: 1px solid {border};
-                border-radius: 10px; outline: 0; }}
-            QListWidget#repositories:focus {{ border: 2px solid {accent}; }}
-            QListWidget#repositories::item {{ padding: 10px 8px; border-radius: 6px; }}
             QPushButton#backLink {{ background: transparent; border: none; color: {accent};
                 padding: 4px 2px; font-weight: 600; }}
             QPushButton#backLink:hover {{ text-decoration: underline; }}
             QPushButton#backLink:disabled {{ color: {muted}; }}
-            QListWidget#repositories::item:selected {{ background: {background}; color: {accent}; }}
             QLabel#muted, QLabel#footer {{ color: {muted}; }}
             QLabel#footer {{ font-size: 12px; padding-top: 8px; }}
             QLabel#emptyState {{ font-size: 17px; color: {muted}; }}
@@ -2449,25 +2135,21 @@ class LauncherWindow(QMainWindow):
                 border-color: {ok}; }}
             QLabel#releaseBadge[release="prerelease"] {{ color: {warn};
                 border-color: {warn}; }}
-            QListWidget#settingsSections {{ border: none; background: transparent; outline: 0; }}
-            QListWidget#settingsSections::item {{ padding: 12px; border-radius: 7px; }}
-            QListWidget#settingsSections::item:selected {{
-                background: {surface}; color: {accent}; }}
+            QPushButton#sectionNav {{ background: transparent; border: 2px solid transparent;
+                border-radius: 8px; color: {muted}; text-align: left; padding: 8px 12px; }}
+            QPushButton#sectionNav:hover {{ color: {foreground}; border-color: transparent; }}
+            QPushButton#sectionNav:checked {{ background: {surface2}; color: {foreground};
+                font-weight: 600; }}
+            QPushButton#sectionNav:focus {{ border: 2px solid {accent}; }}
+            QPushButton#swatch {{ border: 2px solid transparent; border-radius: 14px;
+                padding: 0; }}
+            QPushButton#swatch:hover, QPushButton#swatch:checked, QPushButton#swatch:focus {{
+                border: 2px solid {foreground}; }}
+            {swatches}
+            QLabel#savedNote {{ color: {ok}; font-size: 13px; }}
+            QLabel#settingError {{ color: {danger}; font-size: 12px; }}
             QLineEdit, QComboBox {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; border-radius: 7px; padding: 9px; }}
-            QCheckBox::indicator, QRadioButton::indicator {{ width: 14px; height: 14px;
-                border: 2px solid {muted}; background: {surface}; }}
-            QCheckBox::indicator {{ border-radius: 5px; }}
-            QRadioButton::indicator {{ border-radius: 9px; }}
-            QCheckBox::indicator:hover, QRadioButton::indicator:hover {{ border-color: {accent}; }}
-            QCheckBox::indicator:checked {{ background: {accent}; border-color: {accent};
-                image: url({tick_path(on_accent)}); }}
-            QRadioButton::indicator:checked {{ border-color: {accent};
-                background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
-                    stop: 0 {accent}, stop: 0.45 {accent},
-                    stop: 0.55 {surface}, stop: 1 {surface}); }}
-            QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
-                border-color: {border}; }}
             QComboBox {{ min-height: 20px; }}
             QComboBox::drop-down {{ border: none; width: 28px; }}
             QComboBox::down-arrow {{ image: url({chevron_path(foreground)});

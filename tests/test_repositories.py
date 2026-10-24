@@ -16,22 +16,22 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from catalog_fixture import APPS, stock
 from gui_helpers import close_window
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 from test_builds import BAMBU, bambu_metadata, chosen_bambu
 from test_library import appimage_bytes
 
 from appglider import APP_ICON, releases
 from appglider.catalog import custom_app, load_apps
+from appglider.catalog_preview import CatalogPreviewDialog
 from appglider.icons import IconCandidate, normalise_icon
 from appglider.jobs import TaskResult
 from appglider.library import Library
 from appglider.release_info import ReleaseInfo, ReleaseOption, discover_releases
 from appglider.releases import Release, architecture, check_cancel, select_release
-from appglider.repositories_dialog import CatalogPreviewDialog, RepositoriesPanel
-from appglider.window import LauncherWindow, SettingsDialog
+from appglider.window import LauncherWindow
 
 CUSTOM = custom_app("https://github.com/emmertex/lightcraft-classic", "LightCraft Classic")
 
@@ -239,21 +239,16 @@ class RepositoryGuiTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.library = stock(Library(self.root / "data", self.root / "apps", self.root / "desktop"))
         self.settings = QSettings(str(self.root / "settings.ini"), QSettings.Format.IniFormat)
-        icons = patch("appglider.repositories_dialog.discover_icons", return_value=())
+        icons = patch("appglider.add_page.discover_icons", return_value=())
         icons.start()
         self.addCleanup(icons.stop)
         self.settings.setValue("appearance/theme", "Light")
         self.window = LauncherWindow(self.settings, self.library)
         self.window.show()
         self.addCleanup(close_window, self.window)
-        self.host = QDialog(self.window)
-        self.dialog = RepositoriesPanel(self.library, self.host)
-        QVBoxLayout(self.host).addWidget(self.dialog)
-        self.host.resize(900, 640)
-        self.dialog.catalog_changed.connect(self.window.scan_installed)
-        self.host.show()
+        self.dialog = self.window.add_page
+        self.catalogs = self.window.settings_page
         self.qt.processEvents()
-        self.addCleanup(self.host.close)
 
     def write_catalog(self, text):
         path = self.root / "catalog.toml"
@@ -269,12 +264,12 @@ class RepositoryGuiTests(unittest.TestCase):
 
         with (
             patch(
-                "appglider.repositories_dialog.QFileDialog.getOpenFileName",
+                "appglider.settings_page.QFileDialog.getOpenFileName",
                 return_value=(str(path), ""),
             ),
             patch.object(CatalogPreviewDialog, "exec", exec_preview),
         ):
-            self.dialog.import_catalog()
+            self.catalogs.import_catalog()
         return previews
 
     def test_import_previews_then_adds_and_cancel_adds_nothing(self):
@@ -294,20 +289,16 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(self.library.apps, APPS)
         self.run_import(path)
         self.assertEqual([app.repo for app in self.library.apps[len(APPS) :]], ["owner/one"])
-        self.assertIn("Added 1 app", self.dialog.status.text())
-        listed = [
-            self.dialog.repo_list.item(row).text() for row in range(self.dialog.repo_list.count())
-        ]
-        self.assertTrue(any("owner/one" in text for text in listed))
+        self.assertIn("Added 1 app", self.window.footer.text())
         self.assertIn("owner/one", {app.repo for app in self.window.apps})
 
     def test_import_reports_unusable_files_without_changing_the_library(self):
         for text in ("format = 2", "not toml [", "name = 'no format'"):
             with self.subTest(text=text):
                 self.assertEqual(self.run_import(self.write_catalog(text)), [])
-                self.assertIn("Cannot import catalog.toml", self.dialog.status.text())
+                self.assertIn("Cannot import catalog.toml", self.window.footer.text())
         self.assertEqual(self.run_import(self.root / "missing.toml"), [])
-        self.assertIn("Cannot import missing.toml", self.dialog.status.text())
+        self.assertIn("Cannot import missing.toml", self.window.footer.text())
         self.assertEqual(self.library.apps, APPS)
 
     def test_preview_with_nothing_new_cannot_be_accepted(self):
@@ -319,27 +310,25 @@ class RepositoryGuiTests(unittest.TestCase):
         self.library.add_repository(custom_app("owner/one", "One", True, "One.AppImage"))
         target = self.root / "out.toml"
         with patch(
-            "appglider.repositories_dialog.QFileDialog.getSaveFileName",
+            "appglider.settings_page.QFileDialog.getSaveFileName",
             return_value=(str(target), ""),
         ):
-            self.dialog.export_catalog()
-        self.assertIn(f"Exported {len(APPS) + 1} apps to out.toml", self.dialog.status.text())
+            self.catalogs.export_catalog()
+        self.assertIn(f"Exported {len(APPS) + 1} apps to out.toml", self.window.footer.text())
         text = target.read_text()
         self.assertTrue(text.startswith("# AppGlider catalog"))
         self.assertIn('repo = "owner/one"', text)
         self.assertIn("stable_only = false", text)
-        with patch(
-            "appglider.repositories_dialog.QFileDialog.getSaveFileName", return_value=("", "")
-        ):
-            self.dialog.export_catalog()
-        self.assertIn("Exported", self.dialog.status.text())
+        with patch("appglider.settings_page.QFileDialog.getSaveFileName", return_value=("", "")):
+            self.catalogs.export_catalog()
+        self.assertIn("Exported", self.window.footer.text())
         blocked = self.root  # a directory cannot be written as a file
         with patch(
-            "appglider.repositories_dialog.QFileDialog.getSaveFileName",
+            "appglider.settings_page.QFileDialog.getSaveFileName",
             return_value=(str(blocked), ""),
         ):
-            self.dialog.export_catalog()
-        self.assertIn("Cannot export", self.dialog.status.text())
+            self.catalogs.export_catalog()
+        self.assertIn("Cannot export", self.window.footer.text())
 
     def test_imported_text_is_shown_as_plain_text(self):
         path = self.write_catalog(
@@ -355,9 +344,10 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_the_example_catalog_button_previews_then_adds_the_example_apps(self):
         empty = self.root / "empty"
         library = Library(empty / "data", empty / "apps", empty / "desktop")
-        dialog = RepositoriesPanel(library, self.host)
-        self.addCleanup(dialog.deleteLater)
-        self.assertTrue(dialog.example_button.isEnabled())
+        window = LauncherWindow(self.settings, library)
+        self.addCleanup(close_window, window)
+        page = window.settings_page
+        self.assertTrue(page.example_button.isEnabled())
         previews = []
 
         def exec_preview(preview, accept=True):
@@ -365,22 +355,35 @@ class RepositoryGuiTests(unittest.TestCase):
             return 1 if accept else 0
 
         with patch.object(CatalogPreviewDialog, "exec", exec_preview):
-            dialog.import_example_catalog()
+            page.import_example_catalog()
         self.assertEqual(len(library.apps), 14)
         (preview,) = previews
         self.assertIn("ArtCraft apps and SolidCraft", preview.findChild(QLabel).text())
-        self.assertIn("Added 14 apps from artcraft.toml", dialog.status.text())
+        self.assertIn("Added 14 apps from artcraft.toml", window.footer.text())
         with patch.object(CatalogPreviewDialog, "exec", exec_preview):
-            dialog.import_example_catalog()  # everything is already there
+            page.import_example_catalog()  # everything is already there
         self.assertEqual(len(previews), 2)
         self.assertFalse(previews[1].add_button.isEnabled())
-        dialog.start_add_repository()
-        self.assertFalse(dialog.example_button.isEnabled())
 
-    def test_import_and_export_are_disabled_while_adding_or_busy(self):
-        self.assertTrue(self.dialog.import_button.isEnabled())
-        self.dialog.start_add_repository()
-        self.assertFalse(self.dialog.import_button.isEnabled())
+    def test_catalog_actions_are_disabled_while_a_task_runs(self):
+        page = self.catalogs
+        for button in (page.import_button, page.example_button, page.export_button):
+            self.assertTrue(button.isEnabled())
+        self.window.task = object()
+        try:
+            self.window.refresh()
+            for button in (page.import_button, page.example_button, page.export_button):
+                self.assertFalse(button.isEnabled())
+            with patch("appglider.settings_page.QFileDialog.getOpenFileName") as chooser:
+                page.import_catalog()
+                chooser.assert_not_called()
+            with patch.object(CatalogPreviewDialog, "exec") as preview:
+                page.import_example_catalog()
+                preview.assert_not_called()
+        finally:
+            self.window.task = None
+            self.window.refresh()
+        self.assertTrue(page.import_button.isEnabled())
 
     def wait_for_task(self, owner):
         deadline = time.monotonic() + 5
@@ -391,85 +394,73 @@ class RepositoryGuiTests(unittest.TestCase):
 
     def inspect(self):
         if not self.dialog.adding:
-            QTest.mouseClick(self.dialog.new_repository_button, Qt.MouseButton.LeftButton)
+            QTest.mouseClick(self.window.nav_add, Qt.MouseButton.LeftButton)
         self.dialog.url.setText(CUSTOM.source_url)
         self.dialog.name.setText(CUSTOM.name)
-        with patch(
-            "appglider.repositories_dialog.latest_release", return_value=custom_release()
-        ) as latest:
+        with patch("appglider.add_page.latest_release", return_value=custom_release()) as latest:
             QTest.mouseClick(self.dialog.inspect_button, Qt.MouseButton.LeftButton)
             self.wait_for_task(self.dialog)
             latest.assert_called_once()
             self.assertEqual(latest.call_args.args[0], CUSTOM)
         self.assertTrue(self.dialog.add_button.isEnabled())
 
-    def test_the_list_opens_apps_on_their_page_and_the_add_flow_has_its_own_view(self):
-        requested = []
-        self.dialog.app_requested.connect(requested.append)
-        self.assertEqual(self.dialog.pages.currentIndex(), 0)
-        self.assertTrue(self.dialog.repo_list.isVisibleTo(self.dialog))
-        self.dialog.open_item(self.dialog.repo_list.item(0))
-        self.assertEqual(requested, [self.dialog.repo_list.item(0).data(Qt.ItemDataRole.UserRole)])
-        self.assertEqual(self.dialog.pages.currentIndex(), 0)
-        QTest.mouseClick(self.dialog.new_repository_button, Qt.MouseButton.LeftButton)
-        self.assertEqual(self.dialog.pages.currentIndex(), 1)
-        self.assertTrue(self.dialog.add_page.isVisibleTo(self.dialog))
+    def test_the_add_flow_is_a_page_in_the_main_window_and_opens_the_new_app(self):
+        self.assertIsNot(self.window.pages.currentWidget(), self.dialog)
+        QTest.mouseClick(self.window.nav_add, Qt.MouseButton.LeftButton)
+        self.assertIs(self.window.pages.currentWidget(), self.dialog)
+        self.assertTrue(self.window.nav_add.isChecked())
         self.assertTrue(self.dialog.release_preview.isHidden())
         self.assertTrue(self.dialog.icon_group.isHidden())
         self.inspect()
         self.assertTrue(self.dialog.release_preview.isVisible())
         self.assertTrue(self.dialog.icon_group.isVisible())
         self.dialog.add_repository()
-        self.assertTrue(self.dialog.add_button.isHidden() or not self.dialog.add_button.isEnabled())
-        self.dialog.show_list()
-        self.assertEqual(self.dialog.pages.currentIndex(), 0)
-        rows = [self.dialog.repo_list.item(n).text() for n in range(self.dialog.repo_list.count())]
-        self.assertTrue(any(row.startswith(CUSTOM.name) and "Stable" in row for row in rows))
+        self.assertIs(self.window.pages.currentWidget(), self.window.app_page)
+        self.assertEqual(self.window.app_page.app_id, CUSTOM.id)
+        self.assertEqual(
+            self.window.footer.text(), f"Added {CUSTOM.name}. Install it from its page."
+        )
+        self.assertFalse(self.window.add_page.adding)
+        self.assertTrue(self.window.nav_library.isChecked())
+        self.assertIn(CUSTOM, self.library.apps)
 
-    def test_going_back_from_the_add_flow_discards_it_and_rows_show_the_channel(self):
-        QTest.mouseClick(self.dialog.new_repository_button, Qt.MouseButton.LeftButton)
+    def test_leaving_the_add_page_discards_it(self):
+        self.window.open_add_app()
         self.dialog.url.setText(CUSTOM.source_url)
-        QTest.mouseClick(self.dialog.back_button, Qt.MouseButton.LeftButton)
-        self.assertEqual(self.dialog.pages.currentIndex(), 0)
+        self.window.nav_library.click()
+        self.assertIsNot(self.window.pages.currentWidget(), self.dialog)
         self.assertFalse(self.dialog.adding)
         self.assertEqual(self.library.apps, APPS)
-        self.library.add_repository(replace(CUSTOM, include_prereleases=True))
-        self.dialog.refresh_list()
-        rows = [self.dialog.repo_list.item(n).text() for n in range(self.dialog.repo_list.count())]
-        self.assertTrue(any(CUSTOM.repo in row and "Previews" in row for row in rows))
+        self.window.open_add_app()
+        self.assertEqual(self.dialog.url.text(), "")
+        self.assertEqual(self.dialog.release_channel.currentIndex(), 0)
 
-    def test_settings_shows_close_instead_of_save_where_changes_save_immediately(self):
-        settings = SettingsDialog(self.settings, self.window, self.library)
-        self.addCleanup(settings.close)
-        settings.show()
-        for section, editing in enumerate((True, False, True, False, False)):
-            settings.sections.setCurrentRow(section)
-            self.assertEqual(settings.save_button.isVisibleTo(settings), editing)
-            self.assertEqual(settings.cancel_button.isVisibleTo(settings), editing)
-            self.assertEqual(settings.close_button.isVisibleTo(settings), not editing)
-
-    def select_custom(self):
-        for row in range(self.dialog.repo_list.count()):
-            if self.dialog.repo_list.item(row).data(Qt.ItemDataRole.UserRole) == CUSTOM.id:
-                self.dialog.repo_list.setCurrentRow(row)
-                return
-        self.fail("Custom repository missing from list")
+    def test_add_page_is_unavailable_while_a_task_runs(self):
+        self.window.task = object()
+        try:
+            self.window.refresh()
+            self.assertFalse(self.window.nav_add.isEnabled())
+            self.window.open_add_app()
+            self.assertIsNot(self.window.pages.currentWidget(), self.dialog)
+        finally:
+            self.window.task = None
+            self.window.refresh()
 
     def test_combobox_popups_have_readable_rows_and_contrast_in_both_themes(self):
-        self.library.add_repository(CUSTOM)
-        self.dialog.refresh_list()
-        self.select_custom()
-        settings = SettingsDialog(self.settings, self.window, self.library)
-        self.addCleanup(settings.close)
+        self.window.open_add_app()
+        self.dialog.set_icon_options(
+            (IconCandidate("one.png", normalise_icon(APP_ICON.read_bytes())),)
+        )
         for theme in ("Light", "Dark"):
             self.settings.setValue("appearance/theme", theme)
             self.window.apply_theme()
             for owner, combo in (
                 (self.dialog, self.dialog.icon_choices),
-                (settings, settings.theme),
+                (self.catalogs, self.catalogs.check_interval),
             ):
                 with self.subTest(theme=theme, control=combo.accessibleName()):
-                    owner.show()
+                    self.window.pages.setCurrentWidget(owner)
+                    self.qt.processEvents()
                     combo.showPopup()
                     QTest.qWait(10)
                     try:
@@ -491,26 +482,13 @@ class RepositoryGuiTests(unittest.TestCase):
                     finally:
                         combo.hidePopup()
 
-    def test_repositories_live_inside_the_applications_page_of_settings(self):
-        observed = []
-
-        def inspect_settings():
-            active = self.qt.activeModalWidget()
-            if isinstance(active, SettingsDialog):
-                observed.append(active.sections.currentItem().text())
-                observed.append(active.repositories.repo_list.count() > 0)
-                active.reject()
-
-        QTimer.singleShot(0, inspect_settings)
-        self.window.open_repositories()
-        self.assertEqual(observed, ["Applications", True])
-
     def test_inspect_preview_add_and_restart_update_library_immediately(self):
         self.inspect()
         self.assertIn("v0.9.4", self.dialog.version.text())
         self.assertEqual(self.dialog.filename.text(), custom_release().name)
         self.assertIn("SHA-256", self.dialog.checksum.text())
         QTest.mouseClick(self.dialog.add_button, Qt.MouseButton.LeftButton)
+        self.assertEqual(self.window.app_page.app_id, CUSTOM.id)
         self.assertEqual(len(self.window.cards), 15)
         self.assertEqual(self.window.library_count.text(), "15")
         self.assertEqual(self.window.cards[CUSTOM.id].app.name, CUSTOM.name)
@@ -540,17 +518,17 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIsNone(self.dialog.release)
         for address in ("https://evil.test/a/b", APPS[0].source_url):
             self.dialog.url.setText(address)
-            with patch("appglider.repositories_dialog.latest_release") as latest:
+            with patch("appglider.add_page.latest_release") as latest:
                 self.dialog.inspect_repository()
                 latest.assert_not_called()
             self.assertIsNone(self.dialog.task)
             self.assertFalse(self.dialog.add_button.isEnabled())
 
     def test_missing_appimage_or_checksum_is_reported_without_saving(self):
-        self.dialog.start_add_repository()
+        self.window.open_add_app()
         self.dialog.url.setText(CUSTOM.source_url)
         with patch(
-            "appglider.repositories_dialog.latest_release",
+            "appglider.add_page.latest_release",
             side_effect=ValueError("No published SHA-256 checksum"),
         ):
             self.dialog.inspect_repository()
@@ -569,7 +547,7 @@ class RepositoryGuiTests(unittest.TestCase):
             b'<path d="M0 0H32V32H0Z" fill="blue"/></svg>'
         )
         choices = (IconCandidate("assets/red.svg", first), IconCandidate("assets/blue.svg", second))
-        with patch("appglider.repositories_dialog.discover_icons", return_value=choices):
+        with patch("appglider.add_page.discover_icons", return_value=choices):
             self.inspect()
         self.assertFalse(self.dialog.icon_preview.pixmap().isNull())
         self.dialog.icon_choices.setCurrentIndex(1)
@@ -590,7 +568,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertFalse(self.window.tray_apps_menu.actions()[0].icon().isNull())
 
     def test_icon_lookup_failure_still_allows_the_repository_to_be_added(self):
-        with patch("appglider.repositories_dialog.discover_icons", side_effect=ValueError("quota")):
+        with patch("appglider.add_page.discover_icons", side_effect=ValueError("quota")):
             self.inspect()
         self.dialog.add_repository()
         self.assertIn(CUSTOM, self.library.apps)
@@ -599,10 +577,10 @@ class RepositoryGuiTests(unittest.TestCase):
         entries = [bambu_metadata(), bambu_metadata("02.09.00.12", preview=True)]
         with (
             patch.object(releases, "api_entries", return_value=entries),
-            patch("appglider.repositories_dialog.discover_icons", return_value=()),
+            patch("appglider.add_page.discover_icons", return_value=()),
             patch("appglider.library.download") as download,
         ):
-            self.dialog.start_add_repository()
+            self.window.open_add_app()
             self.dialog.url.setText(BAMBU.source_url)
             self.dialog.name.setText(BAMBU.name)
             self.dialog.inspect_repository()
@@ -618,7 +596,6 @@ class RepositoryGuiTests(unittest.TestCase):
             self.dialog.add_repository()
             saved = next(app for app in self.library.apps if app.id == BAMBU.id)
             self.assertEqual(saved.build_variant, chosen_bambu().build_variant)
-            self.assertEqual(self.dialog.build_combo.currentData(), saved.build_variant)
             self.assertEqual(self.window.cards[saved.id].action_button.text(), "Install")
             download.assert_not_called()
         self.assertEqual(self.library.scan(), {})
@@ -639,11 +616,11 @@ class RepositoryGuiTests(unittest.TestCase):
         with (
             patch.object(releases, "api_entries", return_value=[bambu_metadata(), preview]),
             patch(
-                "appglider.repositories_dialog.discover_icons",
+                "appglider.add_page.discover_icons",
                 side_effect=[icons, releases.RateLimited("api.github.com", 1)],
             ) as discover,
         ):
-            self.dialog.start_add_repository()
+            self.window.open_add_app()
             self.dialog.url.setText(BAMBU.source_url)
             self.dialog.name.setText(BAMBU.name)
             self.dialog.inspect_repository()
@@ -652,7 +629,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.wait_for_task(self.dialog)
             self.dialog.icon_choices.setCurrentIndex(1)
             self.assertEqual(self.dialog.selected_icon, selected)
-            self.dialog.release_channel.setCurrentIndex(1)
+            self.dialog.release_channel.setCurrentIndex(1, notify=True)
             self.assertEqual(self.dialog.selected_icon, selected)
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)
@@ -671,16 +648,12 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_channel_changes_keep_explicit_default_and_local_icon_until_repository_changes(self):
         png = normalise_icon(APP_ICON.read_bytes())
         choices = (IconCandidate("repository.png", png),)
-        with patch(
-            "appglider.repositories_dialog.discover_icons", return_value=choices
-        ) as discover:
+        with patch("appglider.add_page.discover_icons", return_value=choices) as discover:
             self.inspect()
             self.dialog.icon_choices.setCurrentIndex(1)
             self.assertIsNone(self.dialog.selected_icon)
-            self.dialog.release_channel.setCurrentIndex(1)
-            with patch(
-                "appglider.repositories_dialog.latest_release", return_value=custom_release()
-            ):
+            self.dialog.release_channel.setCurrentIndex(1, notify=True)
+            with patch("appglider.add_page.latest_release", return_value=custom_release()):
                 self.dialog.inspect_repository()
                 self.wait_for_task(self.dialog)
             self.assertIsNone(self.dialog.selected_icon)
@@ -688,14 +661,12 @@ class RepositoryGuiTests(unittest.TestCase):
             image = self.root / "local.png"
             image.write_bytes(png)
             with patch(
-                "appglider.repositories_dialog.QFileDialog.getOpenFileName",
+                "appglider.add_page.QFileDialog.getOpenFileName",
                 return_value=(str(image), ""),
             ):
                 self.dialog.choose_icon()
-            self.dialog.release_channel.setCurrentIndex(0)
-            with patch(
-                "appglider.repositories_dialog.latest_release", return_value=custom_release()
-            ):
+            self.dialog.release_channel.setCurrentIndex(0, notify=True)
+            with patch("appglider.add_page.latest_release", return_value=custom_release()):
                 self.dialog.inspect_repository()
                 self.wait_for_task(self.dialog)
             self.assertEqual(self.dialog.selected_icon, png)
@@ -708,16 +679,14 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_failed_icon_lookup_explains_fallback_and_can_be_retried(self):
         icon = IconCandidate("application.png", normalise_icon(APP_ICON.read_bytes()))
         with patch(
-            "appglider.repositories_dialog.discover_icons",
+            "appglider.add_page.discover_icons",
             side_effect=[ValueError("request limit reached"), (icon,)],
         ) as discover:
             self.inspect()
             self.assertTrue(self.dialog.add_button.isEnabled())
             self.assertIn("default icon", self.dialog.status.text())
             self.assertIn("request limit reached", self.dialog.status.text())
-            with patch(
-                "appglider.repositories_dialog.latest_release", return_value=custom_release()
-            ):
+            with patch("appglider.add_page.latest_release", return_value=custom_release()):
                 self.dialog.inspect_repository()
                 self.wait_for_task(self.dialog)
             self.assertEqual(discover.call_count, 2)
@@ -831,8 +800,8 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn("ubuntu22.04", updated.path.name)
         self.assertEqual(updated.previous, installed.path)
 
-    def test_close_cancels_inspection_and_waits_for_worker(self):
-        self.dialog.start_add_repository()
+    def test_leaving_the_page_cancels_inspection_and_ignores_its_result(self):
+        self.window.open_add_app()
         self.dialog.url.setText(CUSTOM.source_url)
 
         def lookup(app, cancel, cache):
@@ -840,19 +809,38 @@ class RepositoryGuiTests(unittest.TestCase):
             check_cancel(cancel)
             return custom_release()
 
-        with patch("appglider.repositories_dialog.latest_release", side_effect=lookup):
+        with patch("appglider.add_page.latest_release", side_effect=lookup):
             self.dialog.inspect_repository()
             task = self.dialog.task
-            stopped = []
-            self.dialog.stopped.connect(lambda: stopped.append(True))
-            self.dialog.stop()
+            self.window.nav_library.click()
             self.assertTrue(task.cancel.is_set())
             self.wait_for_task(self.dialog)
-        self.assertTrue(stopped)
+        self.assertIsNone(self.dialog.release)
+        self.assertFalse(self.dialog.closing)
         self.assertEqual(self.library.apps, APPS)
+        self.assertIsNot(self.window.pages.currentWidget(), self.dialog)
+
+    def test_a_result_arriving_after_leaving_does_not_fill_the_form_again(self):
+        self.window.open_add_app()
+        self.dialog.url.setText(CUSTOM.source_url)
+        gate = Event()
+
+        def lookup(app, cancel, cache):
+            gate.wait(5)
+            return custom_release()  # ignores the cancel: the result still arrives
+
+        with patch("appglider.add_page.latest_release", side_effect=lookup):
+            self.dialog.inspect_repository()
+            self.window.nav_library.click()
+            self.assertIsNotNone(self.dialog.task)
+            gate.set()
+            self.wait_for_task(self.dialog)
+        self.assertIsNone(self.dialog.release)
+        self.assertTrue(self.dialog.release_preview.isHidden())
+        self.assertFalse(self.dialog.add_button.isEnabled())
 
     def test_stopping_a_search_says_so_and_late_messages_do_not_hide_it(self):
-        self.dialog.start_add_repository()
+        self.window.open_add_app()
         self.dialog.url.setText(CUSTOM.source_url)
         release = Event()
 
@@ -863,17 +851,17 @@ class RepositoryGuiTests(unittest.TestCase):
             return ()
 
         with (
-            patch("appglider.repositories_dialog.latest_release", return_value=custom_release()),
-            patch("appglider.repositories_dialog.discover_icons", side_effect=lookup),
+            patch("appglider.add_page.latest_release", return_value=custom_release()),
+            patch("appglider.add_page.discover_icons", side_effect=lookup),
         ):
             self.dialog.inspect_repository()
-            self.dialog.stop()
+            self.window.nav_library.click()
             self.assertEqual(self.dialog.status.text(), "Stopping… one moment.")
             release.set()
             self.wait_for_task(self.dialog)
 
     def test_the_inspection_flow_also_reports_icon_search_progress(self):
-        self.dialog.start_add_repository()
+        self.window.open_add_app()
         self.dialog.url.setText(CUSTOM.source_url)
         self.dialog.name.setText(CUSTOM.name)
         proceed, shown = Event(), []
@@ -884,8 +872,8 @@ class RepositoryGuiTests(unittest.TestCase):
             return ()
 
         with (
-            patch("appglider.repositories_dialog.latest_release", return_value=custom_release()),
-            patch("appglider.repositories_dialog.discover_icons", side_effect=lookup),
+            patch("appglider.add_page.latest_release", return_value=custom_release()),
+            patch("appglider.add_page.discover_icons", side_effect=lookup),
         ):
             QTest.mouseClick(self.dialog.inspect_button, Qt.MouseButton.LeftButton)
             deadline = time.monotonic() + 3
@@ -901,14 +889,14 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_icon_save_failure_does_not_undo_repository_addition(self):
         png = normalise_icon(APP_ICON.read_bytes())
         with patch(
-            "appglider.repositories_dialog.discover_icons",
+            "appglider.add_page.discover_icons",
             return_value=(IconCandidate("icon.png", png),),
         ):
             self.inspect()
         with patch.object(self.library, "set_icon", side_effect=OSError("Disk full")):
             self.dialog.add_repository()
         self.assertIn(CUSTOM, self.library.apps)
-        self.assertIn("Icon could not be saved", self.dialog.status.text())
+        self.assertIn("Icon could not be saved", self.window.footer.text())
         self.assertIn(CUSTOM.id, self.window.cards)
 
     def test_custom_app_install_update_tray_and_repository_removal_guard(self):
@@ -968,7 +956,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(self.library.scan(), {})
 
     def test_prerelease_only_repository_can_be_added_after_explicit_opt_in(self):
-        self.dialog.start_add_repository()
+        self.window.open_add_app()
         self.dialog.url.setText(CUSTOM.source_url)
         self.dialog.name.setText(CUSTOM.name)
         beta = replace(custom_release("0.10.0-beta.1"), prerelease=True, is_latest=False)
@@ -980,12 +968,12 @@ class RepositoryGuiTests(unittest.TestCase):
                 )
             return beta
 
-        with patch("appglider.repositories_dialog.latest_release", side_effect=inspect):
+        with patch("appglider.add_page.latest_release", side_effect=inspect):
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)
             self.assertIn("Only prereleases", self.dialog.status.text())
             self.assertFalse(self.dialog.add_button.isEnabled())
-            self.dialog.release_channel.setCurrentIndex(1)
+            self.dialog.release_channel.setCurrentIndex(1, notify=True)
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)
         self.assertEqual(self.dialog.version_label.badge.text(), "Pre-release")
@@ -997,18 +985,10 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(self.dialog.release_channel.currentIndex(), 1)
 
     def test_direct_add_app_opens_the_add_form(self):
-        observed = []
-
-        def inspect_dialog():
-            active = self.qt.activeModalWidget()
-            if isinstance(active, SettingsDialog):
-                panel = active.repositories
-                observed.append(panel.adding and panel.add_page.isVisible())
-                active.reject()
-
-        QTimer.singleShot(0, inspect_dialog)
         self.window.nav_add.click()
-        self.assertEqual(observed, [True])
+        self.assertTrue(self.dialog.adding)
+        self.assertTrue(self.dialog.isVisible())
+        self.assertTrue(self.dialog.url.hasFocus())
 
 
 if __name__ == "__main__":

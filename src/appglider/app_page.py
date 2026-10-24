@@ -1,6 +1,6 @@
 """The App page: one application's status, release notes, versions and preferences."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
@@ -224,6 +224,17 @@ class SettingRow(QWidget):
         layout.addLayout(text, stretch=1)
         self.control = control
         layout.addWidget(control, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+
+def add_setting_rows(layout: QVBoxLayout, rows: Iterable[QWidget]) -> None:
+    """Stack setting rows in a panel with a divider between neighbours."""
+    for index, row in enumerate(rows):
+        if index:
+            divider = QFrame()
+            divider.setObjectName("rowDivider")
+            divider.setFixedHeight(1)
+            layout.addWidget(divider)
+        layout.addWidget(row)
 
 
 class AppPage(QScrollArea):
@@ -453,21 +464,17 @@ class AppPage(QScrollArea):
         self.shortcut_row = SettingRow(
             "Menu shortcut", "In your applications menu", self.shortcut_button
         )
-        rows = (
-            self.channel_row,
-            self.hold_row,
-            self.pin_row,
-            self.build_row,
-            self.icon_row,
-            self.shortcut_row,
+        add_setting_rows(
+            layout,
+            (
+                self.channel_row,
+                self.hold_row,
+                self.pin_row,
+                self.build_row,
+                self.icon_row,
+                self.shortcut_row,
+            ),
         )
-        for index, row in enumerate(rows):
-            if index:
-                divider = QFrame()
-                divider.setObjectName("rowDivider")
-                divider.setFixedHeight(1)
-                layout.addWidget(divider)
-            layout.addWidget(row)
         self.hold_hint = self.hold_row.hint
         self.build_hint = self.build_row.hint
         self.icon_hint = self.icon_row.hint
