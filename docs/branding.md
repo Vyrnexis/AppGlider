@@ -8,7 +8,7 @@ background, so it reads on both light and dark desktops and panels. The brand
 palette is `#1C1F1A`, `#5B7F52`, `#8FAE75`, `#D6D1C4` and `#F4F3EB`. The name replaced
 AppHarbour, which was already in use.
 
-Settings > Appearance offers System (follows the desktop's light or dark preference, the
+Settings → General offers System (follows the desktop's light or dark preference, the
 default), Light and Dark, plus an accent colour: Blue (the default), Green, Amber or Clay.
 The retired Forest, Earthy and Sandstone themes are read as Dark with Green, Clay or Amber.
 
@@ -25,7 +25,7 @@ for both are in `docs/branding/icons/`.
 The vector source is `docs/branding/appglider-icon.svg`: the feathers have real gaps cut
 between them so they render cleanly across light and dark backgrounds.
 `src/appglider/assets/icons/appglider.png` is its 1024 px render. Qt renders the same PNG at
-the sizes required by the window, header, desktop shortcut and tray; no extra dependency is
+the sizes required by the window, sidebar, desktop shortcut and tray; no extra dependency is
 needed. The bundled icons for the ArtCraft example catalog's apps remain separate.
 
 ## Application identity
@@ -43,7 +43,7 @@ needed. The bundled icons for the ArtCraft example catalog's apps remain separat
 
 ## Tray behaviour
 
-Click restores the window. The context menu opens AppGlider, checks updates, launches
+Click restores the window. The context menu opens AppGlider, checks for updates, launches
 managed installed apps or quits. Closing hides only while a tray is available; otherwise
 normal close behaviour remains. Downloads continue while hidden, and Quit waits for a
 confirmed cancellation to finish before exiting. Autostart and notifications are not added.

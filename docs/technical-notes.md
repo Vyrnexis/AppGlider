@@ -7,6 +7,7 @@ who want to know exactly what AppGlider does with their system, and for contribu
 ## Contents
 
 - [How release checks work](#how-release-checks-work)
+- [Release notes](#release-notes)
 - [GitHub's request allowance](#githubs-request-allowance)
 - [Stable and preview versions](#stable-and-preview-versions)
 - [Which file is downloaded](#which-file-is-downloaded)
@@ -19,24 +20,24 @@ who want to know exactly what AppGlider does with their system, and for contribu
 
 ## How release checks work
 
-- Startup, scheduled and **Refresh releases** checks cover installed apps only. Checking
+- Startup, scheduled and **Check for updates** checks cover installed apps only. Checking
   an app you have not installed happens only when you inspect a repository or choose
-  **Check releases** in its details. With no installed apps, startup makes no release
+  **Check now** on its page. With no installed apps, startup makes no release
   requests.
 - Release information is read from GitHub's metadata. AppGlider never downloads an app
   just to look at it or to check for updates.
-- Results less than five minutes old are reused; older results are refreshed. **Refresh
-  releases** and the details' **Check releases** ignore that window.
+- Results less than five minutes old are reused; older results are refreshed. **Check for
+  updates** and the app page's **Check now** ignore that window.
 - **Cheap checks.** For a stable-only app whose release information is already saved,
-  background, startup, scheduled and **Refresh releases** checks first send a `HEAD` request
+  background, startup, scheduled and **Check for updates** checks first send a `HEAD` request
   to `github.com/<owner>/<repo>/releases/latest`. GitHub answers with a redirect to the
   tag of its designated latest stable release, which AppGlider reads without following it.
   If that version equals the saved one, the saved information is reused and only its
   "checked" time is updated, with no API request. If the tag differs, the page gives no
   clear answer (no release, a renamed repository, an unreadable tag, a network error, HTTP
-  429), AppGlider goes on to the API exactly as before. The details dialog's **Check
-  releases**, installing and adding a repository always do a full check. The footer reports
-  this source as "GitHub release page".
+  429), AppGlider goes on to the API exactly as before. The app page's **Check
+  now**, installing and adding a repository always do a full check. The status tooltip
+  reports this source as "GitHub release page".
 - **Apps with previews turned on** cannot rely on the "Latest" page, which ignores previews.
   Their cheap check reads the repository's public Atom release feed
   (`github.com/<owner>/<repo>/releases.atom`) with a saved ETag, so an unchanged feed is a
@@ -45,9 +46,9 @@ who want to know exactly what AppGlider does with their system, and for contribu
   the feed cannot be read, the API is used. The feed's first download is large because it
   carries the release notes (a few megabytes for some projects) and is limited to 8 MiB;
   AppGlider keeps only its ETag and tag list, in `<app>-feed.json` in the release cache.
-- Checked information is kept across restarts and shown first, so a card can show what was
-  known before the new check finishes. Cards show when the information was checked and
-  whether a refresh failed. A failed check keeps the last known versions and badges.
+- Checked information is kept across restarts and shown first, so a row can show what was
+  known before the new check finishes. Rows and app pages show when the information was
+  checked and whether a check failed. A failed check keeps the last known versions and badges.
 - Background checks run one app at a time, or up to three at once while GitHub reports at
   least 30 requests left. Launching apps and changing preferences stay available meanwhile.
 - Installing re-checks the release using your saved preference and the same five-minute
@@ -56,6 +57,14 @@ who want to know exactly what AppGlider does with their system, and for contribu
   published size. A failed or cancelled download leaves the installed version untouched.
 - AppGlider itself is updated by replacing its AppImage with a newer one and starting it;
   it does not update itself.
+
+## Release notes
+
+The app page shows the description GitHub holds for the offered release. It is read from
+the metadata of the check that found the release (the API or the public release page), so
+showing it costs no extra request, and it is kept bounded in length. The text is rendered
+as Markdown, read-only: images and local files are never loaded and only web links open.
+A project that published no description shows a link to its releases instead.
 
 ## GitHub's request allowance
 
@@ -73,7 +82,7 @@ AppGlider needs no GitHub account or token. It uses GitHub's public API, which a
   while a download or another check is running, and when nothing is installed.
 - When the allowance runs out, AppGlider falls back to GitHub's public release pages for
   up to three pages of ten releases, applying the same selection rules.
-- The **GitHub** indicator beside the version button opens **Settings → GitHub**,
+- The **GitHub** indicator in the sidebar's status block opens **Settings → GitHub**,
   showing the last reported allowance, active retry countdowns and the most recent
   successful result with its repository, source (GitHub API, public pages or cached) and
   time. Opening it makes no network requests. Counts come from earlier GitHub responses and
@@ -84,7 +93,7 @@ AppGlider needs no GitHub account or token. It uses GitHub's public API, which a
 ## Update notifications
 
 The optional notification is sent through the system tray's message support, only after a
-scheduled check (never at startup or for **Refresh releases**), only if the tray is available
+scheduled check (never at startup or for **Check for updates**), only if the tray is available
 and visible, and not while the AppGlider window is shown and active. AppGlider remembers the
 version it announced for each app, so an update is announced once; when the update is
 installed or goes away, the memory is cleared. Updates that are already waiting when the
@@ -125,10 +134,10 @@ option is switched on are not announced, only new ones.
   not settle it, a **Build variant** choice appears (for example Bambu Studio's Ubuntu
   22.04 or 24.04 builds). The choice is remembered separately from the stable/preview
   choice and follows that build across releases, ignoring version numbers and build dates.
-  Change it under **⋯ → Application preferences… → Build variant → Choose another build…**.
+  Change it on the app's page under **Preferences → Build → Change…**.
 - AppGlider does not detect which distribution a build suits. Follow the project's own
   guidance.
-- If a saved variant disappears or becomes ambiguous, the installed card shows **Choose
+- If a saved variant disappears or becomes ambiguous, the installed row shows **Choose
   build**. AppGlider keeps the installed copy and waits for your choice rather than
   switching builds. Choosing a build never downloads anything, and a changed preference
   affects future installs and updates, not the installed copy. Upstream filename changes can
@@ -230,7 +239,7 @@ Library and settings changes are written atomically, so a crash cannot leave a h
 file. A corrupt file is preserved and reported, never overwritten with an empty library.
 Only one AppGlider runs per data folder; starting it again raises the running window.
 
-Choices such as the Appearance, update schedule, sort order (`library/sort`) and pinned apps
+Choices such as the theme and accent (`appearance/theme`, `appearance/accent`), update schedule, sort order (`library/sort`), your own order (`library/order`, a JSON list of app identifiers, used by the Custom order sort) and pinned apps
 (`library/pinned`, a JSON list of app identifiers), the notification choice
 (`notifications/updates`) and the versions already announced (`notifications/seen`, a JSON
 object) live in the settings file. Unreadable or
@@ -252,6 +261,6 @@ unknown values fall back to the defaults instead of causing an error.
 
 If the library contains an entry for an app that is not in your repository list (a removed
 repository, or apps installed before you imported the example catalog), the entry is kept
-untouched and a footer button **Review N unrecognised entries…** appears. Tick entries to
+untouched and a **Review N unrecognised entries…** button appears at the bottom of the window. Tick entries to
 forget them. Nothing is forgotten without confirmation, and files on disk are never deleted.
 Unreadable or malformed library files are preserved and reported.

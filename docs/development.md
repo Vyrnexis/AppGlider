@@ -31,6 +31,26 @@ python3 -m venv .venv
 .venv/bin/python -O -m appglider
 ```
 
+## Source layout
+
+The interface is one main window with a sidebar and stacked pages, all in `src/appglider/`:
+
+| Module | Responsibility |
+| --- | --- |
+| `window.py` | Main window: sidebar, Library and Updates pages, rows, drag reordering, tray, theme stylesheet |
+| `app_page.py` | App page: release notes, versions, preferences, Manage; shared panel and setting-row helpers |
+| `app_status.py` | The status chip and main action of an app, from its install and release state |
+| `settings_page.py` | Settings page and its six sections (instant apply) |
+| `add_page.py` | Add app page: inspect a repository, choose build and icon, add |
+| `controls.py` | Switch and segmented controls |
+| `preferences.py` | Theme, accent and update-check choices, and migration of retired themes |
+| `catalog_preview.py` | The read-only preview shown before a catalog is imported |
+
+Visual values (colours, radii, sizes) are defined once, as theme tokens, in `window.py`;
+[the design brief](design.md) describes them and the rules for new screens. Sidebar and
+check-button icons are drawn with `QPainter` in the current theme's colours, so the
+AppImage needs no SVG support.
+
 ## Checks
 
 ```sh
@@ -65,7 +85,7 @@ python3 packaging/smoke_test.py dist/AppGlider-<version>-linux-x86_64.AppImage
 ```
 
 The smoke test runs twice: once as an empty first run, and once with two sample repositories
-so the app cards are exercised too. Verify the checksum from inside `dist/` with
+so the app rows are exercised too. Verify the checksum from inside `dist/` with
 `sha256sum -c SHA256SUMS.txt`.
 Before a release, also exercise the tray, folder picker, themes and launching on real
 X11/Wayland desktops. The headless check does not qualify those interactions.
@@ -114,4 +134,4 @@ See [GitHub Actions](builds.md) for the automated build process, and the
   recovery). Put new technical explanations there and link to them from the guide.
 - Update `docs/usage.md` whenever a button, menu item or setting changes, and re-take the
   screenshots in `docs/previews/` (taken in the Dark theme from a disposable library, with the
-  window at 1040×816 and Settings at 1040×800) after visible interface changes.
+  window at about 1040×720; the Add app page is taller so the whole form shows) after visible interface changes.

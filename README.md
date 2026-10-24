@@ -10,24 +10,30 @@ or appear in your menu. AppGlider takes care of that: it downloads apps from the
 pages, checks the download is intact, adds them to your application menu and lets you know
 when a new version is out.
 
-![AppGlider showing 12 installed apps, one with an update waiting](docs/previews/appglider-library.png)
+![AppGlider's Library page with two updates waiting](docs/previews/appglider-library.png)
 
-*An example library using the default look. The versions shown are made up.*
+*An example library in the Dark theme with the default blue accent. The versions shown are
+made up.*
 
 ## What it does
 
-- Installs apps from public GitHub repositories and launches them from one searchable list.
+- Installs apps from public GitHub repositories and launches them from one searchable list
+  of rows, with a sidebar for Library, Updates, Add app and Settings.
 - Checks your installed apps for updates when it starts and then on a schedule you choose.
-  A badge appears on its tray icon when something is waiting.
+  A banner offers **Update all**, and a badge appears on its tray icon when something is
+  waiting.
 - Checks each download against the checksum the project published before installing.
 - Keeps the previous version so you can roll back if an update misbehaves.
-- Lets you choose stable releases only, or try previews, for each app.
+- Lets you choose stable releases only, or try previews, for each app, and read the release
+  notes on the app's own page before you update.
+- Can hold an app at its current version so it is never offered an update.
 - Adds a menu entry for each app it installs and can sit in your system tray.
-- Sorts your apps and lets you pin favourites to the top.
+- Sorts your apps, lets you pin favourites to the top, or drag the rows into your own order.
 - Can show a desktop notification when new updates are found (off unless you turn it on).
 - Shares lists of apps as plain text files you can read, edit and import
   (see [catalogs](docs/usage.md#catalogs-sharing-a-list-of-apps)).
-- Follows your desktop's colours, or pick Light, Dark or one of three coloured themes.
+- Follows your desktop's light or dark setting, or choose Light or Dark and one of four
+  accent colours (Blue, Green, Amber or Clay).
 
 AppGlider only manages the apps it installed itself. AppImages you already have, and apps
 from other launchers, are left alone.
@@ -61,15 +67,16 @@ also enable `programs.appimage.enable = true;` with `binfmt = true;`.
 
 AppGlider starts empty. Add apps in either of two ways:
 
-- **+ Add app**: paste a GitHub repository address, choose **Inspect repository**, then
-  **Add to library**.
-- **Import catalog…** (in the **Catalog** menu under **Settings → Applications**): add a whole
+- **Add app** (in the sidebar): paste a GitHub repository address, choose **Inspect
+  repository**, then **Add to library**.
+- **Import catalog…** (on the welcome screen, or under **Settings → Catalogs**): add a whole
   list at once from a plain-text file. **Example catalog** adds a ready-made list of the
   ArtCraft apps and SolidCraft that is built into AppGlider
   ([`docs/catalogs/artcraft.toml`](docs/catalogs/artcraft.toml)).
 
-Adding an app only puts a card in your library. Press **Install** on the card to download
-it. The project needs a published release with an AppImage and a checksum.
+Adding an app only puts a row in your library. Press **Install** on the row to download it,
+and click the app's name any time to open its page. The project needs a published release
+with an AppImage and a checksum.
 
 ## Learn more
 
