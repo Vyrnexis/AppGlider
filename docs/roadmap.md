@@ -24,7 +24,7 @@ change after discussion. Something being listed here is not a promise that it wi
   apps as rows with status chips, an updates banner with **Update all**, and a page for each
   app with its release notes, versions, preferences and a Manage area. Settings and Add app
   are pages in the same window, and there are Light and Dark themes with a choice of
-  accent colour (Blue, Green, Amber or Clay). The window works from the keyboard.
+  accent colour (Blue, Green, Amber or Teal). The window works from the keyboard.
 - **Your own order:** drag rows into a custom order (or use **Move up** and **Move down**);
   pinned apps stay on top.
 - **Start with my desktop:** an opt-in switch in Settings → General writes an autostart entry

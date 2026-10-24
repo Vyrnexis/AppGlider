@@ -9,8 +9,9 @@ palette is `#1C1F1A`, `#5B7F52`, `#8FAE75`, `#D6D1C4` and `#F4F3EB`. The name re
 AppHarbour, which was already in use.
 
 Settings → General offers System (follows the desktop's light or dark preference, the
-default), Light and Dark, plus an accent colour: Blue (the default), Green, Amber or Clay.
-The retired Forest, Earthy and Sandstone themes are read as Dark with Green, Clay or Amber.
+default), Light and Dark, plus an accent colour: Blue (the default), Green, Amber or Teal.
+The retired Forest theme is read as Dark with Green, Earthy and Sandstone as Dark with Amber,
+and the retired Clay accent as Amber.
 
 While updates are waiting, the tray shows `appglider-update.png` (source
 `docs/branding/appglider-update-icon.svg`): the same wing with an amber badge and an up arrow

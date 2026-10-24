@@ -33,7 +33,7 @@ made up.*
 - Shares lists of apps as plain text files you can read, edit and import
   (see [catalogs](docs/usage.md#catalogs-sharing-a-list-of-apps)).
 - Follows your desktop's light or dark setting, or choose Light or Dark and one of four
-  accent colours (Blue, Green, Amber or Clay).
+  accent colours (Blue, Green, Amber or Teal).
 
 AppGlider only manages the apps it installed itself. AppImages you already have, and apps
 from other launchers, are left alone.

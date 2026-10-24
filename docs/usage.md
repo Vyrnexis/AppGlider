@@ -283,7 +283,7 @@ Open **Settings** (bottom of the sidebar). It is a page in the main window with 
 sections on the left. Everything saves as you change it, so there is no Save or Cancel; the
 page says "Changes save automatically".
 
-- **General**: **Theme** (System, Light or Dark), **Accent** (Blue, Green, Amber or Clay) and
+- **General**: **Theme** (System, Light or Dark), **Accent** (Blue, Green, Amber or Teal) and
   whether closing the window keeps AppGlider running in the tray, and whether AppGlider
   starts with your desktop.
 - **Updates**: how often to check for updates, and whether to **Notify me about new
@@ -297,7 +297,7 @@ page says "Changes save automatically".
 
 **Theme** System (the default) follows your desktop's light or dark setting. The window
 changes as you pick, so you can try them out. If you used the older Forest, Earthy or
-Sandstone themes, AppGlider now shows them as Dark with a Green, Clay or Amber accent.
+Sandstone themes, AppGlider now shows them as Dark with a Green or Amber accent.
 
 Changing the install folder (under **Storage**) only affects new installs. Apps you already installed stay where
 they are and keep updating there. The new folder is used once you finish typing it or choose it with **Browse…**.

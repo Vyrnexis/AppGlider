@@ -1397,7 +1397,7 @@ class LibraryTests(unittest.TestCase):
     def test_retired_themes_and_unknown_values_are_migrated_on_read(self) -> None:
         for stored, expected in (
             ("Forest", ("Dark", "Green")),
-            ("Earthy", ("Dark", "Clay")),
+            ("Earthy", ("Dark", "Amber")),
             ("Sandstone", ("Dark", "Amber")),
             ("Unknown", ("System", "Blue")),
             ("Light", ("Light", "Blue")),
@@ -1412,6 +1412,9 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(appearance_choice(self.settings), ("Dark", "Blue"))
         self.settings.setValue("appearance/accent", "Amber")
         self.assertEqual(appearance_choice(self.settings), ("Dark", "Amber"))
+        self.settings.setValue("appearance/accent", "Clay")  # retired accent
+        self.assertEqual(appearance_choice(self.settings), ("Dark", "Amber"))
+        self.assertEqual(self.settings.value("appearance/accent"), "Clay")  # read never writes
 
     def test_retired_theme_applies_and_shows_migrated_values(self) -> None:
         self.settings.setValue("appearance/theme", "Forest")
@@ -1437,16 +1440,16 @@ class LibraryTests(unittest.TestCase):
         self.window.apply_theme()
         self.assertEqual(highlight(), "#3563d8")
         page = self.window.settings_page
-        self.assertEqual(list(page.accents), ["Blue", "Green", "Amber", "Clay"])
+        self.assertEqual(list(page.accents), ["Blue", "Green", "Amber", "Teal"])
         for name, button in page.accents.items():
             self.assertTrue(button.isCheckable())
             self.assertEqual(button.accessibleName(), f"{name} accent")
         self.assertTrue(page.accents["Blue"].isChecked())
-        page.accents["Clay"].click()
-        self.assertTrue(page.accents["Clay"].isChecked())
+        page.accents["Teal"].click()
+        self.assertTrue(page.accents["Teal"].isChecked())
         self.assertFalse(page.accents["Blue"].isChecked())
-        self.assertEqual(highlight(), "#9c5434")
-        self.assertEqual(self.settings.value("appearance/accent"), "Clay")
+        self.assertEqual(highlight(), "#0f7c80")
+        self.assertEqual(self.settings.value("appearance/accent"), "Teal")
         page.theme.buttons[2].click()
         page.accents["Amber"].click()
         self.assertEqual(self.settings.value("appearance/accent"), "Amber")

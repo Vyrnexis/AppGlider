@@ -110,12 +110,12 @@ colour, radius or spacing value directly in a widget.
 Chip and banner backgrounds are the state colour at 13–14 % opacity.
 
 **Accent** is chosen separately from the theme: Blue `#8fb3ff` / `#3563d8`, Green `#6fcf97` /
-`#1f8a4c`, Amber `#d9a35b` / `#9a6512`, Clay `#c58b6a` / `#9c5434` (dark / light). Text on an
+`#1f8a4c`, Amber `#d9a35b` / `#9a6512`, Teal `#4fc8c8` / `#0f7c80` (dark / light). Text on an
 accent-filled button uses `bg` in dark mode and white in light mode.
 
 **Themes** are System (follows the desktop's light or dark preference), Light
 and Dark. Forest, Earthy and Sandstone are retired; a saved retired theme maps to Dark with
-the nearest accent (Forest → Green, Earthy → Clay, Sandstone → Amber).
+the nearest accent (Forest → Green, Earthy → Amber, Sandstone → Amber; the retired Clay accent → Amber).
 
 **Shape and spacing**: radius 10 px for panels and the list, 8 px for buttons, inputs and
 segments, 20 px (pill) for chips. Spacing steps are 4, 8, 12, 16 and 22 px; page padding is
