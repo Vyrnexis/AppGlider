@@ -48,6 +48,7 @@ from appglider.window import (
     LauncherWindow,
     OrphansDialog,
     SettingsDialog,
+    appearance_choice,
     check_interval_hours,
     fit_size,
     notified_versions,
@@ -872,7 +873,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.settings.value("appearance/theme"), "Dark")
         self.assertEqual(self.settings.value("installation/folder"), folder)
         self.assertFalse(Path(folder).exists())
-        self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#171b24")
+        self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#15181e")
         self.settings.sync()
         reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
         self.assertEqual(reopened.value("appearance/theme"), "Dark")
@@ -882,7 +883,7 @@ class LibraryTests(unittest.TestCase):
             if isinstance(dialog, SettingsDialog):
                 dialog.theme.setCurrentText("Light")
                 self.assertEqual(
-                    self.qt.palette().color(QPalette.ColorRole.Window).name(), "#f5f6fa"
+                    self.qt.palette().color(QPalette.ColorRole.Window).name(), "#eef0f4"
                 )
                 self.assertEqual(self.settings.value("appearance/theme"), "Dark")
                 dialog.reject()
@@ -890,7 +891,7 @@ class LibraryTests(unittest.TestCase):
         QTimer.singleShot(0, cancel_settings)
         self.window.open_settings()
         self.assertEqual(self.settings.value("appearance/theme"), "Dark")
-        self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#171b24")
+        self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#15181e")
 
     def test_appearance_choices_switch_and_persist(self) -> None:
         def window_colour() -> str:
@@ -902,7 +903,7 @@ class LibraryTests(unittest.TestCase):
                 if isinstance(dialog, SettingsDialog):
                     self.assertEqual(
                         [dialog.theme.itemText(i) for i in range(dialog.theme.count())],
-                        ["System", "Light", "Dark", "Forest", "Earthy", "Sandstone"],
+                        ["System", "Light", "Dark"],
                     )
                     dialog.theme.setCurrentText(theme)
                     dialog.accept()
@@ -921,32 +922,103 @@ class LibraryTests(unittest.TestCase):
         QTimer.singleShot(0, default_choice)
         self.window.open_settings()
         for theme, colour in (
-            ("Light", "#f5f6fa"),
-            ("Dark", "#171b24"),
-            ("Forest", "#1c1f1a"),
-            ("Earthy", "#2a2420"),
-            ("Sandstone", "#2b2923"),
+            ("Light", "#eef0f4"),
+            ("Dark", "#15181e"),
         ):
             choose(theme)
             self.assertEqual(self.settings.value("appearance/theme"), theme)
             self.assertEqual(window_colour(), colour)
 
-    def test_system_appearance_uses_the_native_palette(self) -> None:
+    def test_retired_themes_and_unknown_values_are_migrated_on_read(self) -> None:
+        for stored, expected in (
+            ("Forest", ("Dark", "Green")),
+            ("Earthy", ("Dark", "Clay")),
+            ("Sandstone", ("Dark", "Amber")),
+            ("Unknown", ("System", "Blue")),
+            ("Light", ("Light", "Blue")),
+        ):
+            self.settings.setValue("appearance/theme", stored)
+            self.settings.remove("appearance/accent")
+            self.assertEqual(appearance_choice(self.settings), expected)
+            self.assertEqual(self.settings.value("appearance/theme"), stored)
+            self.assertIsNone(self.settings.value("appearance/accent"))
+        self.settings.setValue("appearance/theme", "Dark")
+        self.settings.setValue("appearance/accent", "Mauve")
+        self.assertEqual(appearance_choice(self.settings), ("Dark", "Blue"))
+        self.settings.setValue("appearance/accent", "Amber")
+        self.assertEqual(appearance_choice(self.settings), ("Dark", "Amber"))
+
+    def test_retired_theme_applies_and_saves_migrated_values(self) -> None:
         self.settings.setValue("appearance/theme", "Forest")
         self.window.apply_theme()
-        self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#1c1f1a")
-        for value in ("System", "Unknown"):
-            self.settings.setValue("appearance/theme", value)
+        palette = self.qt.palette()
+        self.assertEqual(palette.color(QPalette.ColorRole.Window).name(), "#15181e")
+        self.assertEqual(palette.color(QPalette.ColorRole.Highlight).name(), "#6fcf97")
+
+        def save() -> None:
+            dialog = self.qt.activeModalWidget()
+            if isinstance(dialog, SettingsDialog):
+                self.assertEqual(dialog.theme.currentText(), "Dark")
+                self.assertEqual(dialog.accent.currentText(), "Green")
+                dialog.accept()
+
+        QTimer.singleShot(0, save)
+        self.window.open_settings()
+        self.assertEqual(self.settings.value("appearance/theme"), "Dark")
+        self.assertEqual(self.settings.value("appearance/accent"), "Green")
+
+    def test_accent_previews_reverts_and_persists(self) -> None:
+        def highlight() -> str:
+            return self.qt.palette().color(QPalette.ColorRole.Highlight).name()
+
+        self.settings.setValue("appearance/theme", "Light")
+        self.window.apply_theme()
+        self.assertEqual(highlight(), "#3563d8")
+
+        def cancel() -> None:
+            dialog = self.qt.activeModalWidget()
+            if isinstance(dialog, SettingsDialog):
+                self.assertEqual(dialog.accent.accessibleName(), "Accent colour")
+                self.assertEqual(
+                    [dialog.accent.itemText(i) for i in range(dialog.accent.count())],
+                    ["Blue", "Green", "Amber", "Clay"],
+                )
+                dialog.accent.setCurrentText("Clay")
+                self.assertEqual(highlight(), "#9c5434")
+                dialog.reject()
+
+        QTimer.singleShot(0, cancel)
+        self.window.open_settings()
+        self.assertEqual(highlight(), "#3563d8")
+        self.assertIsNone(self.settings.value("appearance/accent"))
+
+        def save() -> None:
+            dialog = self.qt.activeModalWidget()
+            if isinstance(dialog, SettingsDialog):
+                dialog.theme.setCurrentText("Dark")
+                dialog.accent.setCurrentText("Amber")
+                dialog.accept()
+
+        QTimer.singleShot(0, save)
+        self.window.open_settings()
+        self.assertEqual(self.settings.value("appearance/accent"), "Amber")
+        self.assertEqual(highlight(), "#d9a35b")
+        self.assertIn("#d9a35b", self.qt.styleSheet())
+
+    def test_system_appearance_follows_the_desktop_scheme(self) -> None:
+        self.settings.setValue("appearance/theme", "System")
+        hints = self.qt.styleHints()
+        for scheme, colour in (
+            (Qt.ColorScheme.Dark, "#15181e"),
+            (Qt.ColorScheme.Light, "#eef0f4"),
+        ):
+            with patch.object(type(hints), "colorScheme", return_value=scheme):
+                self.window.apply_theme()
+            self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), colour)
+        self.settings.setValue("appearance/theme", "Unknown")
+        with patch.object(type(hints), "colorScheme", return_value=Qt.ColorScheme.Dark):
             self.window.apply_theme()
-            native = QPalette()
-            self.assertEqual(
-                self.qt.palette().color(QPalette.ColorRole.Window).name(),
-                native.color(QPalette.ColorRole.Window).name(),
-            )
-            self.assertEqual(
-                self.qt.palette().color(QPalette.ColorRole.Highlight).name(),
-                native.color(QPalette.ColorRole.Highlight).name(),
-            )
+        self.assertEqual(self.qt.palette().color(QPalette.ColorRole.Window).name(), "#15181e")
 
     def wait_for_task(self) -> None:
         deadline = time.monotonic() + 5

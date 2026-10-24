@@ -117,14 +117,50 @@ def icon_label(app: App, size: int, path: Path | None = None) -> QLabel:
     return label
 
 
-# Appearance -> background, surface, text, muted text, border and accent colours. "System"
-# instead follows the desktop's own palette.
-THEMES: dict[str, tuple[str, ...]] = {
-    "Light": ("#f5f6fa", "#ffffff", "#202a3b", "#57647a", "#d5dce8", "#245dc2"),
-    "Dark": ("#171b24", "#212734", "#eff3fb", "#abb7cc", "#394458", "#91b6ff"),
-    "Forest": ("#1c1f1a", "#262b24", "#f4f3eb", "#b9b6a8", "#3d453a", "#8fae75"),
-    "Earthy": ("#2a2420", "#342d28", "#f6f1e7", "#c4b8a6", "#4d4239", "#d98a5b"),
-    "Sandstone": ("#2b2923", "#35332b", "#f7f4e9", "#c9c2ac", "#4a463a", "#d6b567"),
+# Colour tokens per theme (see docs/design.md). "System" picks Light or Dark from the desktop.
+THEMES: dict[str, dict[str, str]] = {
+    "Dark": {
+        "bg": "#15181e",
+        "surface": "#1c2028",
+        "surface2": "#232833",
+        "raised": "#2a303c",
+        "line": "#2f3542",
+        "text": "#e8eaef",
+        "muted": "#9aa1ae",
+        "faint": "#6c7381",
+        "ok": "#6fcf97",
+        "warn": "#f0b860",
+        "held": "#c7a6ff",
+        "danger": "#ff8a8a",
+    },
+    "Light": {
+        "bg": "#eef0f4",
+        "surface": "#ffffff",
+        "surface2": "#f5f6f9",
+        "raised": "#eceef3",
+        "line": "#dde0e7",
+        "text": "#1b1f27",
+        "muted": "#5d6573",
+        "faint": "#8b92a0",
+        "ok": "#1f8a4c",
+        "warn": "#a8670a",
+        "held": "#7044c4",
+        "danger": "#c53030",
+    },
+}
+# Accent -> (dark value, light value).
+ACCENTS: dict[str, tuple[str, str]] = {
+    "Blue": ("#8fb3ff", "#3563d8"),
+    "Green": ("#6fcf97", "#1f8a4c"),
+    "Amber": ("#d9a35b", "#9a6512"),
+    "Clay": ("#c58b6a", "#9c5434"),
+}
+DEFAULT_ACCENT = "Blue"
+# Retired themes -> (theme, accent) they are read as.
+RETIRED_THEMES = {
+    "Forest": ("Dark", "Green"),
+    "Earthy": ("Dark", "Clay"),
+    "Sandstone": ("Dark", "Amber"),
 }
 CHECK_INTERVALS = (
     ("Every hour", 1),
@@ -145,7 +181,19 @@ DEFAULT_SORT = "name"
 PIN_COLOUR = "#e6a817"  # gold, readable on both light and dark themes
 MAX_PINNED = 100
 SYSTEM_THEME = "System"
-THEME_CHOICES = [SYSTEM_THEME, *THEMES]
+THEME_CHOICES = [SYSTEM_THEME, "Light", "Dark"]
+
+
+def appearance_choice(settings: QSettings) -> tuple[str, str]:
+    """Return the saved (theme, accent), mapping retired themes. Never writes settings."""
+    theme = str(settings.value("appearance/theme", SYSTEM_THEME))
+    accent = str(settings.value("appearance/accent", ""))
+    if theme in RETIRED_THEMES:
+        theme, retired_accent = RETIRED_THEMES[theme]
+        accent = accent if accent in ACCENTS else retired_accent
+    if theme not in THEME_CHOICES:
+        theme = SYSTEM_THEME
+    return theme, accent if accent in ACCENTS else DEFAULT_ACCENT
 
 
 def check_interval_hours(settings: QSettings) -> int:
@@ -186,15 +234,6 @@ def notified_versions(settings: QSettings) -> dict[str, str]:
         for key, value in data.items()
         if isinstance(key, str) and isinstance(value, str) and len(key) <= 256 and len(value) <= 128
     }
-
-
-def blend_colours(top: QColor, bottom: QColor, weight: float) -> str:
-    """Return a hex colour made of `weight` of `top` over the rest of `bottom`."""
-    return QColor.fromRgbF(
-        weight * top.redF() + (1 - weight) * bottom.redF(),
-        weight * top.greenF() + (1 - weight) * bottom.greenF(),
-        weight * top.blueF() + (1 - weight) * bottom.blueF(),
-    ).name()
 
 
 class AppCard(QFrame):
@@ -801,9 +840,15 @@ class SettingsDialog(QDialog):
         self.theme.setItemDelegate(QStyledItemDelegate(self.theme))
         self.theme.setAccessibleName("Appearance")
         self.theme.addItems(THEME_CHOICES)
-        current_theme = str(settings.value("appearance/theme", SYSTEM_THEME))
-        self.theme.setCurrentText(current_theme if current_theme in THEME_CHOICES else SYSTEM_THEME)
+        current_theme, current_accent = appearance_choice(settings)
+        self.theme.setCurrentText(current_theme)
         appearance_form.addRow("Theme", self.theme)
+        self.accent = QComboBox()
+        self.accent.setItemDelegate(QStyledItemDelegate(self.accent))
+        self.accent.setAccessibleName("Accent colour")
+        self.accent.addItems(list(ACCENTS))
+        self.accent.setCurrentText(current_accent)
+        appearance_form.addRow("Accent colour", self.accent)
         general.addWidget(appearance)
         window_group = QGroupBox("Window")
         window_layout = QVBoxLayout(window_group)
@@ -1521,7 +1566,12 @@ class LauncherWindow(QMainWindow):
         panel.setEnabled(self.task is None)
         panel.catalog_changed.connect(self.catalog_changed)
         dialog.sections.setCurrentRow(section)
-        dialog.theme.currentTextChanged.connect(self.apply_theme)
+        dialog.theme.currentTextChanged.connect(
+            lambda theme: self.apply_theme(theme, dialog.accent.currentText())
+        )
+        dialog.accent.currentTextChanged.connect(
+            lambda accent: self.apply_theme(dialog.theme.currentText(), accent)
+        )
         if adding:
             panel.start_add_repository()
         elif app_id:
@@ -1543,6 +1593,7 @@ class LauncherWindow(QMainWindow):
             self.settings.setValue("notifications/updates", dialog.notify_updates.isChecked())
             self.schedule_update_checks()
             self.settings.setValue("appearance/theme", dialog.theme.currentText())
+            self.settings.setValue("appearance/accent", dialog.accent.currentText())
             self.settings.setValue("installation/folder", dialog.folder.text())
             self.library.apps_dir = Path(dialog.folder.text())
             self.apply_theme()
@@ -1993,26 +2044,28 @@ class LauncherWindow(QMainWindow):
         self.tray.hide()
         super().closeEvent(event)
 
-    def apply_theme(self, preview: str | None = None) -> None:
+    def apply_theme(self, preview: str | None = None, accent_preview: str | None = None) -> None:
         app = QApplication.instance()
         if not isinstance(app, QApplication):
             return
-        theme = preview or str(self.settings.value("appearance/theme", SYSTEM_THEME))
-        if theme in THEMES:
-            background, surface, foreground, muted, border, accent = THEMES[theme]
-            on_accent = background
-        else:
-            app.setPalette(QPalette())
-            native = app.palette()
-            window = native.color(QPalette.ColorRole.Window)
-            text = native.color(QPalette.ColorRole.WindowText)
-            background, foreground = window.name(), text.name()
-            surface = native.color(QPalette.ColorRole.Base).name()
-            muted = blend_colours(text, window, 0.35)
-            border = blend_colours(text, window, 0.2)
-            accent = native.color(QPalette.ColorRole.Highlight).name()
-            on_accent = native.color(QPalette.ColorRole.HighlightedText).name()
-        dark = QColor(background).lightness() < 128
+        saved_theme, saved_accent = appearance_choice(self.settings)
+        theme = preview or saved_theme
+        accent_name = accent_preview or saved_accent
+        if theme not in THEMES:
+            scheme = app.styleHints().colorScheme()
+            if scheme == Qt.ColorScheme.Unknown:
+                # Our own palette has replaced the desktop's, so ask the style for its default.
+                window = app.style().standardPalette().color(QPalette.ColorRole.Window)
+                scheme = Qt.ColorScheme.Dark if window.lightness() < 128 else Qt.ColorScheme.Light
+            theme = "Dark" if scheme == Qt.ColorScheme.Dark else "Light"
+        tokens = THEMES[theme]
+        dark = theme == "Dark"
+        accents = ACCENTS.get(accent_name, ACCENTS[DEFAULT_ACCENT])
+        accent = accents[0] if dark else accents[1]
+        background, surface = tokens["bg"], tokens["surface"]
+        foreground, muted, border = tokens["text"], tokens["muted"], tokens["line"]
+        ok, warn, danger = tokens["ok"], tokens["warn"], tokens["danger"]
+        on_accent = background if dark else "#ffffff"
         palette = QPalette()
         for role, color in (
             (QPalette.ColorRole.Window, background),
@@ -2030,8 +2083,7 @@ class LauncherWindow(QMainWindow):
         ):
             palette.setColor(role, QColor(color))
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(muted))
-        if theme in THEMES:
-            app.setPalette(palette)
+        app.setPalette(palette)
         self.settings_button.setIcon(cog_icon(foreground))
         app.setStyleSheet(f"""
             QWidget {{ font-size: 14px; }}
@@ -2082,7 +2134,7 @@ class LauncherWindow(QMainWindow):
             QPushButton#primary:hover {{ border-color: {foreground}; }}
             QPushButton#primary:disabled {{ background: {surface}; color: {muted};
                 border-color: {border}; }}
-            QPushButton#danger {{ color: {"#ff9d9d" if dark else "#a52626"}; }}
+            QPushButton#danger {{ color: {danger}; }}
             QLabel#pinStar {{ color: {PIN_COLOUR}; font-size: 15px; }}
             QPushButton#appName {{ border: none; padding: 0; text-align: left;
                 font-size: 17px; font-weight: 650; background: transparent; }}
@@ -2093,10 +2145,10 @@ class LauncherWindow(QMainWindow):
             QLabel#status {{ color: {muted}; font-size: 12px; }}
             QLabel#releaseBadge {{ border: 1px solid; border-radius: 9px;
                 padding: 2px 7px; font-size: 11px; font-weight: 600; }}
-            QLabel#releaseBadge[release="latest"] {{ color: {"#7ee2a8" if dark else "#18783c"};
-                border-color: {"#3c8159" if dark else "#89bd9b"}; }}
-            QLabel#releaseBadge[release="prerelease"] {{ color: {"#f0c46e" if dark else "#895b00"};
-                border-color: {"#96753b" if dark else "#c7a660"}; }}
+            QLabel#releaseBadge[release="latest"] {{ color: {ok};
+                border-color: {ok}; }}
+            QLabel#releaseBadge[release="prerelease"] {{ color: {warn};
+                border-color: {warn}; }}
             QPushButton#versionButton, QPushButton#githubStatus {{
                 background: transparent; border: 1px solid transparent;
                 color: {muted}; font-size: 12px; padding: 5px 10px; }}
@@ -2104,7 +2156,7 @@ class LauncherWindow(QMainWindow):
             QPushButton#githubStatus:hover, QPushButton#githubStatus:focus {{
                 background: {surface}; border-color: {accent}; color: {accent}; }}
             QPushButton#githubStatus[limited="true"] {{
-                color: {"#ffd079" if dark else "#845300"}; }}
+                color: {warn}; }}
             QListWidget#settingsSections {{ border: none; background: transparent; outline: 0; }}
             QListWidget#settingsSections::item {{ padding: 12px; border-radius: 7px; }}
             QListWidget#settingsSections::item:selected {{

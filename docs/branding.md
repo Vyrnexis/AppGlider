@@ -4,12 +4,13 @@ This page is for contributors and designers.
 
 AppGlider is the user-facing name. Its icon is a swept wing of three
 S-curved feathers in ivory cream and forest greens (`#F4F3EB`, `#8FAE75`, `#486140`) on a transparent
-background, so it reads on both light and dark desktops and panels. The Forest theme's
+background, so it reads on both light and dark desktops and panels. The brand
 palette is `#1C1F1A`, `#5B7F52`, `#8FAE75`, `#D6D1C4` and `#F4F3EB`. The name replaced
 AppHarbour, which was already in use.
 
-Settings > Appearance offers System (the desktop's native colours, the default), Light,
-Dark, Forest, Earthy and Sandstone.
+Settings > Appearance offers System (follows the desktop's light or dark preference, the
+default), Light and Dark, plus an accent colour: Blue (the default), Green, Amber or Clay.
+The retired Forest, Earthy and Sandstone themes are read as Dark with Green, Clay or Amber.
 
 While updates are waiting, the tray shows `appglider-update.png` (source
 `docs/branding/appglider-update-icon.svg`): the same wing with an amber badge and an up arrow
