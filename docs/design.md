@@ -27,7 +27,7 @@ confirmations, file pickers and choices that block an action (such as choosing a
 
 ```
 ┌──────────────┬─────────────────────────────────────────────┐
-│ ◢ AppGlider  │ Page title   [Search……………] [Sort ▾] [⟳]      │
+│ ◢ AppGlider  │ Page title   [Search……………] [⋯] [⟳]           │
 │              │ ┌ updates banner (only when updates wait) ┐ │
 │ ▣ Library 12 │ │ 2 updates ready.        [Update all]    │ │
 │ ↓ Updates  2 │ └─────────────────────────────────────────┘ │
@@ -47,8 +47,10 @@ confirmations, file pickers and choices that block an action (such as choosing a
   sidebar selection follows the page; the App page keeps Library (or Updates) selected and
   shows a "‹ Library" back link.
 - **Library** lists every app as a row. **Updates** is the same list filtered to apps with
-  an update, with Update all. Rows can be dragged into a custom order; pinned apps stay on
-  top whatever the order.
+  an update, with Update all. Rows can be dragged into the user's own order, the only order
+  (apps without a place, such as new ones, follow A–Z; ⋯ in the toolbar offers Sort A–Z after
+  a confirmation). Dragging works in Library with All or Installed and no search text, never
+  in Updates; hidden apps keep their places. Pinned apps stay on top whatever the order.
 - **App page**: header (large icon, name, repository and description, status chips, Launch
   and the primary action), then two columns. Left: What's new (release notes of the
   offered release) and Versions. Right: Preferences, then Manage (roll back, uninstall,

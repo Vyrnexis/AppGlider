@@ -51,7 +51,6 @@ from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
     QButtonGroup,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -68,7 +67,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
-    QStyledItemDelegate,
     QSystemTrayIcon,
     QToolButton,
     QVBoxLayout,
@@ -164,21 +162,8 @@ THEMES: dict[str, dict[str, str]] = {
         "danger": "#c53030",
     },
 }
-SORT_CHOICES = (
-    ("Name (A–Z)", "name"),
-    ("Installed first", "installed"),
-    ("Updates first", "updates"),
-    ("Order added", "added"),
-    ("Custom order", "custom"),
-)
-DEFAULT_SORT = "name"
 PIN_COLOUR = "#e6a817"  # gold, readable on both light and dark themes
 MAX_PINNED = 100
-
-
-def sort_mode(settings: QSettings) -> str:
-    value = str(settings.value("library/sort", DEFAULT_SORT))
-    return value if value in {mode for _, mode in SORT_CHOICES} else DEFAULT_SORT
 
 
 def pinned_apps(settings: QSettings) -> set[str]:
@@ -1065,19 +1050,17 @@ class LauncherWindow(QMainWindow):
         self.filter_all.setChecked(True)
         self.filters.setAccessibleName("Library filter")
         toolbar.addWidget(self.filters)
-        self.sort_combo = QComboBox()
-        self.sort_combo.setItemDelegate(QStyledItemDelegate(self.sort_combo))
-        self.sort_combo.setAccessibleName("Sort apps")
-        self.sort_combo.setToolTip(
-            "Choose how the apps are ordered. Pinned apps always come first. "
-            "Drag a row to set a custom order."
-        )
-        for label, mode in SORT_CHOICES:
-            self.sort_combo.addItem(f"Sort: {label}", mode)
-        self.sort_combo.setCurrentIndex(max(0, self.sort_combo.findData(sort_mode(self.settings))))
-        self.sort_combo.currentIndexChanged.connect(self.sort_changed)
-        self.sort_combo.setObjectName("compact")
-        toolbar.addWidget(self.sort_combo)
+        self.options_button = QToolButton()
+        self.options_button.setObjectName("libraryOptions")
+        self.options_button.setText("⋯")
+        self.options_button.setAccessibleName("Library options")
+        self.options_button.setToolTip("Library options")
+        self.options_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        options_menu = QMenu(self.options_button)
+        self.sort_action = options_menu.addAction("Sort A–Z")
+        self.sort_action.triggered.connect(self.sort_alphabetically)
+        self.options_button.setMenu(options_menu)
+        toolbar.addWidget(self.options_button)
         self.check_button = QToolButton()
         self.check_button.setObjectName("checkNow")
         self.check_button.setAccessibleName("Check for updates")
@@ -1372,36 +1355,73 @@ class LauncherWindow(QMainWindow):
         return card
 
     def sorted_apps(self, apps: Iterable[App]) -> list[App]:
-        """Pinned apps first, then the chosen order; ties keep the order they were added in."""
-        mode = sort_mode(self.settings)
-        order = {app.id: index for index, app in enumerate(self.apps)}
+        """Pinned apps first, then the user's order; apps without a place follow, A-Z."""
         custom = {app_id: index for index, app_id in enumerate(custom_order(self.settings))}
+        catalog = {app.id: index for index, app in enumerate(self.apps)}
 
         def key(app: App) -> tuple[object, ...]:
-            installed = app.id in self.installed
-            tail: tuple[object, ...] = {
-                "name": (app.name.casefold(),),
-                "installed": (not installed, app.name.casefold()),
-                "updates": (not self.has_update(app.id), not installed, app.name.casefold()),
-                "added": (),
-                "custom": (custom.get(app.id, len(custom)), app.name.casefold()),
-            }[mode]
-            return (app.id not in self.pinned, *tail, order.get(app.id, 0))
+            return (
+                app.id not in self.pinned,
+                custom.get(app.id, len(custom)),
+                app.name.casefold(),
+                catalog.get(app.id, 0),
+            )
 
         return sorted(apps, key=key)
 
-    def sort_changed(self) -> None:
-        self.settings.setValue("library/sort", self.sort_combo.currentData())
+    def legacy_order(self, mode: str) -> list[str]:
+        """The order the retired Sort box showed for `mode`, for one-time migration."""
+        catalog = {app.id: index for index, app in enumerate(self.apps)}
+
+        def key(app: App) -> tuple[object, ...]:
+            installed = app.id in self.installed
+            name = app.name.casefold()
+            if mode == "installed":
+                return (not installed, name)
+            if mode == "updates":
+                return (not self.has_update(app.id), not installed, name)
+            if mode == "added":
+                return ()
+            return (name,)
+
+        return [app.id for app in sorted(self.apps, key=lambda app: (key(app), catalog[app.id]))]
+
+    def migrate_legacy_sort(self) -> None:
+        """Turn a saved Sort choice into the equivalent custom order, then forget the choice."""
+        if not self.apps or not self.settings.contains("library/sort"):
+            return
+        mode = str(self.settings.value("library/sort", "name"))
+        if not custom_order(self.settings):
+            self.settings.setValue("library/order", json.dumps(self.legacy_order(mode)))
+        self.settings.remove("library/sort")
+
+    def sort_alphabetically(self) -> None:
+        if len(self.apps) < 2:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Sort the library A–Z?",
+            "This replaces your own order. Pinned apps stay on top.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        ids = [app.id for app in sorted(self.apps, key=lambda app: app.name.casefold())]
+        self.settings.setValue("library/order", json.dumps(ids))
+        self.footer.setText("Library sorted A–Z.")
         self.refresh()
 
     def reorder_enabled(self) -> bool:
-        """Dragging only makes sense in the whole library, where every app is shown."""
-        return self.view == "library" and not self.installed_only and not self.search.text().strip()
+        """Dragging works in the Library, with All or Installed, but not while searching."""
+        return self.view == "library" and not self.search.text().strip()
 
     def move_app(self, app_id: str, delta: int) -> None:
         ids = [row.app.id for row in self.app_list.rows]
         if app_id in ids:
-            self.reorder_app(app_id, ids.index(app_id) + delta)
+            source = ids.index(app_id)
+            if delta > 0:
+                self.reorder_app(app_id, source + delta, after=True)
+            else:
+                self.reorder_app(app_id, source + delta)
 
     def drop_app(self, app_id: str, before: int) -> None:
         ids = [row.app.id for row in self.app_list.rows]
@@ -1409,27 +1429,36 @@ class LauncherWindow(QMainWindow):
             source = ids.index(app_id)
             self.reorder_app(app_id, before if before <= source else before - 1)
 
-    def reorder_app(self, app_id: str, index: int) -> None:
-        """Move an app to a position among the shown apps, staying within its pinned group."""
+    def reorder_app(self, app_id: str, index: int, after: bool = False) -> None:
+        """Move an app within the shown apps, leaving the hidden ones where they are.
+
+        `index` is a position among the shown apps without the moved one. The app goes
+        directly before the app there (or directly after the one before it when `after`
+        is set, or after the last shown app at the end), within its pinned group.
+        """
         if not self.reorder_enabled():
             return
         shown = [row.app.id for row in self.app_list.rows]
         if app_id not in shown:
             return
+        source = shown.index(app_id)
         ids = [item for item in shown if item != app_id]
         pinned = sum(item in self.pinned for item in ids)
         if app_id in self.pinned:
             index = min(max(index, 0), pinned)
         else:
             index = min(max(index, pinned), len(ids))
-        ids.insert(index, app_id)
-        if ids == shown:
+        if index == source or not ids:
             return
-        self.settings.setValue("library/order", json.dumps(ids))
-        self.settings.setValue("library/sort", "custom")
-        self.sort_combo.blockSignals(True)
-        self.sort_combo.setCurrentIndex(max(0, self.sort_combo.findData("custom")))
-        self.sort_combo.blockSignals(False)
+        full = [app.id for app in self.sorted_apps(self.apps)]
+        full.remove(app_id)
+        if after or index >= len(ids):
+            full.insert(full.index(ids[index - 1]) + 1, app_id)
+        else:
+            full.insert(full.index(ids[index]), app_id)
+        if full == [app.id for app in self.sorted_apps(self.apps)]:
+            return
+        self.settings.setValue("library/order", json.dumps(full))
         self.footer.setText("Custom order saved.")
         self.refresh()
 
@@ -1556,6 +1585,7 @@ class LauncherWindow(QMainWindow):
         )
         self.check_button.setToolTip("Checking for updates…" if self.checks.busy else CHECK_TOOLTIP)
         self.check_button.setEnabled(not self.checks.busy and bool(self.installed))
+        self.options_button.setEnabled(len(self.apps) > 1)
         self.update_all_button.setVisible(
             any(
                 item.managed and app_id in self.releases and self.has_update(app_id)
@@ -1572,7 +1602,7 @@ class LauncherWindow(QMainWindow):
             self.search,
             self.filter_all,
             self.filter_installed,
-            self.sort_combo,
+            self.options_button,
             self.check_button,
             self.update_all_button,
             self.review_button,
@@ -1811,6 +1841,7 @@ class LauncherWindow(QMainWindow):
                     if release is not None:
                         self.releases[app.id] = release
             self.installed = installed
+            self.migrate_legacy_sort()
         self.refresh()
 
     def launch_app(self, app_id: str) -> None:
@@ -2238,8 +2269,9 @@ class LauncherWindow(QMainWindow):
             QLabel#welcomeTitle {{ font-size: 27px; font-weight: 650; }}
             QLabel#sectionTitle {{ font-size: 18px; font-weight: 650; }}
             QPushButton#compact {{ padding: 6px 12px; }}
-            QComboBox#compact {{ padding: 6px 10px; }}
-            QToolButton#checkNow {{ padding: 8px; }}
+            QToolButton#checkNow, QToolButton#libraryOptions {{ padding: 0;
+                min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; }}
+            QToolButton#libraryOptions {{ font-size: 16px; }}
             QFrame#sidebar {{ background: {surface}; border: none;
                 border-right: 1px solid {border}; }}
             QLabel#brand {{ font-size: 16px; font-weight: 700; }}

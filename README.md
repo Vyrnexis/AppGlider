@@ -28,7 +28,7 @@ made up.*
   notes on the app's own page before you update.
 - Can hold an app at its current version so it is never offered an update.
 - Adds a menu entry for each app it installs and can sit in your system tray.
-- Sorts your apps, lets you pin favourites to the top, or drag the rows into your own order.
+- Keeps your apps in your own order (drag the rows, or sort A–Z) and lets you pin favourites to the top.
 - Can show a desktop notification when new updates are found (off unless you turn it on).
 - Shares lists of apps as plain text files you can read, edit and import
   (see [catalogs](docs/usage.md#catalogs-sharing-a-list-of-apps)).

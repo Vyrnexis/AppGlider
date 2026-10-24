@@ -55,7 +55,7 @@ from PySide6.QtWidgets import (
 from test_library import APP, appimage_bytes, release_for
 
 from appglider import APP_ICON, APP_UPDATE_ICON, APP_VERSION, github_status, releases
-from appglider.catalog import custom_app
+from appglider.catalog import App, custom_app
 from appglider.jobs import TaskResult
 from appglider.library import Installed, Library
 from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
@@ -72,7 +72,6 @@ from appglider.window import (
     fit_size,
     notified_versions,
     pinned_apps,
-    sort_mode,
 )
 
 
@@ -260,56 +259,120 @@ class LibraryTests(unittest.TestCase):
     def shown(self) -> list[str]:
         return [card.app.id for card in self.window.app_list.rows]
 
-    def choose_sort(self, mode: str) -> None:
-        self.window.sort_combo.setCurrentIndex(self.window.sort_combo.findData(mode))
-
-    def test_apps_are_sorted_by_name_by_default_and_the_choice_is_remembered(self) -> None:
-        names = [app.name.casefold() for app in sorted(APPS, key=lambda a: a.name.casefold())]
-        self.assertEqual(
-            [self.window.cards[app_id].app.name.casefold() for app_id in self.shown()], names
-        )
-        self.assertEqual(
-            [self.window.sort_combo.itemText(i) for i in range(self.window.sort_combo.count())],
-            [
-                "Sort: Name (A–Z)",
-                "Sort: Installed first",
-                "Sort: Updates first",
-                "Sort: Order added",
-                "Sort: Custom order",
-            ],
-        )
-        self.choose_sort("added")
-        self.assertEqual(self.shown(), [app.id for app in APPS])  # the order they were added in
-        self.assertEqual(self.settings.value("library/sort"), "added")
-        self.settings.sync()
-        reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
-        self.assertEqual(sort_mode(reopened), "added")
-        for garbage in ("sideways", "", "Name"):
-            reopened.setValue("library/sort", garbage)
-            self.assertEqual(sort_mode(reopened), "name")
-
-    def test_installed_and_updates_first_orders(self) -> None:
-        window = self.window
+    def install_apps(self, *apps: App) -> None:
         payload = appimage_bytes()
-        other = APPS[3]  # LightCraft, not at the front in any order
-        for app in (APP, other):
+        for app in apps:
             with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
-                window.library.install(
+                self.window.library.install(
                     app,
                     replace(release_for("1.0.0", payload), name=f"{app.id}-1.0.0.AppImage"),
                     Event(),
                     lambda *args: None,
                 )
-        window.releases[other.id] = Release("1.1.0", "x", "x", 1, "0" * 64)
-        window.scan_installed()
-        self.choose_sort("installed")
-        installed = self.shown()[:2]
-        self.assertEqual(sorted(installed), sorted([APP.id, other.id]))
+        self.window.scan_installed()
+
+    def by_name(self) -> list[str]:
+        return [app.id for app in sorted(APPS, key=lambda a: a.name.casefold())]
+
+    def reopen(self) -> LauncherWindow:
+        self.settings.sync()
+        reopened = LauncherWindow(self.settings, self.window.library)
+        self.addCleanup(close_window, reopened)
+        return reopened
+
+    def test_apps_are_in_name_order_without_a_saved_order_and_there_is_no_sort_box(self) -> None:
+        self.assertEqual(self.shown(), self.by_name())
+        self.assertFalse(hasattr(self.window, "sort_combo"))
+        self.assertIsNone(self.settings.value("library/order"))
+        self.assertFalse(self.settings.contains("library/sort"))
+        self.assertEqual(self.window.options_button.accessibleName(), "Library options")
+        self.assertEqual(self.window.options_button.toolTip(), "Library options")
         self.assertEqual(
-            installed, sorted(installed, key=lambda i: window.cards[i].app.name.casefold())
+            [action.text() for action in self.window.options_button.menu().actions()],
+            ["Sort A–Z"],
         )
-        self.choose_sort("updates")
-        self.assertEqual(self.shown()[:2], [other.id, APP.id])  # the update, then the rest
+
+    def test_apps_without_a_place_in_the_saved_order_come_last(self) -> None:
+        names = self.by_name()
+        self.settings.setValue("library/order", json.dumps([names[5], "gone", names[1]]))
+        self.window.refresh()
+        rest = [app_id for app_id in names if app_id not in (names[5], names[1])]
+        self.assertEqual(self.shown(), [names[5], names[1], *rest])
+        # A newly added app lands at the end, whatever its name.
+        extra = custom_app("example/aaa-first", "Aaa first")
+        self.settings.setValue("library/order", json.dumps(names))
+        self.window.apps = (*self.window.apps, extra)
+        self.assertEqual(self.window.sorted_apps(self.window.apps)[-1].id, extra.id)
+
+    def test_sort_alphabetically_asks_first_and_keeps_pinned_apps_on_top(self) -> None:
+        window = self.window
+        names = self.by_name()
+        window.reorder_app(names[-1], 0)
+        window.toggle_pin(names[3])
+        custom = self.shown()
+        self.assertNotEqual(custom[1:], [n for n in names if n != names[3]])
+        with patch("appglider.window.QMessageBox.question") as ask:
+            ask.return_value = QMessageBox.StandardButton.No
+            window.sort_action.trigger()
+            self.assertEqual(
+                ask.call_args.args[1:],
+                (
+                    "Sort the library A–Z?",
+                    "This replaces your own order. Pinned apps stay on top.",
+                ),
+            )
+            self.assertEqual(self.shown(), custom)
+            ask.return_value = QMessageBox.StandardButton.Yes
+            window.sort_action.trigger()
+        self.assertEqual(self.shown(), [names[3], *[n for n in names if n != names[3]]])
+        self.assertEqual(json.loads(self.settings.value("library/order")), names)
+
+    def test_library_options_are_disabled_with_fewer_than_two_apps(self) -> None:
+        window = self.window
+        self.assertTrue(window.options_button.isEnabled())
+        window.apps = window.apps[:1]
+        window.refresh()
+        self.assertFalse(window.options_button.isEnabled())
+
+    def migrated(self, mode: str, order: list[str] | None = None) -> LauncherWindow:
+        self.settings.setValue("library/sort", mode)
+        if order is not None:
+            self.settings.setValue("library/order", json.dumps(order))
+        return self.reopen()
+
+    def test_a_legacy_sort_choice_becomes_the_order_it_showed(self) -> None:
+        other = APPS[3]
+        self.install_apps(APP, other)
+        names = self.by_name()
+        installed = [i for i in names if i in (APP.id, other.id)]
+        rest = [i for i in names if i not in installed]
+        expected = {
+            "name": names,
+            "installed": [*installed, *rest],
+            "updates": [other.id, APP.id, *rest],
+            "added": [app.id for app in APPS],
+            "custom": names,
+        }
+        for mode, order in expected.items():
+            with self.subTest(mode=mode):
+                self.settings.remove("library/order")
+                with patch.object(LauncherWindow, "has_update", lambda s, i: i == other.id):
+                    reopened = self.migrated(mode)
+                self.assertFalse(self.settings.contains("library/sort"))
+                self.assertEqual(json.loads(self.settings.value("library/order")), order)
+                self.assertEqual([row.app.id for row in reopened.app_list.rows], order)
+
+    def test_a_legacy_sort_choice_keeps_an_existing_order_and_is_removed(self) -> None:
+        names = self.by_name()
+        wanted = [names[4], names[0]]
+        self.migrated("installed", wanted)
+        self.assertFalse(self.settings.contains("library/sort"))
+        self.assertEqual(json.loads(self.settings.value("library/order")), wanted)
+
+    def test_nothing_is_written_when_there_is_no_legacy_sort(self) -> None:
+        self.reopen()
+        self.assertFalse(self.settings.contains("library/sort"))
+        self.assertFalse(self.settings.contains("library/order"))
 
     def test_pinned_apps_come_first_in_every_order_and_persist(self) -> None:
         window = self.window
@@ -324,10 +387,6 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(card.name_button.text(), target.name)  # the name itself is unchanged
         self.assertIn("pinned", card.name_button.accessibleName())
         self.assertIn("QLabel#pinStar { color: #e6a817", self.qt.styleSheet())
-        for mode in ("name", "installed", "updates", "added"):
-            with self.subTest(mode=mode):
-                self.choose_sort(mode)
-                self.assertEqual(self.shown()[0], target.id)
         self.assertEqual(json.loads(self.settings.value("library/pinned")), [target.id])
         self.settings.sync()
         reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
@@ -443,16 +502,13 @@ class LibraryTests(unittest.TestCase):
                 self.assertEqual(custom_order(self.settings), [])
         self.settings.setValue("library/order", json.dumps(["b", "a", "b", "x" * 300]))
         self.assertEqual(custom_order(self.settings), ["b", "a"])
-        self.assertEqual(self.window.sort_combo.findData("custom"), 4)
 
-    def test_moving_a_row_saves_a_custom_order_and_switches_the_sort(self) -> None:
+    def test_moving_a_row_saves_a_custom_order(self) -> None:
         window = self.window
         names = self.shown()
         window.cards[names[2]].move_up_action.trigger()
         expected = [names[0], names[2], names[1], *names[3:]]
         self.assertEqual(self.shown(), expected)
-        self.assertEqual(window.sort_combo.currentData(), "custom")
-        self.assertEqual(self.settings.value("library/sort"), "custom")
         self.assertEqual(json.loads(self.settings.value("library/order")), expected)
         window.cards[names[0]].move_down_action.trigger()
         expected = [names[2], names[0], names[1], *names[3:]]
@@ -463,14 +519,6 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual([row.app.id for row in reopened.app_list.rows], expected)
         self.assertFalse(window.cards[names[2]].move_up_action.isEnabled())
         self.assertFalse(window.cards[names[-1]].move_down_action.isEnabled())
-
-    def test_apps_missing_from_the_custom_order_follow_in_name_order(self) -> None:
-        by_name = self.shown()
-        wanted = [by_name[5], "gone", by_name[1]]
-        self.settings.setValue("library/order", json.dumps(wanted))
-        self.choose_sort("custom")
-        rest = [app_id for app_id in by_name if app_id not in (by_name[5], by_name[1])]
-        self.assertEqual(self.shown(), [by_name[5], by_name[1], *rest])
 
     def test_custom_order_keeps_pinned_apps_above_unpinned_ones(self) -> None:
         window = self.window
@@ -492,7 +540,74 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.shown()[2:], before[2:])
         window.reorder_app(before[-1], 2)
         self.assertEqual(self.shown()[2], before[-1])
-        self.assertEqual(window.sort_combo.currentData(), "custom")
+
+    def installed_view(self, *apps: App):
+        """Install some apps, show only them, and return (visible ids, full effective order)."""
+        self.install_apps(*apps)
+        self.window.filter_installed.click()
+        self.qt.processEvents()
+        return self.shown(), [a.id for a in self.window.sorted_apps(self.window.apps)]
+
+    def test_installed_filter_reorders_and_keeps_hidden_apps_in_place(self) -> None:
+        window = self.window
+        names = self.by_name()
+        a, b, c = names[1], names[4], names[7]
+        visible, full = self.installed_view(*[x for x in APPS if x.id in (a, b, c)])
+        self.assertEqual(visible, [a, b, c])
+        self.assertTrue(window.reorder_enabled())
+        self.assertTrue(all(row.draggable for row in window.app_list.rows))
+        hidden = [i for i in full if i not in visible]
+        # Move down: directly after the next visible row, hidden apps between stay put.
+        window.cards[a].move_down_action.trigger()
+        full = [x.id for x in window.sorted_apps(window.apps)]
+        self.assertEqual(self.shown(), [b, a, c])
+        self.assertEqual([i for i in full if i not in visible], hidden)
+        self.assertEqual(full.index(a), full.index(b) + 1)
+        # Move up: directly before the previous visible row.
+        window.cards[c].move_up_action.trigger()
+        full = [x.id for x in window.sorted_apps(window.apps)]
+        self.assertEqual(self.shown(), [b, c, a])
+        self.assertEqual(full.index(c), full.index(a) - 1)
+        self.assertEqual([i for i in full if i not in visible], hidden)
+        self.assertEqual(json.loads(self.settings.value("library/order")), full)
+
+    def test_installed_filter_drop_before_a_row_and_at_the_end(self) -> None:
+        window = self.window
+        names = self.by_name()
+        a, b, c = names[1], names[4], names[7]
+        visible, full = self.installed_view(*[x for x in APPS if x.id in (a, b, c)])
+        hidden = [i for i in full if i not in visible]
+        window.drop_app(c, 1)  # before b
+        full = [x.id for x in window.sorted_apps(window.apps)]
+        self.assertEqual(self.shown(), [a, c, b])
+        self.assertEqual(full.index(c), full.index(b) - 1)  # directly before b
+        self.assertEqual([i for i in full if i not in visible], hidden)
+        window.drop_app(a, 3)  # after the last visible row
+        full = [x.id for x in window.sorted_apps(window.apps)]
+        self.assertEqual(self.shown(), [c, b, a])
+        self.assertEqual(full.index(a), full.index(b) + 1)  # directly after b
+        self.assertEqual([i for i in full if i not in visible], hidden)
+        saved = self.settings.value("library/order")
+        window.drop_app(a, 3)  # where it already is
+        window.drop_app(a, 2)
+        self.assertEqual(self.settings.value("library/order"), saved)
+
+    def test_installed_filter_reordering_stays_inside_the_pinned_group(self) -> None:
+        window = self.window
+        names = self.by_name()
+        a, b, c = names[1], names[4], names[7]
+        self.install_apps(*[x for x in APPS if x.id in (a, b, c)])
+        window.toggle_pin(b)
+        window.filter_installed.click()
+        self.qt.processEvents()
+        self.assertEqual(self.shown()[0], b)
+        self.assertFalse(window.cards[b].move_down_action.isEnabled())
+        self.assertFalse(window.cards[self.shown()[1]].move_up_action.isEnabled())
+        order = self.settings.value("library/order")
+        window.reorder_app(b, 2)  # the pinned app cannot go below the unpinned ones
+        window.reorder_app(self.shown()[1], 0)  # nor an unpinned one above it
+        self.assertEqual(self.shown()[0], b)
+        self.assertEqual(self.settings.value("library/order"), order)
 
     def drop_event(self, row_id: str, position: QPointF, cls=QDropEvent):
         mime = QMimeData()
@@ -523,7 +638,6 @@ class LibraryTests(unittest.TestCase):
         app_list.dropEvent(drop)
         self.assertTrue(app_list.drop_line.isHidden())
         self.assertEqual(self.shown(), [names[0], names[5], *names[1:5], *names[6:]])
-        self.assertEqual(window.sort_combo.currentData(), "custom")
         self.assertEqual(json.loads(self.settings.value("library/order")), self.shown())
         self.assertEqual((keep.hasFormat(ORDER_MIME), keep2.hasFormat(ORDER_MIME)), (True, True))
         # Dropping a row where it already is changes nothing.
@@ -592,7 +706,7 @@ class LibraryTests(unittest.TestCase):
             QTest.mouseMove(row, body + QPoint(0, 30))
             drag.assert_not_called()
 
-    def test_reordering_is_disabled_unless_the_whole_library_is_shown(self) -> None:
+    def test_reordering_is_disabled_while_searching_and_on_updates(self) -> None:
         window = self.window
         names = self.shown()
 
@@ -608,7 +722,6 @@ class LibraryTests(unittest.TestCase):
             drop, keep = self.drop_event(names[-1], QPointF(40, 2))
             window.app_list.dropEvent(drop)
             self.assertEqual(self.settings.value("library/order"), order)
-            self.assertNotEqual(self.settings.value("library/sort"), "custom")
             self.assertTrue(keep.hasFormat(ORDER_MIME))
 
         window.search.setText("craft")
@@ -617,12 +730,7 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(window.reorder_enabled())
         self.assertTrue(window.cards[names[1]].move_up_action.isEnabled())
         window.filter_installed.click()
-        window.show_view("library")
-        window.filter_installed.click()
-        window.filter_all.click()
         self.assertTrue(window.reorder_enabled())
-        window.filter_installed.setChecked(True)
-        assert_disabled()
         window.filter_all.click()
         window.show_view("updates")
         assert_disabled()
@@ -646,7 +754,6 @@ class LibraryTests(unittest.TestCase):
             [app.name for app in by_name],
         )
         window.reorder_app(by_name[-1].id, 0)  # last installed app to the very top
-        self.assertEqual(window.sort_combo.currentData(), "custom")
         expected = [by_name[-1], *by_name[:-1]]
         self.assertEqual(
             [action.text() for action in window.tray_apps_menu.actions()],

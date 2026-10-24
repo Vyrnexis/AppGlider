@@ -42,8 +42,8 @@ catalog…** and **Example catalog**.
   **Settings → GitHub**; the version number below it opens **Settings → About**.
 
 **The Library page** has a search box (it matches names, descriptions and repository names),
-an **All / Installed (N)** switch, a **Sort** box and a round-arrow button that checks for
-updates. When updates are waiting, a banner offers **Update all** and **Review**, which
+an **All / Installed (N)** switch, a **⋯ Library options** menu and a round-arrow button that
+checks for updates. When updates are waiting, a banner offers **Update all** and **Review**, which
 opens the Updates page. The Updates page is the same list limited to apps with an update,
 with the same banner and **Update all**.
 
@@ -70,14 +70,16 @@ top, Move up and Move down (see below), Hold at current version, Create/repair m
 shortcut, Roll back to previous version and Uninstall…. Everything else is on the app's
 page.
 
-**Sorting, pinning and your own order.** **Sort** orders the rows by name (the default),
-installed apps first, apps with updates first, the order you added them, or **Custom
-order**. **⋯ → Pin to top** puts an app at the front whatever the sort (it gets a gold ★
-beside its name), and **Unpin** puts it back. To make your own order, drag a row up or down
-by the dotted handle at its left edge; a line shows where it will land. Dragging switches **Sort** to **Custom order**
-and remembers it. **⋯ → Move up** and **Move down** do the same without a mouse. Reordering
-works on the Library page with **All** selected and an empty search, and pinned apps always
-stay above the others. The tray menu's list of installed apps follows the same order.
+**Order, pinning and your own order.** There is one order: yours. Until you change it the
+apps are A–Z by name, and an app you add later appears at the end. **⋯ → Pin to top** puts an
+app at the front (it gets a gold ★ beside its name), and **Unpin** puts it back. To reorder,
+drag a row up or down by the dotted handle at its left edge; a line shows where it will land.
+**⋯ → Move up** and **Move down** do the same without a mouse. Reordering works on the Library
+page with **All** or **Installed** selected and an empty search, never on Updates. With
+**Installed** selected, an app moves relative to the rows you can see and the apps not shown
+keep their places. Pinned apps always stay above the others. **⋯ → Sort A–Z** in the toolbar
+(next to the update check button) replaces your order with A–Z after you confirm; pinned apps
+stay on top. The tray menu's list of installed apps follows the same order.
 
 **Messages.** The bottom of the window stays empty until there is something to say: a result
 ("Updated 1 apps."), a progress bar with **Cancel** while something downloads, or a

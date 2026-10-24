@@ -37,8 +37,8 @@ change after discussion. Something being listed here is not a promise that it wi
   after the project).
 - **Update notifications:** an optional desktop message when a scheduled check finds a new
   update, once per new version. It is off unless you turn it on in Settings.
-- **Sorting and pinning:** a **Sort** box (name, installed first, updates first, order added)
-  and **Pin to top** on each app, remembered between runs.
+- **Ordering and pinning:** your own order (drag the rows, or **⋯ → Sort A–Z** in the
+  toolbar) and **Pin to top** on each app, remembered between runs.
 - **Example catalog built in:** an **Example catalog** button on the welcome screen and in the
   Settings → Catalogs section adds the ArtCraft apps and SolidCraft without downloading anything.
 - **Cheaper update checks:** checking an app that has not changed now asks GitHub's ordinary

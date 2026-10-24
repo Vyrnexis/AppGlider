@@ -138,10 +138,10 @@ class PolishTests(unittest.TestCase):
             QTest.keyClick(window, Qt.Key.Key_Tab)
             focus = QApplication.focusWidget()
             seen.append(focus)
-        self.assertIn(window.sort_combo, seen)
+        self.assertIn(window.options_button, seen)
         names = [widget for widget in seen if widget.objectName() == "appName"]
         self.assertTrue(names)
-        self.assertLess(seen.index(window.sort_combo), seen.index(names[0]))
+        self.assertLess(seen.index(window.options_button), seen.index(names[0]))
 
     def test_every_control_on_every_page_has_an_accessible_name(self) -> None:
         window = self.window

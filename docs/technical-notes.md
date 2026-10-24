@@ -239,11 +239,15 @@ Library and settings changes are written atomically, so a crash cannot leave a h
 file. A corrupt file is preserved and reported, never overwritten with an empty library.
 Only one AppGlider runs per data folder; starting it again raises the running window.
 
-Choices such as the theme and accent (`appearance/theme`, `appearance/accent`), update schedule, sort order (`library/sort`), your own order (`library/order`, a JSON list of app identifiers, used by the Custom order sort) and pinned apps
+Choices such as the theme and accent (`appearance/theme`, `appearance/accent`), update schedule, your own order (`library/order`, a JSON list of app identifiers; apps not in it follow, A–Z by name) and pinned apps
 (`library/pinned`, a JSON list of app identifiers), the notification choice
 (`notifications/updates`) and the versions already announced (`notifications/seen`, a JSON
 object) live in the settings file. Unreadable or
 unknown values fall back to the defaults instead of causing an error.
+
+The retired `library/sort` key (name, installed, updates, added or custom) is migrated once at
+startup: if `library/order` is absent, the order that mode showed is saved as `library/order`;
+either way `library/sort` is then removed.
 
 ## Menu entries
 
