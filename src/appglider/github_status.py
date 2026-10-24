@@ -36,6 +36,15 @@ def quota_plentiful() -> bool:
     )
 
 
+def allowance() -> tuple[int, int] | None:
+    """Return the last reported (remaining, limit) while its window is current."""
+    with _lock:
+        status = _status
+    if status.remaining is None or status.limit is None or status.reset_at <= time.time():
+        return None
+    return status.remaining, status.limit
+
+
 def quota_low() -> bool:
     """True only when GitHub last reported fewer requests than a scheduled check should use."""
     with _lock:

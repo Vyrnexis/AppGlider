@@ -1,5 +1,6 @@
 """Card library, installed applications and background installation controls."""
 
+import html
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -34,10 +35,10 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QResizeEvent,
-    QTransform,
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -62,7 +63,6 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QStyledItemDelegate,
     QSystemTrayIcon,
-    QTabBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -106,6 +106,8 @@ from appglider.repositories_dialog import RepositoriesPanel
 from appglider.version_label import VersionLabel
 
 CARD_MIN_WIDTH = 300
+SIDEBAR_WIDTH = 210
+CHECK_TOOLTIP = "Check for updates"
 SCROLLBAR_GAP = 14
 
 
@@ -774,30 +776,53 @@ def tick_path(colour: str) -> str:
     return glyph_path("tick", colour, [QPointF(6, 12.5), QPointF(10.5, 17), QPointF(18, 7.5)])
 
 
-def cog_icon(colour: str) -> QIcon:
-    """Draw a settings cog in the given colour."""
+def refresh_icon(colour: str) -> QIcon:
+    """Draw a circular arrow in the given colour."""
     size = 64
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
-    cog = QPainterPath()
-    cog.setFillRule(Qt.FillRule.WindingFill)
-    centre = QPointF(size / 2, size / 2)
-    cog.addEllipse(centre, 21, 21)
-    for step in range(8):
-        tooth = QPainterPath()
-        tooth.addRoundedRect(QRectF(size / 2 - 6, 4, 12, 18), 3, 3)
-        transform = QTransform()
-        transform.translate(centre.x(), centre.y())
-        transform.rotate(step * 45)
-        transform.translate(-centre.x(), -centre.y())
-        cog.addPath(transform.map(tooth))
-    hole = QPainterPath()
-    hole.addEllipse(centre, 9, 9)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.fillPath(cog.simplified().subtracted(hole), QColor(colour))
+    pen = QPen(QColor(colour), 6)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    painter.drawArc(QRectF(14, 14, 36, 36), 50 * 16, 270 * 16)
+    tip = QPointF(47.6, 23)
+    head = QPainterPath()
+    head.moveTo(tip + QPointF(-1, -14))
+    head.lineTo(tip + QPointF(-1, 8))
+    head.lineTo(tip + QPointF(-18, -2))
+    head.closeSubpath()
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.fillPath(head, QColor(colour))
     painter.end()
     return QIcon(pixmap)
+
+
+def tint(colour: str, alpha: float) -> str:
+    """Return a stylesheet rgba() value for a hex token at the given opacity."""
+    value = QColor(colour)
+    return f"rgba({value.red()}, {value.green()}, {value.blue()}, {round(alpha * 255)})"
+
+
+def nav_entry(text: str, *, badge: bool = False) -> tuple[QPushButton, QLabel]:
+    """Create a sidebar entry with a trailing count label (hidden until it has text)."""
+    button = QPushButton(text)
+    button.setObjectName("nav")
+    button.setFixedHeight(38)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    layout = QHBoxLayout(button)
+    layout.setContentsMargins(12, 0, 10, 0)
+    layout.addStretch()
+    count = QLabel()
+    count.setObjectName("navBadge" if badge else "navCount")
+    count.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    if badge:
+        count.setFixedHeight(18)
+        count.setMinimumWidth(18)
+    layout.addWidget(count, alignment=Qt.AlignmentFlag.AlignVCenter)
+    return button, count
 
 
 class SettingsDialog(QDialog):
@@ -1077,67 +1102,115 @@ class LauncherWindow(QMainWindow):
         saved = self.settings.value("window/geometry")
         if isinstance(saved, QByteArray | bytes):
             self.restoreGeometry(QByteArray(saved))
-        self.setMinimumSize(720, 520)
-        body = QWidget()
-        layout = QVBoxLayout(body)
-        layout.setContentsMargins(32, 28, 32, 20)
-        layout.setSpacing(20)
-        self.setCentralWidget(body)
-        header = QHBoxLayout()
+        self.setMinimumSize(860, 560)
+        self.view = "library"
+        shell = QWidget()
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+        self.setCentralWidget(shell)
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(SIDEBAR_WIDTH)
+        side = QVBoxLayout(sidebar)
+        side.setContentsMargins(12, 18, 12, 12)
+        side.setSpacing(4)
+        brand = QHBoxLayout()
+        brand.setContentsMargins(6, 0, 0, 14)
+        brand.setSpacing(10)
         logo = QLabel()
-        logo.setPixmap(QIcon(str(APP_ICON)).pixmap(96, 96))
-        logo.setFixedSize(96, 96)
+        logo.setPixmap(QIcon(str(APP_ICON)).pixmap(32, 32))
+        logo.setFixedSize(32, 32)
         logo.setAccessibleName(APP_NAME)
-        header.addWidget(logo)
-        titles = QVBoxLayout()
-        title = QLabel(APP_NAME)
-        title.setObjectName("pageTitle")
-        titles.addWidget(title)
-        subtitle = QLabel("One place for your Linux AppImages.")
-        subtitle.setObjectName("muted")
-        titles.addWidget(subtitle)
-        header.addLayout(titles)
-        header.addStretch()
+        brand.addWidget(logo)
+        brand_name = QLabel(APP_NAME)
+        brand_name.setObjectName("brand")
+        brand.addWidget(brand_name)
+        brand.addStretch()
+        side.addLayout(brand)
+        self.nav_library, self.library_count = nav_entry("Library")
+        self.nav_updates, self.updates_count = nav_entry("Updates", badge=True)
+        self.nav_add, _ = nav_entry("Add app")
+        self.nav_settings, _ = nav_entry("Settings")
+        for button in (self.nav_library, self.nav_updates):
+            button.setCheckable(True)
+        self.nav_library.setChecked(True)
+        nav_group = QButtonGroup(self)
+        nav_group.setExclusive(True)
+        nav_group.addButton(self.nav_library)
+        nav_group.addButton(self.nav_updates)
+        self.nav_library.clicked.connect(lambda: self.show_view("library"))
+        self.nav_updates.clicked.connect(lambda: self.show_view("updates"))
+        self.nav_add.setAccessibleName("Add app")
+        self.nav_add.clicked.connect(lambda: self.open_repositories(adding=True))
+        self.nav_settings.setAccessibleName("Settings")
+        self.nav_settings.clicked.connect(lambda: self.open_settings(0))
+        for button in (self.nav_library, self.nav_updates, self.nav_add):
+            side.addWidget(button)
+        side.addStretch()
+        side.addWidget(self.nav_settings)
+        side.addSpacing(6)
+        self.status_block = QPushButton()
+        self.status_block.setObjectName("statusBlock")
+        self.status_block.setAccessibleName("GitHub request status")
+        self.status_block.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.status_block.setFixedHeight(66)
+        self.status_block.clicked.connect(lambda: self.open_settings(3))
+        status_layout = QVBoxLayout(self.status_block)
+        status_layout.setContentsMargins(8, 8, 8, 6)
+        status_layout.setSpacing(4)
+        self.status_label = QLabel()
+        self.github_label = QLabel()
+        self.github_meter = QProgressBar()
+        self.github_meter.setObjectName("meter")
+        self.github_meter.setTextVisible(False)
+        self.github_meter.setFixedHeight(4)
+        for status_text in (self.status_label, self.github_label):
+            status_text.setObjectName("sideStatus")
+        for widget in (self.status_label, self.github_label, self.github_meter):
+            widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            status_layout.addWidget(widget)
+        side.addWidget(self.status_block)
         self.version_button = QPushButton(f"v{APP_VERSION}")
         self.version_button.setObjectName("versionButton")
         self.version_button.setAccessibleName(f"About AppGlider {APP_VERSION}")
         self.version_button.setToolTip("About AppGlider")
         self.version_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.version_button.clicked.connect(lambda: self.open_settings(4))
-        self.settings_button = QToolButton()
-        self.settings_button.setObjectName("settingsButton")
-        self.settings_button.setAccessibleName("Settings")
-        self.settings_button.setToolTip("Settings")
-        self.settings_button.setIconSize(QSize(22, 22))
-        self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.settings_button.clicked.connect(lambda: self.open_settings())
-        header.addWidget(self.settings_button, alignment=Qt.AlignmentFlag.AlignTop)
-        layout.addLayout(header)
-        search_row = QHBoxLayout()
+        side.addWidget(self.version_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        shell_layout.addWidget(sidebar)
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(24, 20, 24, 12)
+        layout.setSpacing(14)
+        shell_layout.addWidget(body, stretch=1)
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
+        self.page_title = QLabel("Library")
+        self.page_title.setObjectName("pageTitle")
+        toolbar.addWidget(self.page_title)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search apps…")
+        self.search.setPlaceholderText("Search apps")
         self.search.setAccessibleName("Search apps")
         self.search.setClearButtonEnabled(True)
-        search_row.addWidget(self.search, stretch=1)
-        self.add_app_button = QPushButton("+ Add app")
-        self.add_app_button.setObjectName("primary")
-        self.add_app_button.clicked.connect(lambda: self.open_repositories(adding=True))
-        search_row.addWidget(self.add_app_button)
-        layout.addLayout(search_row)
-        self.search.setFocus()
-        navigation = QHBoxLayout()
-        self.tabs = QTabBar()
-        self.tabs.setAccessibleName("Library filters")
-        self.tabs.setDrawBase(False)
-        for name in ("All apps", "Installed", "Updates"):
-            self.tabs.addTab(name)
-        navigation.addWidget(self.tabs)
-        navigation.addStretch()
-        layout.addLayout(navigation)
-        list_row = QHBoxLayout()
-        self.results = QLabel()
-        self.results.setObjectName("muted")
-        list_row.addWidget(self.results, stretch=1)
+        toolbar.addWidget(self.search, stretch=1)
+        self.filters = QWidget()
+        filters = QHBoxLayout(self.filters)
+        filters.setContentsMargins(0, 0, 0, 0)
+        filters.setSpacing(0)
+        self.filter_all = QPushButton("All")
+        self.filter_installed = QPushButton("Installed")
+        filter_group = QButtonGroup(self)
+        filter_group.setExclusive(True)
+        for position, button in (("first", self.filter_all), ("last", self.filter_installed)):
+            button.setCheckable(True)
+            button.setObjectName("segment")
+            button.setProperty("segment", position)
+            filter_group.addButton(button)
+            filters.addWidget(button)
+        self.filter_all.setChecked(True)
+        self.filters.setAccessibleName("Library filter")
+        toolbar.addWidget(self.filters)
         self.sort_combo = QComboBox()
         self.sort_combo.setItemDelegate(QStyledItemDelegate(self.sort_combo))
         self.sort_combo.setAccessibleName("Sort apps")
@@ -1149,19 +1222,35 @@ class LauncherWindow(QMainWindow):
         self.sort_combo.setCurrentIndex(max(0, self.sort_combo.findData(sort_mode(self.settings))))
         self.sort_combo.currentIndexChanged.connect(self.sort_changed)
         self.sort_combo.setObjectName("compact")
-        list_row.addWidget(self.sort_combo)
+        toolbar.addWidget(self.sort_combo)
+        self.check_button = QToolButton()
+        self.check_button.setObjectName("checkNow")
+        self.check_button.setAccessibleName("Check for updates")
+        self.check_button.setToolTip(CHECK_TOOLTIP)
+        self.check_button.setIconSize(QSize(18, 18))
+        self.check_button.clicked.connect(lambda: self.refresh_releases(force=True))
+        toolbar.addWidget(self.check_button)
+        layout.addLayout(toolbar)
+        self.banner = QFrame()
+        self.banner.setObjectName("updatesBanner")
+        banner_layout = QHBoxLayout(self.banner)
+        banner_layout.setContentsMargins(14, 10, 10, 10)
+        banner_layout.setSpacing(8)
+        self.banner_label = QLabel()
+        self.banner_label.setTextFormat(Qt.TextFormat.RichText)
+        self.banner_label.setWordWrap(True)
+        banner_layout.addWidget(self.banner_label, stretch=1)
         self.update_all_button = QPushButton("Update all")
         self.update_all_button.clicked.connect(self.update_all)
-        self.update_all_button.setObjectName("compact")
-        list_row.addWidget(self.update_all_button)
-        self.check_button = QPushButton("Refresh releases")
-        self.check_button.setToolTip(
-            "Check installed applications for eligible stable and preview updates"
-        )
-        self.check_button.clicked.connect(lambda: self.refresh_releases(force=True))
-        self.check_button.setObjectName("compact")
-        list_row.addWidget(self.check_button)
-        layout.addLayout(list_row)
+        self.update_all_button.setObjectName("primary")
+        banner_layout.addWidget(self.update_all_button)
+        self.review_button = QPushButton("Review")
+        self.review_button.setToolTip("Show only the apps that have updates")
+        self.review_button.clicked.connect(lambda: self.show_view("updates"))
+        banner_layout.addWidget(self.review_button)
+        self.banner.hide()
+        layout.addWidget(self.banner)
+        self.search.setFocus()
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
@@ -1180,7 +1269,7 @@ class LauncherWindow(QMainWindow):
         welcome_layout.setContentsMargins(120, 0, 120, 0)
         welcome_layout.addStretch()
         welcome_title = QLabel("Welcome to AppGlider")
-        welcome_title.setObjectName("pageTitle")
+        welcome_title.setObjectName("welcomeTitle")
         welcome_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_layout.addWidget(welcome_title)
         welcome_text = QLabel(
@@ -1234,17 +1323,10 @@ class LauncherWindow(QMainWindow):
         self.orphans_button.clicked.connect(self.review_orphans)
         self.orphans_button.hide()
         progress_row.addWidget(self.orphans_button)
-        self.github_button = QPushButton()
-        self.github_button.setObjectName("githubStatus")
-        self.github_button.setAccessibleName("GitHub request status")
-        self.github_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.github_button.clicked.connect(lambda: self.open_settings(3))
-        progress_row.addWidget(self.github_button)
-        progress_row.addWidget(self.version_button)
         layout.addLayout(progress_row)
         self.cards: dict[str, AppCard] = {}
         self.search.textChanged.connect(self.refresh)
-        self.tabs.currentChanged.connect(self.refresh)
+        self.filter_installed.toggled.connect(self.refresh)
         QApplication.styleHints().colorSchemeChanged.connect(self.apply_theme)
         self.scroll_area.viewport().installEventFilter(self)
         self.tray_icons = (QIcon(str(APP_ICON)), QIcon(str(APP_UPDATE_ICON)))
@@ -1267,13 +1349,13 @@ class LauncherWindow(QMainWindow):
             self.tray.show()
         self.apply_theme()
         restore_rate_limits(self.library.data_dir / "release-cache")
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.scheduled_check)
         self.github_timer = QTimer(self)
         self.github_timer.timeout.connect(self.update_github_status)
         self.github_timer.start(1000)
         self.update_github_status()
         self.scan_installed()
-        self.update_timer = QTimer(self)
-        self.update_timer.timeout.connect(self.scheduled_check)
         self.schedule_update_checks()
 
     def schedule_update_checks(self) -> None:
@@ -1329,12 +1411,37 @@ class LauncherWindow(QMainWindow):
 
     def update_github_status(self) -> None:
         label, details, limited = github_request_status()
-        self.github_button.setText(label)
-        self.github_button.setToolTip(details + "\nClick for details in Settings → GitHub.")
-        if self.github_button.property("limited") != limited:
-            self.github_button.setProperty("limited", limited)
-            self.github_button.style().unpolish(self.github_button)
-            self.github_button.style().polish(self.github_button)
+        allowance = github_status.allowance()
+        self.github_label.setText(
+            "GitHub: limited"
+            if limited
+            else f"GitHub {allowance[0]} of {allowance[1]} left"
+            if allowance
+            else label
+        )
+        self.github_meter.setVisible(allowance is not None)
+        if allowance:
+            self.github_meter.setRange(0, max(1, allowance[1]))
+            self.github_meter.setValue(allowance[0])
+        self.status_label.setText(self.check_summary())
+        self.status_block.setToolTip(details + "\nClick for details in Settings → GitHub.")
+        if self.status_block.property("limited") != limited:
+            self.status_block.setProperty("limited", limited)
+            for widget in (self.status_block, self.github_label, self.github_meter):
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+
+    def check_summary(self) -> str:
+        """Describe the last release check and, when scheduled, the next one."""
+        last = max((info.checked_at for info in self.release_infos.values()), default=0)
+        scheduled = self.update_timer.isActive()
+        if not last:
+            return "Not checked yet" if scheduled else "Automatic checks off"
+        text = f"Checked {datetime.fromtimestamp(last):%H:%M}"
+        if scheduled:
+            upcoming = datetime.now().timestamp() + self.update_timer.remainingTime() / 1000
+            text += f" · next {datetime.fromtimestamp(upcoming):%H:%M}"
+        return text
 
     def create_card(self, app: App) -> AppCard:
         card = AppCard(app, self.library.icon_path(app))
@@ -1426,8 +1533,14 @@ class LauncherWindow(QMainWindow):
 
     def refresh(self) -> None:
         update_count = sum(self.has_update(app.id) for app in self.apps)
-        self.tabs.setTabText(1, f"Installed ({len(self.installed)})")
-        self.tabs.setTabText(2, f"Updates ({update_count})")
+        self.library_count.setText(str(len(self.apps)))
+        self.updates_count.setText(str(update_count))
+        self.updates_count.setVisible(update_count > 0)
+        self.nav_updates.setAccessibleName(
+            f"Updates, {update_count} waiting" if update_count else "Updates"
+        )
+        self.filter_installed.setText(f"Installed ({len(self.installed)})")
+        updates_view = self.view == "updates"
         self.tray.setToolTip(f"AppGlider · Updates: {update_count}")
         if (update_count > 0) != self.tray_has_updates:
             self.tray_has_updates = update_count > 0
@@ -1452,9 +1565,9 @@ class LauncherWindow(QMainWindow):
             app
             for app in self.apps
             if (
-                self.tabs.currentIndex() == 0
-                or (self.tabs.currentIndex() == 1 and app.id in self.installed)
-                or (self.tabs.currentIndex() == 2 and self.has_update(app.id))
+                self.has_update(app.id)
+                if updates_view
+                else app.id in self.installed or not self.installed_only
             )
             and query in f"{app.name} {app.description} {app.repo}".casefold()
         ]
@@ -1473,8 +1586,11 @@ class LauncherWindow(QMainWindow):
                 self.release_errors.get(app_id, ""),
             )
             card.setVisible(app_id in ids)
-        self.add_app_button.setEnabled(self.task is None)
-        self.check_button.setText("Refreshing…" if self.checks.busy else "Refresh releases")
+        self.nav_add.setEnabled(self.task is None)
+        self.search.setPlaceholderText(
+            f"Search {update_count if updates_view else len(self.apps)} apps"
+        )
+        self.check_button.setToolTip("Checking for updates…" if self.checks.busy else CHECK_TOOLTIP)
         self.check_button.setEnabled(not self.checks.busy and bool(self.installed))
         self.update_all_button.setVisible(
             any(
@@ -1483,6 +1599,10 @@ class LauncherWindow(QMainWindow):
             )
         )
         self.update_all_button.setEnabled(self.task is None)
+        self.review_button.setVisible(not updates_view)
+        self.banner.setVisible(update_count > 0)
+        if update_count > 0:
+            self.banner_label.setText(self.banner_text())
         self.grid.set_cards(
             [self.cards[app.id] for app in visible], self.scroll_area.viewport().width()
         )
@@ -1492,29 +1612,56 @@ class LauncherWindow(QMainWindow):
         self.welcome_add_button.setEnabled(self.task is None)
         self.welcome_import_button.setEnabled(self.task is None)
         self.welcome_example_button.setEnabled(self.task is None)
-        self.results.setText(
-            "No apps yet"
-            if not self.apps
-            else f"{len(visible)} of {len(self.apps)} apps"
-            if query
-            else f"{len(visible)} apps · AppImage catalog"
-        )
         if query:
             self.empty.setText(
                 "No apps match your search in this view.\nTry another name or clear the search."
             )
-        elif self.tabs.currentIndex() == 1:
+        elif updates_view:
             self.empty.setText(
-                "No apps are installed.\nChoose Install from All apps to get started."
-            )
-        elif self.tabs.currentIndex() == 2:
-            self.empty.setText(
-                "No known updates.\nUse Refresh releases to look for new releases."
+                "No known updates.\nUse Check for updates to look for new releases."
                 if self.installed
-                else "No installed apps to check.\nInstall an app from All apps to get started."
+                else "No installed apps to check.\nInstall an app from Library to get started."
             )
+        elif self.installed_only:
+            self.empty.setText("No apps are installed.\nChoose Install from All to get started.")
         else:
             self.empty.setText("No apps match your search.\nTry another name or clear the search.")
+
+    @property
+    def installed_only(self) -> bool:
+        return self.filter_installed.isChecked()
+
+    def show_view(self, view: str) -> None:
+        """Show the whole library or only the apps with updates."""
+        if view not in ("library", "updates"):
+            raise ValueError(f"Unknown view: {view}")
+        self.view = view
+        (self.nav_updates if view == "updates" else self.nav_library).setChecked(True)
+        self.page_title.setText("Updates" if view == "updates" else "Library")
+        self.filters.setVisible(view == "library")
+        self.refresh()
+
+    def banner_text(self) -> str:
+        """Summarise the waiting updates, shortened the way the tray notification is."""
+        names = []
+        for app in self.apps:
+            if self.has_update(app.id):
+                release = self.releases.get(app.id)
+                version = (
+                    f" {'v' if release.version[:1].isdigit() else ''}{release.version}"
+                    if release
+                    else ""
+                )
+                names.append(html.escape(f"{app.name}{version}"))
+        count = len(names)
+        lead = f"<b>{count} update{'s' if count != 1 else ''} ready.</b>"
+        if count > 3:
+            tail = f"{', '.join(names[:3])}, and {count - 3} more"
+        elif count > 1:
+            tail = f"{', '.join(names[:-1])} and {names[-1]}"
+        else:
+            tail = names[0]
+        return f"{lead} {tail}."
 
     def open_details(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
@@ -2065,7 +2212,9 @@ class LauncherWindow(QMainWindow):
         background, surface = tokens["bg"], tokens["surface"]
         foreground, muted, border = tokens["text"], tokens["muted"], tokens["line"]
         ok, warn, danger = tokens["ok"], tokens["warn"], tokens["danger"]
+        raised, faint = tokens["raised"], tokens["faint"]
         on_accent = background if dark else "#ffffff"
+        on_warn = on_accent
         palette = QPalette()
         for role, color in (
             (QPalette.ColorRole.Window, background),
@@ -2084,12 +2233,13 @@ class LauncherWindow(QMainWindow):
             palette.setColor(role, QColor(color))
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(muted))
         app.setPalette(palette)
-        self.settings_button.setIcon(cog_icon(foreground))
+        self.check_button.setIcon(refresh_icon(foreground))
         app.setStyleSheet(f"""
             QWidget {{ font-size: 14px; }}
             QMainWindow, QDialog {{ background: {background}; }}
             QLabel {{ background: transparent; }}
-            QLabel#pageTitle {{ font-size: 27px; font-weight: 650; }}
+            QLabel#pageTitle {{ font-size: 22px; font-weight: 650; }}
+            QLabel#welcomeTitle {{ font-size: 27px; font-weight: 650; }}
             QLabel#dialogTitle {{ font-size: 22px; font-weight: 650; }}
             QLabel#sectionTitle {{ font-size: 18px; font-weight: 650; }}
             QGroupBox {{ background: {surface}; border: 1px solid {border};
@@ -2099,7 +2249,43 @@ class LauncherWindow(QMainWindow):
                 padding: 0 6px; color: {foreground}; font-weight: 600; }}
             QPushButton#compact {{ padding: 6px 12px; }}
             QComboBox#compact {{ padding: 6px 10px; }}
-            QToolButton#settingsButton {{ padding: 8px; }}
+            QToolButton#checkNow {{ padding: 8px; }}
+            QFrame#sidebar {{ background: {surface}; border: none;
+                border-right: 1px solid {border}; }}
+            QLabel#brand {{ font-size: 16px; font-weight: 700; }}
+            QPushButton#nav {{ background: transparent; border: 2px solid transparent;
+                border-radius: 8px; color: {muted}; text-align: left;
+                padding: 0 10px; font-weight: 500; }}
+            QPushButton#nav:hover {{ color: {foreground}; border-color: transparent; }}
+            QPushButton#nav:checked {{ background: {tint(accent, 0.14)}; color: {foreground}; }}
+            QPushButton#nav:focus {{ border: 2px solid {accent}; }}
+            QPushButton#nav:disabled {{ background: transparent; color: {faint}; }}
+            QLabel#navCount {{ color: {faint}; font-size: 12px; }}
+            QLabel#navBadge {{ background: {warn}; color: {on_warn}; border-radius: 9px;
+                padding: 0 6px; font-size: 11px; font-weight: 700; }}
+            QPushButton#statusBlock {{ background: transparent; border: 1px solid transparent;
+                border-radius: 8px; padding: 0; text-align: left; }}
+            QPushButton#statusBlock:hover, QPushButton#statusBlock:focus {{
+                border-color: {accent}; }}
+            QLabel#sideStatus {{ color: {muted}; font-size: 12px; }}
+            QPushButton#statusBlock[limited="true"] QLabel#sideStatus {{ color: {warn}; }}
+            QProgressBar#meter {{ background: {border}; border: none; border-radius: 2px; }}
+            QProgressBar#meter::chunk {{ background: {accent}; border-radius: 2px; }}
+            QPushButton#versionButton {{ background: transparent; border: 1px solid transparent;
+                color: {faint}; font-size: 12px; padding: 3px 8px; }}
+            QPushButton#versionButton:hover, QPushButton#versionButton:focus {{
+                border-color: {accent}; color: {accent}; }}
+            QPushButton#segment {{ background: {surface}; color: {muted};
+                border-radius: 0; padding: 8px 12px; }}
+            QPushButton#segment[segment="first"] {{ border-top-left-radius: 7px;
+                border-bottom-left-radius: 7px; }}
+            QPushButton#segment[segment="last"] {{ border-top-right-radius: 7px;
+                border-bottom-right-radius: 7px; border-left: none; }}
+            QPushButton#segment:checked {{ background: {raised}; color: {foreground}; }}
+            QFrame#updatesBanner {{ background: {tint(warn, 0.14)};
+                border: 1px solid {tint(warn, 0.45)}; border-radius: 10px; }}
+            QFrame#updatesBanner QLabel {{ color: {foreground}; }}
+            QFrame#updatesBanner QPushButton {{ padding: 7px 14px; }}
             QFrame#statusStrip {{ background: {surface}; border: 1px solid {border};
                 border-radius: 8px; }}
             QProgressBar {{ background: {background}; border: none; border-radius: 3px; }}
@@ -2149,14 +2335,6 @@ class LauncherWindow(QMainWindow):
                 border-color: {ok}; }}
             QLabel#releaseBadge[release="prerelease"] {{ color: {warn};
                 border-color: {warn}; }}
-            QPushButton#versionButton, QPushButton#githubStatus {{
-                background: transparent; border: 1px solid transparent;
-                color: {muted}; font-size: 12px; padding: 5px 10px; }}
-            QPushButton#versionButton:hover, QPushButton#versionButton:focus,
-            QPushButton#githubStatus:hover, QPushButton#githubStatus:focus {{
-                background: {surface}; border-color: {accent}; color: {accent}; }}
-            QPushButton#githubStatus[limited="true"] {{
-                color: {warn}; }}
             QListWidget#settingsSections {{ border: none; background: transparent; outline: 0; }}
             QListWidget#settingsSections::item {{ padding: 12px; border-radius: 7px; }}
             QListWidget#settingsSections::item:selected {{
@@ -2189,10 +2367,6 @@ class LauncherWindow(QMainWindow):
             QAbstractItemView QLineEdit, QAbstractItemView QLineEdit:focus {{
                 padding: 0; border: 1px solid {accent}; border-radius: 2px; }}
             QScrollArea, QScrollArea > QWidget > QWidget {{ background: {background}; }}
-            QTabBar::tab {{ color: {muted}; padding: 12px 16px;
-                border-bottom: 2px solid transparent; }}
-            QTabBar::tab:selected {{ color: {accent}; border-bottom-color: {accent}; }}
-            QTabBar::tab:focus {{ border: 1px solid {accent}; }}
             QMenu {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; padding: 6px; }}
             QMenu::item {{ padding: 8px 16px; }}

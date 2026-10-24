@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QStyleOptionFrame,
     QSystemTrayIcon,
     QToolButton,
+    QWidget,
 )
 from test_library import APP, appimage_bytes, release_for
 
@@ -98,7 +99,7 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(window.welcome.isVisibleTo(window))
         self.assertTrue(window.scroll_area.isHidden())
         self.assertTrue(window.empty.isHidden())
-        self.assertEqual(window.results.text(), "No apps yet")
+        self.assertEqual(window.library_count.text(), "0")
 
         def close_dialog(observed: list[bool]) -> None:
             active = self.qt.activeModalWidget()
@@ -128,13 +129,14 @@ class LibraryTests(unittest.TestCase):
         self.qt.processEvents()
         self.assertTrue(window.welcome.isHidden())
         self.assertFalse(window.scroll_area.isHidden())
-        self.assertEqual(window.results.text(), "2 apps · AppImage catalog")
+        self.assertEqual(window.library_count.text(), "2")
+        self.assertEqual(window.search.placeholderText(), "Search 2 apps")
 
     def test_appglider_identity_and_icon(self) -> None:
         self.assertEqual(self.window.windowTitle(), "AppGlider")
         self.assertFalse(self.window.windowIcon().isNull())
         self.assertFalse(self.window.tray.icon().isNull())
-        self.assertEqual(self.window.findChild(QLabel, "pageTitle").text(), "AppGlider")
+        self.assertEqual(self.window.findChild(QLabel, "pageTitle").text(), "Library")
         image = QImage(str(APP_ICON))
         self.assertTrue(image.hasAlphaChannel())
         self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
@@ -392,9 +394,9 @@ class LibraryTests(unittest.TestCase):
         self.settings.setValue("notifications/updates", True)
         self.waiting_update()
         card = window.cards[APP.id]
-        self.assertEqual(window.tabs.tabText(2), "Updates (1)")
+        self.assertEqual(window.updates_count.text(), "1")
         card.hold_action.trigger()
-        self.assertEqual(window.tabs.tabText(2), "Updates (0)")
+        self.assertEqual(window.updates_count.text(), "0")
         self.assertFalse(window.tray_has_updates)
         self.assertEqual(window.tray.icon().cacheKey(), window.tray_icons[0].cacheKey())
         card = window.cards[APP.id]
@@ -411,7 +413,7 @@ class LibraryTests(unittest.TestCase):
             card.hold_action.trigger()
             discover.assert_not_called()
         card = window.cards[APP.id]
-        self.assertEqual(window.tabs.tabText(2), "Updates (1)")
+        self.assertEqual(window.updates_count.text(), "1")
         self.assertFalse(card.update_button.isHidden())
         self.assertEqual(card.update_button.text(), "Update")
         self.assertEqual(card.hold_action.text(), "Hold at current version")
@@ -698,16 +700,91 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(self.window.empty.isVisible())
 
     def test_empty_filters_and_return_to_library(self) -> None:
-        self.assertEqual(self.window.tabs.tabText(0), "All apps")
-        self.assertEqual(self.window.tabs.tabText(1), "Installed (0)")
-        for index in (1, 2):
-            self.window.tabs.setCurrentIndex(index)
-            self.assertFalse(self.visible_ids())
-            self.assertTrue(self.window.empty.isVisible())
-            self.assertFalse(self.window.scroll_area.isVisible())
+        self.assertEqual(self.window.filter_all.text(), "All")
+        self.assertEqual(self.window.filter_installed.text(), "Installed (0)")
+        self.window.filter_installed.click()
+        self.assertTrue(self.window.installed_only)
+        self.assertFalse(self.visible_ids())
+        self.assertTrue(self.window.empty.isVisible())
+        self.assertFalse(self.window.scroll_area.isVisible())
+        self.assertIn("No apps are installed", self.window.empty.text())
+        self.window.show_view("updates")
+        self.assertFalse(self.visible_ids())
+        self.assertTrue(self.window.empty.isVisible())
         self.assertIn("No installed apps to check", self.window.empty.text())
-        self.window.tabs.setCurrentIndex(0)
+        self.window.show_view("library")
+        self.window.filter_all.click()
         self.assertEqual(len(self.visible_ids()), 14)
+
+    def test_updates_banner_badge_and_review_switch_views(self) -> None:
+        window = self.window
+        self.assertTrue(window.banner.isHidden())
+        self.assertTrue(window.updates_count.isHidden())
+        self.assertEqual(window.minimumSize().width(), 860)
+        self.assertEqual(window.minimumSize().height(), 560)
+        path = Path(self.temp.name) / "solidcraft-0.16.1-linux-x86_64.AppImage"
+        window.installed["solidcraft"] = Installed(path, "0.16.1", True)
+        window.releases["solidcraft"] = Release("0.16.2", "s.AppImage", "unused", 1, "0" * 64)
+        window.refresh()
+        self.assertTrue(window.banner.isVisibleTo(window))
+        self.assertFalse(window.updates_count.isHidden())
+        self.assertEqual(window.updates_count.text(), "1")
+        self.assertIn("1 update ready.", window.banner_label.text())
+        self.assertIn("SolidCraft v0.16.2", window.banner_label.text())
+        self.assertEqual(window.update_all_button.objectName(), "primary")
+        self.assertTrue(window.filters.isVisibleTo(window))
+        QTest.mouseClick(window.review_button, Qt.MouseButton.LeftButton)
+        self.assertEqual(window.view, "updates")
+        self.assertTrue(window.nav_updates.isChecked())
+        self.assertFalse(window.nav_library.isChecked())
+        self.assertEqual(window.page_title.text(), "Updates")
+        self.assertTrue(window.filters.isHidden())
+        self.assertTrue(window.review_button.isHidden())
+        self.assertEqual(self.visible_ids(), {"solidcraft"})
+        window.nav_library.click()
+        self.assertEqual(window.view, "library")
+        self.assertEqual(len(self.visible_ids()), 14)
+        for number, app in enumerate(window.apps[:5], start=2):
+            window.installed[app.id] = Installed(path, "1.0.0", True)
+            window.releases[app.id] = Release(f"{number}.0.0", "a", "u", 1, "0" * 64)
+        window.refresh()
+        self.assertIn("6 updates ready.", window.banner_label.text())
+        self.assertIn("and 3 more.", window.banner_label.text())
+        window.installed["solidcraft"] = Installed(path, "0.16.2", True)
+        window.refresh()
+
+    def test_installed_filter_counts_and_hides_other_apps(self) -> None:
+        window = self.window
+        path = Path(self.temp.name) / "solidcraft-0.16.1-linux-x86_64.AppImage"
+        window.installed["solidcraft"] = Installed(path, "0.16.1", True)
+        window.refresh()
+        self.assertTrue(window.filter_all.isChecked())
+        self.assertFalse(window.installed_only)
+        self.assertEqual(window.filter_installed.text(), "Installed (1)")
+        window.filter_installed.click()
+        self.assertTrue(window.installed_only)
+        self.assertEqual(self.visible_ids(), {"solidcraft"})
+        window.filter_all.click()
+        self.assertFalse(window.installed_only)
+        self.assertEqual(len(self.visible_ids()), 14)
+        with self.assertRaises(ValueError):
+            window.show_view("missing")
+
+    def test_sidebar_status_block_opens_github_settings(self) -> None:
+        observed = []
+
+        def inspect() -> None:
+            dialog = self.qt.activeModalWidget()
+            if isinstance(dialog, SettingsDialog):
+                observed.append(dialog.sections.currentItem().text())
+                dialog.reject()
+
+        self.assertIn(self.window.status_label.text().split()[0], ("Not", "Automatic", "Checked"))
+        QTimer.singleShot(0, inspect)
+        QTest.mouseClick(self.window.status_block, Qt.MouseButton.LeftButton)
+        self.assertEqual(observed, ["GitHub"])
+        self.assertEqual(self.window.nav_add.accessibleName(), "Add app")
+        self.assertEqual(self.window.check_button.accessibleName(), "Check for updates")
 
     def test_update_count_and_versions_are_visible_before_selecting_updates(self) -> None:
         path = Path(self.temp.name) / "solidcraft-0.16.1-linux-x86_64.AppImage"
@@ -716,32 +793,32 @@ class LibraryTests(unittest.TestCase):
         self.window.releases["solidcraft"] = release
         self.window.refresh()
 
-        self.assertEqual(self.window.tabs.currentIndex(), 0)
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
+        self.assertEqual(self.window.view, "library")
+        self.assertEqual(self.window.updates_count.text(), "1")
         card = self.window.cards["solidcraft"]
         self.assertIn("v0.16.1", card.status.text())
         self.assertIn("v0.16.2", card.available_version.text.text())
         self.assertEqual(card.action_button.text(), "Launch")
-        self.window.tabs.setCurrentIndex(2)
+        self.window.show_view("updates")
         self.assertEqual(self.visible_ids(), {"solidcraft"})
         self.assertIn("v0.16.1", card.status.text())
         self.assertIn("v0.16.2", card.available_version.text.text())
 
         self.window.search.setText("photocraft")
         self.assertFalse(self.visible_ids())
-        self.assertEqual(self.window.tabs.tabText(0), "All apps")
-        self.assertEqual(self.window.tabs.tabText(1), "Installed (1)")
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
+        self.assertEqual(self.window.library_count.text(), "14")
+        self.assertEqual(self.window.filter_installed.text(), "Installed (1)")
+        self.assertEqual(self.window.updates_count.text(), "1")
         self.window.installed["solidcraft"] = Installed(path, "0.16.2", True)
         self.window.refresh()
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (0)")
+        self.assertEqual(self.window.updates_count.text(), "0")
 
     def test_grid_reflows_and_preserves_cards_when_filtering(self) -> None:
         self.window.resize(1400, 800)
         self.qt.processEvents()
         wide_columns = self.window.grid.columns
         first_card = self.window.cards["photocraft"]
-        self.window.resize(760, 600)
+        self.window.resize(860, 600)
         self.qt.processEvents()
         self.assertLess(self.window.grid.columns, wide_columns)
         self.assertEqual(self.window.grid.layout_grid.count(), 14)
@@ -1295,10 +1372,10 @@ class LibraryTests(unittest.TestCase):
             ),
         )
         self.assertEqual(card.action_button.text(), "Launch")
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
+        self.assertEqual(self.window.updates_count.text(), "1")
         self.change_release_preference(1)
         self.assertEqual(self.window.cards[APP.id].available_version.badge.text(), "Pre-release")
-        self.assertEqual(self.window.check_button.text(), "Refresh releases")
+        self.assertEqual(self.window.check_button.toolTip(), "Check for updates")
 
     def change_release_preference(self, index: int) -> None:
         selected = []
@@ -1324,12 +1401,12 @@ class LibraryTests(unittest.TestCase):
             self.window.library.install(APP, info.stable.release, Event(), lambda *args: None)
         atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
         self.window.scan_installed()
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (0)")
+        self.assertEqual(self.window.updates_count.text(), "0")
         with patch.object(self.window.library, "install") as install:
             self.change_release_preference(1)
             install.assert_not_called()
         card = self.window.cards[APP.id]
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
+        self.assertEqual(self.window.updates_count.text(), "1")
         self.assertEqual(card.available_version.badge.text(), "Pre-release")
         self.assertTrue(card.installed_version.badge.isHidden())
         self.assertTrue(card.app.include_prereleases)
@@ -1338,9 +1415,9 @@ class LibraryTests(unittest.TestCase):
         self.addCleanup(reopened.close)
         self.assertTrue(reopened.cards[APP.id].app.include_prereleases)
         self.assertEqual(reopened.cards[APP.id].findChildren(QComboBox), [])
-        self.assertEqual(reopened.tabs.tabText(2), "Updates (1)")
+        self.assertEqual(reopened.updates_count.text(), "1")
         self.change_release_preference(0)
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (0)")
+        self.assertEqual(self.window.updates_count.text(), "0")
         card = self.window.cards[APP.id]
         self.assertTrue(card.available_version.isHidden())
         self.assertEqual(card.installed_version.badge.text(), "Latest")
@@ -1354,13 +1431,13 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual((large.width(), large.height()), (1040, 816))
 
     def test_window_size_is_remembered_between_launches(self) -> None:
-        self.window.resize(760, 600)
+        self.window.resize(860, 600)
         self.window.quitting = True
         self.window.close()
         reopened = LauncherWindow(self.settings, self.window.library)
         self.addCleanup(reopened.deleteLater)
         self.addCleanup(reopened.close)
-        self.assertEqual((reopened.width(), reopened.height()), (760, 600))
+        self.assertEqual((reopened.width(), reopened.height()), (860, 600))
 
     def test_failed_refresh_retains_badges_and_shows_last_checked_without_dialog(self) -> None:
         info = replace(self.release_info(), checked_at=time.time() - 3600)
@@ -1397,7 +1474,7 @@ class LibraryTests(unittest.TestCase):
         card = self.window.cards[APP.id]
         self.assertTrue(card.action_button.isEnabled())
         self.assertEqual(card.available_version.text.text(), "Available")
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (0)")
+        self.assertEqual(self.window.updates_count.text(), "0")
         payload = appimage_bytes()
         release = replace(release_for("1.1.0-beta.1", payload), prerelease=True, is_latest=False)
         with (
@@ -1443,7 +1520,7 @@ class LibraryTests(unittest.TestCase):
         path = self.window.installed[APP.id].path
         card = self.window.cards[APP.id]
         self.assertEqual(card.action_button.text(), "Launch")
-        self.window.tabs.setCurrentIndex(1)
+        self.window.filter_installed.click()
         self.assertEqual(self.visible_ids(), {APP.id})
         with patch("appglider.library.subprocess.Popen") as spawn:
             spawn.return_value.poll.return_value = None
@@ -1467,8 +1544,8 @@ class LibraryTests(unittest.TestCase):
         self.window.scan_installed()
         self.assertNotIn("solidcraft", self.window.installed)
         self.assertEqual(self.window.cards["solidcraft"].action_button.text(), "Install")
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (0)")
-        self.window.tabs.setCurrentIndex(1)
+        self.assertEqual(self.window.updates_count.text(), "0")
+        self.window.filter_installed.click()
         self.assertFalse(self.visible_ids())
         self.assertEqual(path.read_bytes(), appimage_bytes())
 
@@ -1604,8 +1681,9 @@ class LibraryTests(unittest.TestCase):
             self.window.version_button.cursor().shape(), Qt.CursorShape.PointingHandCursor
         )
         self.assertEqual(self.window.version_button.toolTip(), "About AppGlider")
-        self.assertGreater(
-            self.window.version_button.geometry().top(), self.window.scroll_area.geometry().bottom()
+        self.assertEqual(self.window.findChild(QWidget, "sidebar").width(), 210)
+        self.assertTrue(
+            self.window.nav_settings.geometry().bottom() < self.window.version_button.y()
         )
         QTimer.singleShot(0, inspect_about)
         QTest.mouseClick(self.window.version_button, Qt.MouseButton.LeftButton)
@@ -1634,8 +1712,8 @@ class LibraryTests(unittest.TestCase):
                 self.window.github_timer.timeout.emit()
                 self.qt.processEvents()
                 observed.append(dialog.github_details.text())
-                self.assertEqual(self.window.github_button.text(), "GitHub: limited")
-                self.assertTrue(self.window.github_button.property("limited"))
+                self.assertEqual(self.window.github_label.text(), "GitHub: limited")
+                self.assertTrue(self.window.status_block.property("limited"))
                 label = dialog.github_details
                 self.assertGreaterEqual(label.height(), label.heightForWidth(label.width()))
             finally:
@@ -1649,12 +1727,12 @@ class LibraryTests(unittest.TestCase):
             patch.object(releases, "request") as request,
         ):
             self.window.update_github_status()
-            self.assertEqual(self.window.github_button.text(), "GitHub status")
+            self.assertEqual(self.window.github_label.text(), "GitHub status")
             self.assertEqual(
-                self.window.github_button.cursor().shape(), Qt.CursorShape.PointingHandCursor
+                self.window.status_block.cursor().shape(), Qt.CursorShape.PointingHandCursor
             )
             QTimer.singleShot(0, inspect_status)
-            QTest.mouseClick(self.window.github_button, Qt.MouseButton.LeftButton)
+            QTest.mouseClick(self.window.status_block, Qt.MouseButton.LeftButton)
             request.assert_not_called()
         self.assertEqual(observed[0], "GitHub")
         self.assertIn("unknown", observed[1])

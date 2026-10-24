@@ -531,7 +531,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn("SHA-256", self.dialog.checksum.text())
         QTest.mouseClick(self.dialog.add_button, Qt.MouseButton.LeftButton)
         self.assertEqual(len(self.window.cards), 15)
-        self.assertEqual(self.window.tabs.tabText(0), "All apps")
+        self.assertEqual(self.window.library_count.text(), "15")
         self.assertEqual(self.window.cards[CUSTOM.id].app.name, CUSTOM.name)
         self.assertFalse(self.dialog.add_button.isEnabled())
         self.assertEqual(self.window.cards[CUSTOM.id].action_button.text(), "Install")
@@ -541,13 +541,13 @@ class RepositoryGuiTests(unittest.TestCase):
         self.addCleanup(reopened.deleteLater)
         self.addCleanup(reopened.close)
         self.assertIn(CUSTOM.id, reopened.cards)
-        self.assertEqual(reopened.tabs.tabText(0), "All apps")
+        self.assertEqual(reopened.library_count.text(), "15")
         self.assertIn("lightcraft", reopened.cards)
         self.select_custom()
         QTest.mouseClick(self.dialog.remove_button, Qt.MouseButton.LeftButton)
         self.assertNotIn(CUSTOM.id, self.window.cards)
         self.assertEqual(len(self.window.cards), 14)
-        self.assertEqual(self.window.tabs.tabText(0), "All apps")
+        self.assertEqual(self.window.library_count.text(), "14")
 
     def test_edits_invalidate_preview_and_invalid_or_duplicate_sources_do_not_fetch(self):
         self.inspect()
@@ -897,7 +897,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(card.action_button.text(), "Launch")
         self.assertEqual(card.update_button.text(), "Choose build")
         self.assertTrue(card.update_button.isVisibleTo(card))
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
+        self.assertEqual(self.window.updates_count.text(), "1")
         self.assertTrue(self.window.update_all_button.isHidden())
         observed = []
 
@@ -1071,7 +1071,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.wait_for_task(self.window)
             warning.assert_not_called()
         self.assertEqual(self.window.cards[CUSTOM.id].action_button.text(), "Launch")
-        self.assertEqual(self.window.tabs.tabText(1), "Installed (1)")
+        self.assertEqual(self.window.filter_installed.text(), "Installed (1)")
         self.assertIn(
             CUSTOM.name, [action.text() for action in self.window.tray_apps_menu.actions()]
         )
@@ -1090,7 +1090,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.assertFalse(self.window.checks.busy)
             discover.assert_called_once()
             self.assertEqual(discover.call_args.args[0].id, CUSTOM.id)
-        self.assertEqual(self.window.tabs.tabText(2), "Updates (1)")
+        self.assertEqual(self.window.updates_count.text(), "1")
         with (
             patch("appglider.window.latest_release", return_value=custom_release("0.9.5")),
             patch("appglider.releases.request", return_value=io.BytesIO(payload)),
@@ -1104,7 +1104,7 @@ class RepositoryGuiTests(unittest.TestCase):
         ):
             self.window.remove_app(CUSTOM.id)
             self.wait_for_task(self.window)
-        self.assertEqual(self.window.tabs.tabText(1), "Installed (0)")
+        self.assertEqual(self.window.filter_installed.text(), "Installed (0)")
         self.dialog.remove_repository()
         self.assertNotIn(CUSTOM.id, self.window.cards)
         self.assertEqual(self.library.scan(), {})
@@ -1188,7 +1188,7 @@ class RepositoryGuiTests(unittest.TestCase):
                 active.reject()
 
         QTimer.singleShot(0, inspect_dialog)
-        self.window.add_app_button.click()
+        self.window.nav_add.click()
         self.assertEqual(observed, [True])
 
 
