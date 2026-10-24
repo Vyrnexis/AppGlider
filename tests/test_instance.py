@@ -29,6 +29,17 @@ class SingleInstanceTests(unittest.TestCase):
                 QTest.qWait(50)
             self.assertEqual(woken, [True])
 
+    def test_quiet_second_launch_does_not_wake_the_first(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            first, second = SingleInstance(Path(temp)), SingleInstance(Path(temp))
+            woken: list[bool] = []
+            first.activated.connect(lambda: woken.append(True))
+            self.assertTrue(first.acquire())
+            self.addCleanup(first.release)
+            self.assertFalse(second.acquire(wake=False))
+            QTest.qWait(300)
+            self.assertEqual(woken, [])
+
     def test_lock_is_released_and_directories_are_independent(self) -> None:
         with tempfile.TemporaryDirectory() as one, tempfile.TemporaryDirectory() as two:
             first = SingleInstance(Path(one))

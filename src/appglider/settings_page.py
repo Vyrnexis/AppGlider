@@ -6,7 +6,7 @@ Every control saves as it changes; there is no Save or Cancel.
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSettings, QStandardPaths, Qt, QUrl
+from PySide6.QtCore import QSettings, QSignalBlocker, QStandardPaths, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QShowEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -192,7 +192,38 @@ class SettingsPage(QWidget):
         )
         row.setToolTip("Applies when a system tray is available. Use Quit to exit.")
         layout.addWidget(row)
+        self.autostart = Switch()
+        self.autostart.setAccessibleName("Start with my desktop")
+        self.autostart.setChecked(self.launcher.library.autostart_enabled())
+        self.autostart.toggled.connect(self.autostart_toggled)
+        layout.addWidget(
+            SettingRow("Start with my desktop", "Opens in the tray when you log in", self.autostart)
+        )
+        self.autostart_error = QLabel()
+        self.autostart_error.setObjectName("settingError")
+        self.autostart_error.setTextFormat(Qt.TextFormat.PlainText)
+        self.autostart_error.setWordWrap(True)
+        self.autostart_error.setAccessibleName("Start with my desktop problem")
+        self.autostart_error.hide()
+        layout.addWidget(self.autostart_error)
         column.addWidget(frame)
+
+    def autostart_toggled(self, checked: bool) -> None:
+        from appglider.app import launcher_command
+
+        library = self.launcher.library
+        try:
+            if checked:
+                library.enable_autostart(launcher_command())
+            else:
+                library.disable_autostart()
+        except (OSError, ValueError) as error:
+            self.autostart_error.setText(str(error))
+            self.autostart_error.show()
+            with QSignalBlocker(self.autostart):
+                self.autostart.setChecked(not checked)
+            return
+        self.autostart_error.hide()
 
     def build_updates(self, column: QVBoxLayout) -> None:
         frame, layout, _ = panel("Updates")
@@ -376,6 +407,10 @@ class SettingsPage(QWidget):
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         self.update_github_status()
+        enabled = self.launcher.library.autostart_enabled()  # the file is the setting
+        if enabled != self.autostart.isChecked():
+            with QSignalBlocker(self.autostart):
+                self.autostart.setChecked(enabled)
 
     # Appearance, window and updates
 

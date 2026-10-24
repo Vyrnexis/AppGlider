@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths, QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QComboBox
+from PySide6.QtWidgets import QApplication, QComboBox, QSystemTrayIcon
 
 from appglider import APP_NAME, APP_TASKBAR_ICON, APP_VERSION
 from appglider.catalogfile import EXAMPLE_CATALOG
@@ -24,6 +24,24 @@ def launcher_command() -> list[str]:
     return [sys.executable, "-O", "-m", "appglider"]
 
 
+def show_initial(window: LauncherWindow, tray: bool) -> None:
+    """Show the window, or keep it in the tray for a quiet login start.
+
+    Hidden only when a tray icon is visible and closing to the tray is on, so the
+    window can always be brought back; otherwise it opens minimised.
+    """
+    if not tray:
+        window.show()
+    elif (
+        QSystemTrayIcon.isSystemTrayAvailable()
+        and window.tray.isVisible()
+        and window.settings.value("General/close-to-tray", True, type=bool)
+    ):
+        return
+    else:
+        window.showMinimized()
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     app.setOrganizationName(APP_NAME)
@@ -34,11 +52,12 @@ def main() -> int:
     app.setWindowIcon(QIcon(str(APP_TASKBAR_ICON)))
     app.setStyle("Fusion")
     smoke = "--smoke-test" in sys.argv
+    quiet = "--tray" in sys.argv and not smoke
     instance = SingleInstance(
         Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation))
         / "appglider"
     )
-    if not smoke and not instance.acquire():
+    if not smoke and not instance.acquire(wake=not quiet):
         return 0
     window = LauncherWindow()
     instance.activated.connect(window.show_launcher)
@@ -47,7 +66,11 @@ def main() -> int:
         window.library.refresh_launcher_shortcut(command, packaged=len(command) == 1)
     except (OSError, ValueError) as error:
         window.footer.setText(f"Could not create the AppGlider menu shortcut: {error}")
-    window.show()
+    try:
+        window.library.refresh_autostart(command, packaged=len(command) == 1)
+    except (OSError, ValueError) as error:
+        window.footer.setText(f"Could not update the AppGlider login entry: {error}")
+    show_initial(window, quiet)
     if smoke:
 
         def report() -> None:

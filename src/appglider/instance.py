@@ -26,15 +26,20 @@ class SingleInstance(QObject):
         self._server: socket.socket | None = None
         self._notifier: QSocketNotifier | None = None
 
-    def acquire(self) -> bool:
-        """Return True when this process is the only instance and now owns the lock."""
+    def acquire(self, wake: bool = True) -> bool:
+        """Return True when this process is the only instance and now owns the lock.
+
+        When another instance holds it, that one is asked to show its window unless
+        ``wake`` is False (a quiet autostart launch must not raise the window).
+        """
         self.directory.mkdir(parents=True, exist_ok=True)
         lock = (self.directory / "appglider.lock").open("ab")
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             lock.close()
-            self._wake_existing()
+            if wake:
+                self._wake_existing()
             return False
         self._lock = lock
         self._listen()

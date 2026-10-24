@@ -20,6 +20,7 @@ newer version is out. If you want the "how does it actually work" details, see t
 - [Catalogs: sharing a list of apps](#catalogs-sharing-a-list-of-apps)
 - [Settings](#settings)
 - [The tray icon](#the-tray-icon)
+- [Starting with your desktop](#starting-with-your-desktop)
 - [Menu shortcuts](#menu-shortcuts)
 - [Uninstalling](#uninstalling)
 - [If something goes wrong](#if-something-goes-wrong)
@@ -283,7 +284,8 @@ sections on the left. Everything saves as you change it, so there is no Save or 
 page says "Changes save automatically".
 
 - **General**: **Theme** (System, Light or Dark), **Accent** (Blue, Green, Amber or Clay) and
-  whether closing the window keeps AppGlider running in the tray.
+  whether closing the window keeps AppGlider running in the tray, and whether AppGlider
+  starts with your desktop.
 - **Updates**: how often to check for updates, and whether to **Notify me about new
   updates**.
 - **Catalogs**: import a catalog, add the example catalog, or export your own.
@@ -313,6 +315,17 @@ working tray, closing the window just quits. To really exit while it is in the t
 
 Only one AppGlider window runs at a time. Starting it again just shows the one that is
 already open.
+
+## Starting with your desktop
+
+Turn on **Start with my desktop** in **Settings → General** and AppGlider opens in the tray
+when you log in, so scheduled update checks and notifications run without a window. If there
+is no tray, or **Keep running in the tray** is off, it opens minimised instead. It is off by
+default. The setting is a small file, `~/.config/autostart/appglider.desktop` (respecting
+`XDG_CONFIG_HOME`), so deleting it by hand turns the setting off too. AppGlider only ever
+changes or removes that file when it wrote it; another program's file with the same name is
+left alone and the switch reports the problem. If you move the AppImage, the next start
+repairs the entry. Starting AppGlider with `--tray` while it is already running does nothing.
 
 ## Menu shortcuts
 

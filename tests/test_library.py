@@ -75,6 +75,7 @@ class LibraryTests(unittest.TestCase):
                 self.root / "data",
                 self.root / "apps",
                 desktop_dir=self.root / "desktop",
+                autostart_dir=self.root / "autostart",
             )
         )
 
@@ -666,6 +667,71 @@ class LibraryTests(unittest.TestCase):
         self.library.refresh_launcher_shortcut([str(image)], packaged=True)
         self.assertEqual(icon.read_bytes(), APP_TASKBAR_ICON.read_bytes())
         self.assertEqual(shortcut.read_text(), before)
+
+    def test_autostart_enable_writes_a_marked_tray_entry_and_disable_removes_it(self) -> None:
+        self.assertFalse(self.library.autostart_enabled())
+        path = self.library.enable_autostart(["/home/a b/AppGlider.AppImage"])
+        self.assertEqual(path, self.root / "autostart" / "appglider.desktop")
+        lines = path.read_text().splitlines()
+        self.assertIn('Exec="/home/a b/AppGlider.AppImage" "--tray"', lines)
+        for line in ("Type=Application", "Terminal=false", "X-AppGlider=true"):
+            self.assertIn(line, lines)
+        self.assertIn("X-GNOME-Autostart-enabled=true", lines)
+        self.assertTrue((self.root / "data" / "icons" / "appglider.png").is_file())
+        self.assertTrue(self.library.autostart_enabled())
+        self.library.disable_autostart()
+        self.assertFalse(path.exists())
+        self.library.disable_autostart()  # already off
+
+    def test_autostart_leaves_foreign_files_and_symlinks_alone(self) -> None:
+        directory = self.root / "autostart"
+        directory.mkdir()
+        path = directory / "appglider.desktop"
+        path.write_text("[Desktop Entry]\nExec=/bin/true\n")
+        self.assertFalse(self.library.autostart_enabled())
+        with self.assertRaisesRegex(OSError, "another application"):
+            self.library.enable_autostart(["/x"])
+        with self.assertRaisesRegex(OSError, "another application"):
+            self.library.disable_autostart()
+        self.library.refresh_autostart(["/x"], packaged=True)
+        self.assertEqual(path.read_text(), "[Desktop Entry]\nExec=/bin/true\n")
+        path.unlink()
+        target = self.root / "target.desktop"
+        target.write_text("[Desktop Entry]\nX-AppGlider=true\n")
+        path.symlink_to(target)
+        self.assertFalse(self.library.autostart_enabled())
+        with self.assertRaises(OSError):
+            self.library.enable_autostart(["/x"])
+        with self.assertRaises(OSError):
+            self.library.disable_autostart()
+        self.assertTrue(path.is_symlink())
+        self.assertEqual(target.read_text(), "[Desktop Entry]\nX-AppGlider=true\n")
+
+    def test_autostart_refresh_repairs_a_moved_command_but_never_creates_the_entry(self) -> None:
+        old, new = self.root / "old.AppImage", self.root / "new.AppImage"
+        self.library.refresh_autostart([str(old)], packaged=True)
+        self.assertFalse(self.library.autostart_file.exists())
+        self.library.enable_autostart([str(old)])
+        # The old image is gone, so any start repairs the entry.
+        self.library.refresh_autostart([str(new)], packaged=False)
+        self.assertIn(f'Exec="{new}" "--tray"', self.library.autostart_file.read_text())
+        before = self.library.autostart_file.stat().st_mtime_ns
+        self.library.refresh_autostart([str(new)], packaged=True)
+        self.assertEqual(self.library.autostart_file.stat().st_mtime_ns, before)
+
+    def test_autostart_refresh_keeps_a_working_entry_for_dev_runs_and_older_images(self) -> None:
+        current, other = self.root / "current.AppImage", self.root / "other.AppImage"
+        current.write_bytes(b"current")
+        other.write_bytes(b"other")
+        os.utime(other, ns=(1, 1))  # older than the entry's target
+        self.library.enable_autostart([str(current)])
+        entry = self.library.autostart_file.read_text()
+        self.library.refresh_autostart([sys.executable, "-O", "-m", "appglider"], packaged=False)
+        self.library.refresh_autostart([str(other)], packaged=True)
+        self.assertEqual(self.library.autostart_file.read_text(), entry)
+        os.utime(other)  # now newer: a newer packaged image takes over
+        self.library.refresh_autostart([str(other)], packaged=True)
+        self.assertIn(f'Exec="{other}" "--tray"', self.library.autostart_file.read_text())
 
     def test_refresh_still_refuses_foreign_shortcuts(self) -> None:
         shortcut = self.library.desktop_dir / "appglider.desktop"

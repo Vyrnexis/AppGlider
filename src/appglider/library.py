@@ -47,6 +47,7 @@ MAX_LOG_BYTES = 5 * 1024 * 1024
 STALE_STAGE_SECONDS = 24 * 60 * 60
 LOCK_WAIT_SECONDS = 3.0
 MAX_APPS = 100
+AUTOSTART_FLAG = "--tray"
 
 
 def desktop_exec(arguments: list[str]) -> str:
@@ -160,12 +161,17 @@ class Library:
         data_dir: Path,
         apps_dir: Path,
         desktop_dir: Path | None = None,
+        autostart_dir: Path | None = None,
     ) -> None:
         self.data_dir = data_dir
         self.apps_dir = apps_dir
         home = Path.home()
         xdg_data = Path(os.environ.get("XDG_DATA_HOME", str(home / ".local/share")))
         self.desktop_dir = desktop_dir if desktop_dir is not None else xdg_data / "applications"
+        xdg_config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+        self.autostart_dir = (
+            autostart_dir if autostart_dir is not None else xdg_config / "autostart"
+        )
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
         self._catalog: tuple[tuple[tuple[int, int, int] | None, ...], tuple[App, ...]] | None = None
 
@@ -894,6 +900,80 @@ class Library:
             if not icon.is_file() or icon.read_bytes() != data:
                 atomic_bytes(icon, data)
 
+    def _write_launcher_icon(self) -> Path:
+        icon = self.data_dir / "icons" / "appglider.png"
+        if icon.parent.is_symlink() or icon.is_symlink():
+            raise OSError("The shortcut icon path is a symbolic link; it was left untouched.")
+        atomic_bytes(icon, APP_TASKBAR_ICON.read_bytes())
+        return icon
+
+    @property
+    def autostart_file(self) -> Path:
+        return self.autostart_dir / "appglider.desktop"
+
+    def _autostart_lines(self) -> list[str] | None:
+        """Return our autostart entry's lines, or None if it is absent, foreign or a link."""
+        path = self.autostart_file
+        try:
+            if path.is_symlink() or not path.is_file():
+                return None
+            lines = path.read_text().splitlines()
+        except (OSError, ValueError):
+            return None
+        return lines if "X-AppGlider=true" in lines else None
+
+    def autostart_enabled(self) -> bool:
+        return self._autostart_lines() is not None
+
+    def enable_autostart(self, arguments: list[str]) -> Path:
+        """Write the login entry that opens AppGlider in the tray."""
+        command = desktop_exec([*arguments, AUTOSTART_FLAG])
+        path = self.autostart_file
+        if (path.is_symlink() or path.exists()) and self._autostart_lines() is None:
+            raise OSError(
+                f"{path} already exists and belongs to another application; it was left untouched."
+            )
+        self.autostart_dir.mkdir(parents=True, exist_ok=True)
+        icon = self._write_launcher_icon()
+        atomic_bytes(
+            path,
+            (
+                "[Desktop Entry]\nType=Application\nName=AppGlider\n"
+                "Comment=Install, update and launch Linux AppImages\n"
+                f"Exec={command}\nIcon={icon}\nTerminal=false\n"
+                "X-GNOME-Autostart-enabled=true\nX-AppGlider=true\n"
+            ).encode(),
+        )
+        return path
+
+    def disable_autostart(self) -> None:
+        """Remove our entry; a link or a file without our marker is never touched."""
+        path = self.autostart_file
+        if self._autostart_lines() is not None:
+            path.unlink(missing_ok=True)
+        elif path.is_symlink() or path.exists():
+            raise OSError(f"{path} belongs to another application; it was left untouched.")
+
+    def refresh_autostart(self, arguments: list[str], packaged: bool) -> None:
+        """Repair our entry when its target is gone or a newer packaged image runs.
+
+        Like the menu shortcut, a development run or an older image never repoints a working
+        entry, and the entry is never created here.
+        """
+        lines = self._autostart_lines()
+        if lines is None:
+            return
+        current = next((line[5:] for line in lines if line.startswith("Exec=")), "")
+        if current == desktop_exec([*arguments, AUTOSTART_FLAG]):
+            return
+        try:
+            age = Path(shlex.split(current)[0]).stat().st_mtime_ns
+            newer = packaged and Path(arguments[0]).stat().st_mtime_ns > age
+        except (ValueError, IndexError, OSError):
+            newer = True
+        if newer:
+            self.enable_autostart(arguments)
+
     def create_launcher_shortcut(self, arguments: list[str]) -> Path:
         command = desktop_exec(arguments)
         self.desktop_dir.mkdir(parents=True, exist_ok=True)
@@ -902,10 +982,7 @@ class Library:
             shortcut.exists() and "X-AppGlider=true" not in shortcut.read_text().splitlines()
         ):
             raise OSError("The existing AppGlider shortcut belongs to another application.")
-        icon = self.data_dir / "icons" / "appglider.png"
-        if icon.parent.is_symlink() or icon.is_symlink():
-            raise OSError("The shortcut icon path is a symbolic link; it was left untouched.")
-        atomic_bytes(icon, APP_TASKBAR_ICON.read_bytes())
+        icon = self._write_launcher_icon()
         atomic_bytes(
             shortcut,
             (

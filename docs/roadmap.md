@@ -27,6 +27,8 @@ change after discussion. Something being listed here is not a promise that it wi
   accent colour (Blue, Green, Amber or Clay). The window works from the keyboard.
 - **Your own order:** drag rows into a custom order (or use **Move up** and **Move down**);
   pinned apps stay on top.
+- **Start with my desktop:** an opt-in switch in Settings → General writes an autostart entry
+  that opens AppGlider in the tray at login (`--tray`).
 - **Holding an app:** keep an installed app at its current version; it is still checked but
   never offered, counted or updated by **Update all**.
 - **Nix flake (community-contributed):** `nix run github:Vyrnexis/AppGlider`, with a package

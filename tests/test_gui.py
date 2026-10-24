@@ -94,6 +94,7 @@ class LibraryTests(unittest.TestCase):
                 Path(self.temp.name) / "data",
                 Path(self.temp.name) / "apps",
                 desktop_dir=Path(self.temp.name) / "desktop",
+                autostart_dir=Path(self.temp.name) / "autostart",
             )
         )
         self.window = LauncherWindow(self.settings, library)
@@ -185,6 +186,57 @@ class LibraryTests(unittest.TestCase):
             self.window.quit_launcher()
             self.assertFalse(self.window.isVisible())
             self.assertFalse(self.window.tray.isVisible())
+
+    def test_tray_start_hides_with_a_tray_and_minimises_without_one(self) -> None:
+        from appglider.app import show_initial
+
+        with patch("appglider.app.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
+            self.window.hide()
+            self.window.tray.show()
+            show_initial(self.window, tray=True)
+            self.assertTrue(self.window.isHidden())
+            self.settings.setValue("General/close-to-tray", False)
+            show_initial(self.window, tray=True)
+            self.assertTrue(self.window.isMinimized())
+            self.settings.setValue("General/close-to-tray", True)
+        with patch("appglider.app.QSystemTrayIcon.isSystemTrayAvailable", return_value=False):
+            self.window.hide()
+            self.window.setWindowState(Qt.WindowState.WindowNoState)
+            show_initial(self.window, tray=True)
+            self.assertTrue(self.window.isMinimized())
+        self.window.hide()
+        show_initial(self.window, tray=False)
+        self.assertTrue(self.window.isVisible())
+
+    def test_start_with_my_desktop_switch_reflects_and_changes_the_entry(self) -> None:
+        page = self.window.settings_page
+        library = self.window.library
+        self.assertFalse(page.autostart.isChecked())
+        self.assertEqual(page.autostart.accessibleName(), "Start with my desktop")
+        page.autostart.setChecked(True)
+        self.assertTrue(library.autostart_enabled())
+        self.assertIn("--tray", library.autostart_file.read_text())
+        page.autostart.setChecked(False)
+        self.assertFalse(library.autostart_file.exists())
+        library.enable_autostart(["/x"])  # changed outside the window
+        page.hide()
+        page.show()
+        self.assertTrue(page.autostart.isChecked())
+        library.autostart_file.unlink()
+        page.hide()
+        page.show()
+        self.assertFalse(page.autostart.isChecked())
+
+    def test_start_with_my_desktop_reverts_and_explains_an_error(self) -> None:
+        page = self.window.settings_page
+        library = self.window.library
+        library.autostart_dir.mkdir(parents=True)
+        library.autostart_file.write_text("[Desktop Entry]\nExec=/bin/true\n")
+        page.autostart.setChecked(True)
+        self.assertFalse(page.autostart.isChecked())
+        self.assertIn("another application", page.autostart_error.text())
+        self.assertFalse(page.autostart_error.isHidden())
+        self.assertEqual(library.autostart_file.read_text(), "[Desktop Entry]\nExec=/bin/true\n")
 
     def test_no_tray_host_keeps_normal_close_behaviour(self) -> None:
         with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False):

@@ -231,6 +231,7 @@ repository:
 | Installed apps | `~/.local/share/appglider/apps/` unless you chose another folder |
 | Settings | `~/.config/AppGlider/AppGlider.conf` (follows `XDG_CONFIG_HOME`) |
 | Menu entries | `~/.local/share/applications/appglider*.desktop` |
+| Login entry (only if you turn on Start with my desktop) | `~/.config/autostart/appglider.desktop` (follows `XDG_CONFIG_HOME`) |
 | Logs of apps that failed to start | `~/.local/share/appglider/logs/` |
 
 Each install folder holds a small `.appglider` marker. That marker is how AppGlider knows

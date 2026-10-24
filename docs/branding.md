@@ -40,12 +40,15 @@ needed. The bundled icons for the ArtCraft example catalog's apps remain separat
 - Installation ownership marker: `.appglider`, with `AppGlider` as its first line.
 - Managed-app shortcuts: `appglider-<id>.desktop`, marked `X-AppGlider=true`.
 - Launcher shortcut and Qt desktop-file ID: `appglider.desktop` / `appglider`.
+- Optional autostart entry: `$XDG_CONFIG_HOME/autostart/appglider.desktop` (default
+  `~/.config/autostart`), marked `X-AppGlider=true`, running the launcher command with
+  `--tray`. Its existence is the setting; a symlink or unmarked file is never touched.
 
 ## Tray behaviour
 
 Click restores the window. The context menu opens AppGlider, checks for updates, launches
 managed installed apps or quits. Closing hides only while a tray is available; otherwise
 normal close behaviour remains. Downloads continue while hidden, and Quit waits for a
-confirmed cancellation to finish before exiting. Autostart and notifications are not added.
+confirmed cancellation to finish before exiting. Notifications are limited to update alerts.
 
 Qt tray integration follows the [QSystemTrayIcon documentation](https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QSystemTrayIcon.html).
