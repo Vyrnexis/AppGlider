@@ -25,8 +25,6 @@ change after discussion. Something being listed here is not a promise that it wi
   app with its release notes, versions, preferences and a Manage area. Settings and Add app
   are pages in the same window, and there are Light and Dark themes with a choice of
   accent colour (Blue, Green, Amber or Teal). The window works from the keyboard.
-- **Your own order:** drag rows into a custom order (or use **Move up** and **Move down**);
-  pinned apps stay on top.
 - **Start with my desktop:** an opt-in switch in Settings → General writes an autostart entry
   that opens AppGlider in the tray at login (`--tray`).
 - **Holding an app:** keep an installed app at its current version; it is still checked but
@@ -39,8 +37,9 @@ change after discussion. Something being listed here is not a promise that it wi
   after the project).
 - **Update notifications:** an optional desktop message when a scheduled check finds a new
   update, once per new version. It is off unless you turn it on in Settings.
-- **Ordering and pinning:** your own order (drag the rows, or **⋯ → Sort A–Z** in the
-  toolbar) and **Pin to top** on each app, remembered between runs.
+- **Ordering and pinning:** your own order (drag the rows by their handle, use **Move up**
+  and **Move down**, or **⋯ → Sort A–Z** in the toolbar) and **Pin to top** on each app,
+  remembered between runs.
 - **Example catalog built in:** an **Example catalog** button on the welcome screen and in the
   Settings → Catalogs section adds the ArtCraft apps and SolidCraft without downloading anything.
 - **Cheaper update checks:** checking an app that has not changed now asks GitHub's ordinary
