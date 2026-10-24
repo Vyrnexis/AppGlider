@@ -80,7 +80,7 @@ def app_status(
         )
     elif refreshing:
         state, text = "none", "Checking…"
-        details.append("Refreshing releases…")
+        details.append("Checking for updates…")
     elif installed and (refresh_error or (error and release is None)):
         state, text = "failed", "Check failed"
     elif waiting:
@@ -109,7 +109,7 @@ def app_status(
         details.append("Release checked when installing")
     elif stamp:
         details.append(
-            f"Last checked {stamp}" + (" · refresh needed" if info and not info.fresh() else "")
+            f"Last checked {stamp}" + (" · check needed" if info and not info.fresh() else "")
         )
     else:
         details.append("Release information not checked")

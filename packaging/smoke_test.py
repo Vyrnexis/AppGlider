@@ -52,7 +52,7 @@ def main() -> None:
         version = tomllib.loads(project.read_text())["project"]["version"]
         assert report["version"] == version, report
         assert report["header_version"] == f"v{version}", report
-        assert report["refresh_action"] == "Refresh releases", report
+        assert report["refresh_action"] == "Check for updates", report
         assert report["https_certificates"] > 0, report
         assert report["installed"] == 0 and report["catalog"] == 0, report
         assert report["welcome"] is True, report

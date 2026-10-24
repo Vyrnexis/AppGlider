@@ -74,7 +74,7 @@ class AddPage(QScrollArea):
         content = QWidget()
         self.setWidget(content)
         outer = QVBoxLayout(content)
-        outer.setContentsMargins(24, 20, 24, 20)
+        outer.setContentsMargins(22, 20, 22, 20)
         column_widget = QWidget()
         column_widget.setMaximumWidth(MAX_WIDTH)
         outer.addWidget(column_widget, alignment=Qt.AlignmentFlag.AlignTop)

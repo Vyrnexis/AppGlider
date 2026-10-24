@@ -35,6 +35,7 @@ from PySide6.QtGui import (
     QDropEvent,
     QFont,
     QIcon,
+    QKeySequence,
     QMouseEvent,
     QPainter,
     QPainterPath,
@@ -42,8 +43,10 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QResizeEvent,
+    QShortcut,
 )
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QButtonGroup,
     QComboBox,
@@ -246,6 +249,32 @@ class ElidedLabel(QLabel):
         self.elide()
 
 
+class StatusMessage(QLabel):
+    """The footer message: a transient note that expires and tells the window when it changes."""
+
+    changed = Signal()
+    expired = Signal()
+    LIFETIME_MS = 30_000
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("footer")
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setWordWrap(True)
+        self.setAccessibleName("Status message")
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.expired)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        super().setText(text)
+        if text:
+            self.timer.start(self.LIFETIME_MS)
+        else:
+            self.timer.stop()
+        self.changed.emit()
+
+
 class AppRow(QFrame):
     details_requested = Signal(str)
     launch_requested = Signal(str)
@@ -313,20 +342,20 @@ class AppRow(QFrame):
         content.addLayout(identity, stretch=1)
         self.installed_version = QLabel("—")
         self.installed_version.setObjectName("rowVersion")
-        self.installed_version.setFixedWidth(104)
+        self.installed_version.setFixedWidth(88)
         font = self.installed_version.font()
         font.setFeature(QFont.Tag("tnum"), 1)
         self.installed_version.setFont(font)
         content.addWidget(self.installed_version)
         chip_slot = QWidget()
-        chip_slot.setFixedWidth(158)
+        chip_slot.setFixedWidth(140)
         chip_layout = QHBoxLayout(chip_slot)
         chip_layout.setContentsMargins(0, 0, 0, 0)
         self.chip = QLabel()
         self.chip.setObjectName("chip")
         self.chip.setProperty("state", "none")
         self.chip.setFixedHeight(22)
-        self.chip.setMaximumWidth(158)
+        self.chip.setMaximumWidth(140)
         chip_layout.addWidget(self.chip)
         chip_layout.addStretch()
         content.addWidget(chip_slot)
@@ -336,6 +365,7 @@ class AppRow(QFrame):
         self.action_button.clicked.connect(self.activate)
         content.addWidget(self.action_button)
         more = QToolButton()
+        self.more_button = more
         more.setText("⋯")
         more.setObjectName("rowMenu")
         more.setFixedSize(32, 32)
@@ -539,6 +569,7 @@ class AppList(QFrame):
         super().__init__()
         self.setObjectName("appList")
         self.setAcceptDrops(True)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self.rows: list[AppRow] = []
         self.reorderable = False
         self.scroll_area: QScrollArea | None = None
@@ -723,6 +754,57 @@ def refresh_icon(colour: str) -> QIcon:
     return QIcon(pixmap)
 
 
+NAV_ICON_SIZE = 18
+
+
+def nav_icon(kind: str, normal: str, active: str, disabled: str) -> QIcon:
+    """Draw a sidebar glyph (grid, download, plus or cog) in three colours; no image assets."""
+    icon = QIcon()
+    scale = 3
+    side = NAV_ICON_SIZE * scale
+    for colour, mode, state in (
+        (normal, QIcon.Mode.Normal, QIcon.State.Off),
+        (active, QIcon.Mode.Normal, QIcon.State.On),
+        (active, QIcon.Mode.Active, QIcon.State.Off),
+        (active, QIcon.Mode.Active, QIcon.State.On),
+        (disabled, QIcon.Mode.Disabled, QIcon.State.Off),
+        (disabled, QIcon.Mode.Disabled, QIcon.State.On),
+    ):
+        pixmap = QPixmap(side, side)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.scale(scale, scale)
+        pen = QPen(QColor(colour), 1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        if kind == "library":
+            for x in (2.5, 10.5):
+                for y in (2.5, 10.5):
+                    painter.drawRoundedRect(QRectF(x, y, 5, 5), 1.2, 1.2)
+        elif kind == "updates":
+            painter.drawPolyline([QPointF(9, 2.5), QPointF(9, 11.5)])
+            painter.drawPolyline([QPointF(5, 7.8), QPointF(9, 11.8), QPointF(13, 7.8)])
+            painter.drawLine(QPointF(3.5, 15), QPointF(14.5, 15))
+        elif kind == "add":
+            painter.drawLine(QPointF(9, 3), QPointF(9, 15))
+            painter.drawLine(QPointF(3, 9), QPointF(15, 9))
+        else:
+            painter.drawEllipse(QPointF(9, 9), 2.4, 2.4)
+            painter.drawEllipse(QPointF(9, 9), 5.2, 5.2)
+            for step in range(8):
+                painter.save()
+                painter.translate(9, 9)
+                painter.rotate(step * 45)
+                painter.drawLine(QPointF(0, -5.2), QPointF(0, -7.6))
+                painter.restore()
+        painter.end()
+        icon.addPixmap(pixmap, mode, state)
+    return icon
+
+
 def tint(colour: str, alpha: float) -> str:
     """Return a stylesheet rgba() value for a hex token at the given opacity."""
     value = QColor(colour)
@@ -733,6 +815,7 @@ def nav_entry(text: str, *, badge: bool = False) -> tuple[QPushButton, QLabel]:
     """Create a sidebar entry with a trailing count label (hidden until it has text)."""
     button = QPushButton(text)
     button.setObjectName("nav")
+    button.setIconSize(QSize(NAV_ICON_SIZE, NAV_ICON_SIZE))
     button.setFixedHeight(38)
     button.setCursor(Qt.CursorShape.PointingHandCursor)
     layout = QHBoxLayout(button)
@@ -879,9 +962,9 @@ class LauncherWindow(QMainWindow):
         shell_layout.addWidget(body, stretch=1)
         self.pages = QStackedWidget()
         body_layout.addWidget(self.pages, stretch=1)
-        list_widget = QWidget()
+        list_widget = self.list_page = QWidget()
         layout = QVBoxLayout(list_widget)
-        layout.setContentsMargins(24, 20, 24, 0)
+        layout.setContentsMargins(22, 20, 22, 16)
         layout.setSpacing(14)
         self.pages.addWidget(list_widget)
         self.app_page = AppPage(self)
@@ -984,7 +1067,7 @@ class LauncherWindow(QMainWindow):
         self.welcome = QWidget()
         welcome_layout = QVBoxLayout(self.welcome)
         welcome_layout.setSpacing(16)
-        welcome_layout.setContentsMargins(120, 0, 120, 0)
+        welcome_layout.setContentsMargins(24, 0, 24, 0)
         welcome_layout.addStretch()
         welcome_title = QLabel("Welcome to AppGlider")
         welcome_title.setObjectName("welcomeTitle")
@@ -1018,13 +1101,12 @@ class LauncherWindow(QMainWindow):
         welcome_layout.addLayout(welcome_buttons)
         welcome_layout.addStretch()
         layout.addWidget(self.welcome, stretch=1)
-        self.footer = QLabel("Loading your library…")
-        self.footer.setObjectName("footer")
-        self.footer.setTextFormat(Qt.TextFormat.PlainText)
-        self.footer.setWordWrap(True)
-        status_line = QWidget()
-        progress_row = QHBoxLayout(status_line)
-        progress_row.setContentsMargins(24, 0, 24, 12)
+        self.footer = StatusMessage()
+        self.footer.changed.connect(self.update_status_line)
+        self.footer.expired.connect(self.expire_footer)
+        self.status_line = QWidget()
+        progress_row = QHBoxLayout(self.status_line)
+        progress_row.setContentsMargins(22, 0, 22, 12)
         progress_row.addWidget(self.footer, stretch=1)
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedWidth(170)
@@ -1039,7 +1121,8 @@ class LauncherWindow(QMainWindow):
         self.orphans_button.clicked.connect(self.review_orphans)
         self.orphans_button.hide()
         progress_row.addWidget(self.orphans_button)
-        body_layout.addWidget(status_line)
+        body_layout.addWidget(self.status_line)
+        self.update_status_line()
         self.cards: dict[str, AppRow] = {}
         self.search.textChanged.connect(self.refresh)
         self.filter_installed.toggled.connect(self.refresh)
@@ -1049,7 +1132,7 @@ class LauncherWindow(QMainWindow):
         self.tray_has_updates = False
         self.tray_menu = QMenu(self)
         self.tray_menu.addAction("Open AppGlider").triggered.connect(self.show_launcher)
-        self.tray_check_action = self.tray_menu.addAction("Refresh releases")
+        self.tray_check_action = self.tray_menu.addAction("Check for updates")
         self.tray_check_action.triggered.connect(lambda: self.refresh_releases(force=True))
         self.tray_apps_menu = self.tray_menu.addMenu("Installed apps")
         self.tray_menu.addSeparator()
@@ -1072,6 +1155,55 @@ class LauncherWindow(QMainWindow):
         self.update_github_status()
         self.scan_installed()
         self.schedule_update_checks()
+        self.setup_keyboard()
+
+    def setup_keyboard(self) -> None:
+        """Shortcuts, focus behaviour and the order Tab walks through the controls."""
+        for sequence, handler in (("Ctrl+F", self.focus_search), ("Esc", self.go_back)):
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.activated.connect(handler)
+        for button in self.findChildren(QAbstractButton):
+            self.keyboard_button(button)
+        QWidget.setTabOrder(self.version_button, self.search)
+
+    @staticmethod
+    def keyboard_button(button: QAbstractButton) -> None:
+        """Focus a button with Tab only, so a mouse click leaves no ring; Enter presses it."""
+        button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        if isinstance(button, QPushButton):
+            button.setAutoDefault(True)
+
+    def focus_search(self) -> None:
+        if self.pages.currentIndex() != 0:
+            self.show_view(self.view)
+        self.search.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.search.selectAll()
+
+    def go_back(self) -> None:
+        """Escape leaves the App or Add page for the list."""
+        if self.pages.currentWidget() in (self.app_page, self.add_page):
+            self.show_view(self.view)
+
+    def update_status_line(self) -> None:
+        """Show the bottom row only while it has a message, progress, Cancel or orphans."""
+        self.footer.setVisible(bool(self.footer.text()))
+        self.status_line.setVisible(
+            any(
+                not widget.isHidden()
+                for widget in (
+                    self.footer,
+                    self.progress_bar,
+                    self.cancel_button,
+                    self.orphans_button,
+                )
+            )
+        )
+
+    def expire_footer(self) -> None:
+        if self.task is None and not self.checks.busy:
+            self.footer.setText("")
+        else:
+            self.footer.timer.start(self.footer.LIFETIME_MS)
 
     def schedule_update_checks(self) -> None:
         hours = check_interval_hours(self.settings)
@@ -1174,6 +1306,8 @@ class LauncherWindow(QMainWindow):
         card.build_requested.connect(self.choose_build)
         card.cancel_requested.connect(self.cancel_task)
         card.move_requested.connect(self.move_app)
+        for button in card.findChildren(QAbstractButton):
+            self.keyboard_button(button)
         return card
 
     def sorted_apps(self, apps: Iterable[App]) -> list[App]:
@@ -1373,6 +1507,21 @@ class LauncherWindow(QMainWindow):
         if update_count > 0:
             self.banner_label.setText(self.banner_text())
         self.app_list.set_rows(shown)
+        order: list[QWidget] = [
+            self.search,
+            self.filter_all,
+            self.filter_installed,
+            self.sort_combo,
+            self.check_button,
+            self.update_all_button,
+            self.review_button,
+        ]
+        for row in shown:
+            order += [row.name_button, row.action_button, row.more_button]
+        order += [self.cancel_button, self.orphans_button]
+        for before, after in zip(order, order[1:], strict=False):
+            QWidget.setTabOrder(before, after)
+        self.update_status_line()
         self.scroll_area.setVisible(bool(visible))
         self.empty.setVisible(not visible and bool(self.apps))
         self.welcome.setVisible(not self.apps)
@@ -1443,9 +1592,11 @@ class LauncherWindow(QMainWindow):
         if self.pages.currentWidget() is not self.app_page:
             self.list_scroll = self.scroll_area.verticalScrollBar().value()
         self.app_page.show_app(app_id, "Updates" if self.view == "updates" else "Library")
-        self.pages.setCurrentWidget(self.app_page)
+        self.show_page(self.app_page)
         (self.nav_updates if self.view == "updates" else self.nav_library).setChecked(True)
-        self.app_page.back_button.setFocus()
+        if isinstance(QApplication.focusWidget(), QAbstractButton):
+            # A keyboard user stays oriented; a mouse click leaves no focus ring behind.
+            self.app_page.back_button.setFocus()
 
     open_details = open_app
 
@@ -1454,7 +1605,7 @@ class LauncherWindow(QMainWindow):
         if self.pages.currentWidget() is not self.app_page:
             return
         self.app_page.app_id = None
-        self.pages.setCurrentIndex(0)
+        self.show_page(self.list_page)
         QTimer.singleShot(
             0, self, lambda: self.scroll_area.verticalScrollBar().setValue(self.list_scroll)
         )
@@ -1465,7 +1616,15 @@ class LauncherWindow(QMainWindow):
         if self.pages.currentWidget() is self.app_page:
             self.close_app()
         else:
-            self.pages.setCurrentIndex(0)
+            self.show_page(self.list_page)
+
+    def show_page(self, page: QWidget) -> None:
+        """Switch pages; a mouse user is not left with a focus ring on the new page."""
+        keyboard = isinstance(QApplication.focusWidget(), QAbstractButton)
+        self.pages.setCurrentWidget(page)
+        if not keyboard:
+            # Parks focus on the page itself: Tab still enters it, and no button shows a ring.
+            page.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def page_changed(self) -> None:
         if self.pages.currentWidget() is not self.add_page:
@@ -1475,15 +1634,17 @@ class LauncherWindow(QMainWindow):
         """Show the Settings page at a section; the old dialog's numbers still work."""
         name = LEGACY_SECTIONS[section] if isinstance(section, int) else section
         self.settings_page.show_section(name)
-        self.pages.setCurrentWidget(self.settings_page)
+        self.show_page(self.settings_page)
         self.nav_settings.setChecked(True)
-        self.settings_page.focus_section()
+        if isinstance(QApplication.focusWidget(), QAbstractButton):
+            self.settings_page.focus_section()
 
     def open_add_app(self) -> None:
         if self.task is not None:
             return
         self.add_page.start()
-        self.pages.setCurrentWidget(self.add_page)
+        self.show_page(self.add_page)
+        self.add_page.url.setFocus()
         self.nav_add.setChecked(True)
 
     def app_added(self, app_id: str, warning: str) -> None:
@@ -1589,8 +1750,6 @@ class LauncherWindow(QMainWindow):
                     if release is not None:
                         self.releases[app.id] = release
             self.installed = installed
-            if self.task is None:
-                self.footer.setText(f"{len(self.installed)} apps installed with AppGlider.")
         self.refresh()
 
     def launch_app(self, app_id: str) -> None:
@@ -1806,9 +1965,9 @@ class LauncherWindow(QMainWindow):
             self.notify_updates()
         if self.task is None:
             self.footer.setText(
-                "Release refresh finished."
+                "Update check finished."
                 + (
-                    " Some checks failed; cards retain previously known information."
+                    " Some checks failed; rows keep previously known information."
                     if any(app_id in self.installed for app_id in self.release_errors)
                     else ""
                 )
@@ -2000,11 +2159,18 @@ class LauncherWindow(QMainWindow):
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(muted))
         app.setPalette(palette)
         self.check_button.setIcon(refresh_icon(foreground))
+        for button, kind in (
+            (self.nav_library, "library"),
+            (self.nav_updates, "updates"),
+            (self.nav_add, "add"),
+            (self.nav_settings, "settings"),
+        ):
+            button.setIcon(nav_icon(kind, muted, foreground, faint))
         app.setStyleSheet(f"""
             QWidget {{ font-size: 14px; }}
             QMainWindow, QDialog {{ background: {background}; }}
             QLabel {{ background: transparent; }}
-            QLabel#pageTitle {{ font-size: 22px; font-weight: 650; }}
+            QLabel#pageTitle {{ font-size: 20px; font-weight: 700; }}
             QLabel#welcomeTitle {{ font-size: 27px; font-weight: 650; }}
             QLabel#sectionTitle {{ font-size: 18px; font-weight: 650; }}
             QPushButton#compact {{ padding: 6px 12px; }}
@@ -2025,16 +2191,16 @@ class LauncherWindow(QMainWindow):
                 padding: 0 6px; font-size: 11px; font-weight: 700; }}
             QPushButton#statusBlock {{ background: transparent; border: 1px solid transparent;
                 border-radius: 8px; padding: 0; text-align: left; }}
-            QPushButton#statusBlock:hover, QPushButton#statusBlock:focus {{
-                border-color: {accent}; }}
+            QPushButton#statusBlock:hover {{ border-color: {accent}; }}
+            QPushButton#statusBlock:focus {{ border: 2px solid {accent}; }}
             QLabel#sideStatus {{ color: {muted}; font-size: 12px; }}
             QPushButton#statusBlock[limited="true"] QLabel#sideStatus {{ color: {warn}; }}
             QProgressBar#meter {{ background: {border}; border: none; border-radius: 2px; }}
             QProgressBar#meter::chunk {{ background: {accent}; border-radius: 2px; }}
             QPushButton#versionButton {{ background: transparent; border: 1px solid transparent;
                 color: {faint}; font-size: 12px; padding: 3px 8px; }}
-            QPushButton#versionButton:hover, QPushButton#versionButton:focus {{
-                border-color: {accent}; color: {accent}; }}
+            QPushButton#versionButton:hover {{ border-color: {accent}; color: {accent}; }}
+            QPushButton#versionButton:focus {{ border: 2px solid {accent}; color: {accent}; }}
             QPushButton#segment {{ background: {surface}; color: {muted};
                 border-radius: 0; padding: 8px 12px; }}
             QPushButton#segment[segment="first"] {{ border-top-left-radius: 7px;
@@ -2051,6 +2217,7 @@ class LauncherWindow(QMainWindow):
             QPushButton#backLink {{ background: transparent; border: none; color: {accent};
                 padding: 4px 2px; font-weight: 600; }}
             QPushButton#backLink:hover {{ text-decoration: underline; }}
+            QPushButton#backLink:focus {{ border: 2px solid {accent}; border-radius: 6px; }}
             QPushButton#backLink:disabled {{ color: {muted}; }}
             QLabel#muted, QLabel#footer {{ color: {muted}; }}
             QLabel#footer {{ font-size: 12px; padding-top: 8px; }}
@@ -2124,9 +2291,10 @@ class LauncherWindow(QMainWindow):
             QLabel#pinStar {{ color: {PIN_COLOUR}; font-size: 15px; }}
             QPushButton#appName {{ border: none; padding: 0; text-align: left;
                 font-size: 14px; font-weight: 600; background: transparent; }}
-            QPushButton#appName:focus {{ outline: 2px solid {accent}; }}
-            QToolButton#rowMenu {{ border: none; background: transparent;
+            QPushButton#appName:focus {{ border: 2px solid {accent}; border-radius: 6px; }}
+            QToolButton#rowMenu {{ border: 2px solid transparent; background: transparent;
                 font-size: 20px; padding: 0; }}
+            QToolButton#rowMenu:focus {{ border: 2px solid {accent}; }}
             QToolButton::menu-indicator {{ image: none; }}
             QLabel#status {{ color: {muted}; font-size: 12px; }}
             QLabel#releaseBadge {{ border: 1px solid; border-radius: 9px;
@@ -2163,6 +2331,18 @@ class LauncherWindow(QMainWindow):
             QAbstractItemView QLineEdit, QAbstractItemView QLineEdit:focus {{
                 padding: 0; border: 1px solid {accent}; border-radius: 2px; }}
             QScrollArea, QScrollArea > QWidget > QWidget {{ background: {background}; }}
+            QScrollBar:vertical {{ background: transparent; width: 12px; margin: 0; }}
+            QScrollBar:horizontal {{ background: transparent; height: 12px; margin: 0; }}
+            QScrollBar::handle:vertical {{ background: {faint}; border-radius: 4px;
+                min-height: 32px; margin: 2px; }}
+            QScrollBar::handle:horizontal {{ background: {faint}; border-radius: 4px;
+                min-width: 32px; margin: 2px; }}
+            QScrollBar::handle:hover, QScrollBar::handle:pressed {{ background: {muted}; }}
+            QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0;
+                background: none; border: none; }}
+            QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+            QScrollBar::up-arrow, QScrollBar::down-arrow, QScrollBar::left-arrow,
+            QScrollBar::right-arrow {{ background: none; image: none; }}
             QMenu {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; padding: 6px; }}
             QMenu::item {{ padding: 8px 16px; }}

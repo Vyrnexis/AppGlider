@@ -1599,7 +1599,7 @@ class LibraryTests(unittest.TestCase):
             )
         atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
         self.window.scan_installed()
-        self.assertIn("refresh needed", self.window.cards[APP.id].chip.toolTip())
+        self.assertIn("check needed", self.window.cards[APP.id].chip.toolTip())
         with (
             patch("appglider.window.discover_releases", side_effect=OSError("Offline")),
             patch("appglider.window.QMessageBox.warning") as warning,

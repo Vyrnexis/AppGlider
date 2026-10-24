@@ -57,7 +57,7 @@ def main() -> int:
                         "app": APP_NAME,
                         "version": app.applicationVersion(),
                         "header_version": window.version_button.text(),
-                        "refresh_action": window.check_button.text(),
+                        "refresh_action": window.check_button.accessibleName(),
                         "release_preferences": sum(
                             card.name_button.isEnabled() for card in window.cards.values()
                         ),

@@ -206,11 +206,11 @@ class VersionValue(QWidget):
 class SettingRow(QWidget):
     """A bold label, a one-line hint and the control on the right."""
 
-    def __init__(self, label: str, hint: str, control: QWidget) -> None:
+    def __init__(self, label: str, hint: str, control: QWidget, *, below: bool = False) -> None:
         super().__init__()
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self) if below else QHBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 8)
-        layout.setSpacing(12)
+        layout.setSpacing(8 if below else 12)
         text = QVBoxLayout()
         text.setSpacing(2)
         self.label = QLabel(label)
@@ -221,9 +221,12 @@ class SettingRow(QWidget):
         self.hint.setTextFormat(Qt.TextFormat.PlainText)
         text.addWidget(self.label)
         text.addWidget(self.hint)
-        layout.addLayout(text, stretch=1)
+        layout.addLayout(text, stretch=0 if below else 1)
         self.control = control
-        layout.addWidget(control, alignment=Qt.AlignmentFlag.AlignVCenter)
+        if below:
+            layout.addWidget(control)
+        else:
+            layout.addWidget(control, alignment=Qt.AlignmentFlag.AlignVCenter)
 
 
 def add_setting_rows(layout: QVBoxLayout, rows: Iterable[QWidget]) -> None:
@@ -263,7 +266,7 @@ class AppPage(QScrollArea):
         content = QWidget()
         self.setWidget(content)
         root = QVBoxLayout(content)
-        root.setContentsMargins(20, 16, 20, 20)
+        root.setContentsMargins(22, 16, 22, 20)
         root.setSpacing(16)
         self.back_button = QPushButton("‹ Library")
         self.back_button.setObjectName("backLink")

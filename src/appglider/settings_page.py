@@ -77,7 +77,7 @@ class SettingsPage(QWidget):
         self.settings: QSettings = launcher.settings
         self.setObjectName("settingsPage")
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 12)
+        root.setContentsMargins(22, 20, 22, 12)
         root.setSpacing(14)
         header = QHBoxLayout()
         title = QLabel("Settings")
@@ -92,7 +92,7 @@ class SettingsPage(QWidget):
         body.setSpacing(16)
         root.addLayout(body, stretch=1)
         nav = QWidget()
-        nav.setFixedWidth(150)
+        nav.setFixedWidth(140)
         nav.setAccessibleName("Settings sections")
         nav_layout = QVBoxLayout(nav)
         nav_layout.setContentsMargins(0, 0, 0, 0)
@@ -274,7 +274,6 @@ class SettingsPage(QWidget):
         self.folder = QLineEdit(self.applied_folder)
         self.folder.setAccessibleName("AppImage folder")
         self.folder.setCursorPosition(0)
-        self.folder.setMinimumWidth(260)
         self.folder.editingFinished.connect(self.apply_folder)
         self.browse_button = QPushButton("Browse…")
         self.browse_button.clicked.connect(self.browse)
@@ -289,6 +288,7 @@ class SettingsPage(QWidget):
             "Install new applications in",
             "Existing applications stay in their current folders.",
             field,
+            below=True,
         )
         layout.addWidget(row)
         self.folder_error = QLabel()
