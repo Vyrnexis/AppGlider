@@ -10,6 +10,7 @@ from threading import Event
 
 from PySide6.QtCore import (
     QByteArray,
+    QEvent,
     QMimeData,
     QPoint,
     QPointF,
@@ -39,6 +40,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPainterPath,
+    QPaintEvent,
     QPalette,
     QPen,
     QPixmap,
@@ -275,6 +277,67 @@ class StatusMessage(QLabel):
         self.changed.emit()
 
 
+class DragHandle(QWidget):
+    """Six dots at the start of a row that show it can be dragged, and start the drag."""
+
+    colours = ("#6c7381", "#9aa1ae")  # idle and hover; apply_theme sets them from the tokens
+
+    def __init__(self, row: "AppRow") -> None:
+        super().__init__()
+        self.row = row
+        self.press_pos: QPoint | None = None
+        self.setObjectName("dragHandle")
+        self.setFixedSize(14, 28)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setToolTip("Drag to reorder")
+        policy = self.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)  # rows keep their alignment while reordering is off
+        self.setSizePolicy(policy)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        hot = self.underMouse() or self.press_pos is not None
+        painter.setBrush(QColor(self.colours[1] if hot else self.colours[0]))
+        for x in (4.0, 10.0):
+            for y in (8.0, 14.0, 20.0):
+                painter.drawEllipse(QPointF(x, y), 1.6, 1.6)
+
+    def event(self, event: QEvent) -> bool:
+        if event.type() in (QEvent.Type.HoverEnter, QEvent.Type.HoverLeave):
+            self.update()
+        return super().event(event)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.press_pos = event.position().toPoint()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if (
+            self.press_pos is not None
+            and self.row.draggable
+            and event.buttons() & Qt.MouseButton.LeftButton
+            and (event.position().toPoint() - self.press_pos).manhattanLength()
+            >= QApplication.startDragDistance()
+        ):
+            hot_spot = self.mapTo(self.row, self.press_pos)
+            self.press_pos = None
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            self.row.start_drag(hot_spot)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        # Releasing on the handle never opens the app page.
+        self.press_pos = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        event.accept()
+
+
 class AppRow(QFrame):
     details_requested = Signal(str)
     launch_requested = Signal(str)
@@ -294,7 +357,6 @@ class AppRow(QFrame):
         self.installed: Installed | None = None
         self.build_required = False
         self.pinned = False
-        self.draggable = False
         self.mode = "install"
         self.press_pos: QPoint | None = None
         self.setObjectName("appRow")
@@ -304,9 +366,13 @@ class AppRow(QFrame):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         content = QHBoxLayout()
-        content.setContentsMargins(14, 0, 10, 0)
+        content.setContentsMargins(6, 0, 10, 0)
         content.setSpacing(12)
         outer.addLayout(content, stretch=1)
+        self.handle = DragHandle(self)
+        self.handle.hide()
+        content.addWidget(self.handle)
+        content.addSpacing(-6)
         self.divider = QFrame()
         self.divider.setObjectName("rowDivider")
         self.divider.setFixedHeight(1)
@@ -524,17 +590,13 @@ class AppRow(QFrame):
         else:
             super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if (
-            self.press_pos is not None
-            and self.draggable
-            and event.buttons() & Qt.MouseButton.LeftButton
-            and (event.position().toPoint() - self.press_pos).manhattanLength()
-            >= QApplication.startDragDistance()
-        ):
-            self.start_drag()
-        else:
-            super().mouseMoveEvent(event)
+    @property
+    def draggable(self) -> bool:
+        return not self.handle.isHidden()
+
+    @draggable.setter
+    def draggable(self, value: bool) -> None:
+        self.handle.setVisible(value)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         pressed = self.press_pos is not None
@@ -548,8 +610,7 @@ class AppRow(QFrame):
         else:
             super().mouseReleaseEvent(event)
 
-    def start_drag(self) -> None:
-        hot_spot = self.press_pos or QPoint(0, 0)
+    def start_drag(self, hot_spot: QPoint) -> None:
         self.press_pos = None
         mime = QMimeData()
         mime.setData(ORDER_MIME, QByteArray(self.app.id.encode()))
@@ -2132,6 +2193,9 @@ class LauncherWindow(QMainWindow):
         ok, warn, danger = tokens["ok"], tokens["warn"], tokens["danger"]
         raised, faint = tokens["raised"], tokens["faint"]
         surface2, held = tokens["surface2"], tokens["held"]
+        DragHandle.colours = (faint, muted)
+        for row in self.cards.values():
+            row.handle.update()
         swatches = "\n".join(
             f'QPushButton#swatch[accent="{name}"] {{ background: {pair[0] if dark else pair[1]}; }}'
             for name, pair in ACCENTS.items()

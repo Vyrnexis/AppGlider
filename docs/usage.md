@@ -74,7 +74,7 @@ page.
 installed apps first, apps with updates first, the order you added them, or **Custom
 order**. **⋯ → Pin to top** puts an app at the front whatever the sort (it gets a gold ★
 beside its name), and **Unpin** puts it back. To make your own order, drag a row up or down
-by its body; a line shows where it will land. Dragging switches **Sort** to **Custom order**
+by the dotted handle at its left edge; a line shows where it will land. Dragging switches **Sort** to **Custom order**
 and remembers it. **⋯ → Move up** and **Move down** do the same without a mouse. Reordering
 works on the Library page with **All** selected and an empty search, and pinned apps always
 stay above the others. The tray menu's list of installed apps follows the same order.

@@ -60,7 +60,9 @@ Minimum window size 860 × 560. Nothing may require horizontal scrolling at that
 
 ## Rows
 
-A row is 60 px tall: icon (40 px, 9 px radius), name in semibold with a gold ★ when pinned
+A row is 60 px tall: a drag handle (six dots in `faint`, `muted` on hover, open-hand
+cursor, "Drag to reorder" tooltip; hidden but still taking its space whenever reordering is
+off, and the only place a drag starts), icon (40 px, 9 px radius), name in semibold with a gold ★ when pinned
 and a one-line muted subtitle (the description, else `owner/repo`), installed version in
 tabular figures, one status chip, one primary button (84 px wide) and a ⋯ menu.
 

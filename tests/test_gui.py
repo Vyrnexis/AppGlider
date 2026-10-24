@@ -20,13 +20,22 @@ from PySide6.QtCore import (
     QCoreApplication,
     QEvent,
     QMimeData,
+    QPoint,
     QPointF,
     QRect,
     QSettings,
     Qt,
     QTimer,
 )
-from PySide6.QtGui import QCloseEvent, QDragMoveEvent, QDropEvent, QImage, QPalette, QPixmap
+from PySide6.QtGui import (
+    QCloseEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QImage,
+    QMouseEvent,
+    QPalette,
+    QPixmap,
+)
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -541,6 +550,47 @@ class LibraryTests(unittest.TestCase):
         app_list.dropEvent(top)
         self.assertEqual(self.shown()[:2], [names[0], names[3]])
         self.assertTrue(keep.hasFormat(ORDER_MIME) and keep2.hasFormat(ORDER_MIME))
+
+    def test_drag_handle_shows_when_reordering_works_and_only_it_starts_a_drag(self) -> None:
+        window = self.window
+        self.qt.processEvents()
+        row = window.app_list.rows[1]
+        handle = row.handle
+        self.assertTrue(handle.isVisibleTo(row))
+        self.assertEqual(handle.toolTip(), "Drag to reorder")
+        icon_x = row.icon.x()
+        window.search.setText(row.app.name)
+        self.qt.processEvents()
+        self.assertTrue(handle.isHidden())
+        self.assertEqual(row.icon.x(), icon_x)  # the hidden handle keeps its space
+        window.search.clear()
+        self.qt.processEvents()
+        self.assertTrue(handle.isVisibleTo(row))
+        start = QPoint(7, 14)
+        with (
+            patch.object(row, "start_drag") as drag,
+            patch.object(window, "open_app") as opened,
+        ):
+            QTest.mousePress(handle, Qt.MouseButton.LeftButton, pos=start)
+            QTest.mouseRelease(handle, Qt.MouseButton.LeftButton, pos=start)
+            opened.assert_not_called()  # a click on the handle does not open the app
+            QTest.mousePress(handle, Qt.MouseButton.LeftButton, pos=start)
+            moved = QMouseEvent(
+                QEvent.Type.MouseMove,
+                QPointF(start + QPoint(0, QApplication.startDragDistance() + 2)),
+                QPointF(handle.mapToGlobal(start)),
+                Qt.MouseButton.NoButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            handle.mouseMoveEvent(moved)
+            drag.assert_called_once_with(handle.mapTo(row, start))
+            # Dragging on the rest of the row no longer starts a drag.
+            drag.reset_mock()
+            body = QPoint(row.width() // 2, row.height() // 2)
+            QTest.mousePress(row, Qt.MouseButton.LeftButton, pos=body)
+            QTest.mouseMove(row, body + QPoint(0, 30))
+            drag.assert_not_called()
 
     def test_reordering_is_disabled_unless_the_whole_library_is_shown(self) -> None:
         window = self.window
