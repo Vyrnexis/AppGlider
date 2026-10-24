@@ -16,8 +16,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from catalog_fixture import APPS, STARTER_ENTRIES, stock
 from gui_helpers import close_window
-from PySide6.QtCore import QCoreApplication, QEvent, QRect, QSettings, Qt, QTimer
-from PySide6.QtGui import QCloseEvent, QImage, QPalette, QPixmap
+from PySide6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QMimeData,
+    QPointF,
+    QRect,
+    QSettings,
+    Qt,
+    QTimer,
+)
+from PySide6.QtGui import QCloseEvent, QDragMoveEvent, QDropEvent, QImage, QPalette, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -45,12 +54,14 @@ from appglider.releases import Release
 from appglider.repositories_dialog import RepositoriesPanel
 from appglider.storage import atomic_json
 from appglider.window import (
+    ORDER_MIME,
     DetailsDialog,
     LauncherWindow,
     OrphansDialog,
     SettingsDialog,
     appearance_choice,
     check_interval_hours,
+    custom_order,
     fit_size,
     notified_versions,
     pinned_apps,
@@ -257,7 +268,7 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(calls[0].get("cheap", False))
 
     def shown(self) -> list[str]:
-        return [card.app.id for card in self.window.grid.cards]
+        return [card.app.id for card in self.window.app_list.rows]
 
     def choose_sort(self, mode: str) -> None:
         self.window.sort_combo.setCurrentIndex(self.window.sort_combo.findData(mode))
@@ -274,6 +285,7 @@ class LibraryTests(unittest.TestCase):
                 "Sort: Installed first",
                 "Sort: Updates first",
                 "Sort: Order added",
+                "Sort: Custom order",
             ],
         )
         self.choose_sort("added")
@@ -366,6 +378,252 @@ class LibraryTests(unittest.TestCase):
         self.settings.setValue("library/pinned", json.dumps(["a", "b", "a"]))
         self.assertEqual(pinned_apps(self.settings), {"a", "b"})
 
+    def assert_chip(self, card, state: str, text: str, button: str) -> None:
+        self.assertEqual(card.chip.property("state"), state)
+        self.assertEqual(card.chip.text(), text)
+        self.assertEqual(card.action_button.text(), button)
+
+    def test_row_chip_states_follow_the_status_table(self) -> None:
+        card = self.window.cards[APP.id]
+        payload = appimage_bytes()
+        current = release_for("1.0.0", payload)
+        newer = release_for("1.1.0", payload)
+        path = Path(self.temp.name) / "photo.AppImage"
+        installed = Installed(path, "1.0.0", True)
+        self.assert_chip(card, "none", "Not installed", "Install")
+        self.assertEqual(card.installed_version.text(), "—")
+        self.assertEqual(card.action_button.objectName(), "")
+        card.set_state(installed, None, False)
+        self.assert_chip(card, "none", "Not checked", "Launch")
+        self.assertEqual(card.installed_version.text(), "v1.0.0")
+        card.set_state(installed, None, False, refreshing=True)
+        self.assert_chip(card, "none", "Checking…", "Launch")
+        card.set_state(installed, current, False)
+        self.assert_chip(card, "ok", "✓ Up to date", "Launch")
+        card.set_state(installed, current, False, error="Offline", refresh_error="Offline")
+        self.assert_chip(card, "failed", "Check failed", "Launch")
+        self.assertIn("Offline", card.chip.toolTip())
+        card.set_state(installed, newer, False)
+        self.assert_chip(card, "update", "↑ 1.1.0", "Update")
+        self.assertEqual(card.action_button.objectName(), "primary")
+        self.assertEqual(card.action_button.accessibleName(), f"Update {APP.name}")
+        card.set_state(installed, newer, True)
+        self.assertFalse(card.action_button.isEnabled())
+        preview = Installed(path, "1.0.0", True, prerelease=True)
+        card.app = replace(APP, include_prereleases=True)
+        card.set_state(preview, current, False)
+        self.assert_chip(card, "preview", "Preview channel", "Launch")
+        card.app = replace(APP, hold_updates=True)
+        card.set_state(installed, newer, False)
+        self.assert_chip(card, "held", "‖ Held · 1.1.0 out", "Launch")
+        self.assertIn("Held at v1.0.0 · v1.1.0 available", card.chip.toolTip())
+        card.set_state(installed, current, False)
+        self.assert_chip(card, "held", "‖ Held", "Launch")
+        self.assertEqual(card.hold_action.text(), "Release hold")
+        card.app = APP
+        card.set_state(installed, newer, False, working="Updating")
+        self.assert_chip(card, "busy", "Updating…", "Cancel")
+        self.assertTrue(card.action_button.isEnabled())
+        cancelled: list[str] = []
+        card.cancel_requested.connect(cancelled.append)
+        card.action_button.click()
+        self.assertEqual(cancelled, [APP.id])
+
+    def test_install_shows_a_busy_chip_on_that_row_only(self) -> None:
+        payload = appimage_bytes()
+        release = release_for("1.0.0", payload)
+        seen: list[str] = []
+        with (
+            patch("appglider.window.QThreadPool.globalInstance"),
+            patch("appglider.window.latest_release", return_value=release),
+        ):
+            self.window.install_app(APP.id)
+            seen.append(self.window.cards[APP.id].chip.text())
+            self.assertEqual(self.window.cards[APP.id].action_button.text(), "Cancel")
+            self.assertEqual(self.window.cards[APPS[3].id].chip.text(), "Not installed")
+        self.assertEqual(seen, ["Installing…"])
+        self.window.task_finished(TaskResult("Cancelled"))
+        self.assertEqual(self.window.cards[APP.id].chip.text(), "Not installed")
+        self.assertEqual(self.window.cards[APP.id].action_button.text(), "Install")
+
+    def test_unreadable_custom_order_settings_mean_no_custom_order(self) -> None:
+        for garbage in ("not json", "{}", "[1, 2]", '["a", 3]', "", "null"):
+            with self.subTest(garbage=garbage):
+                self.settings.setValue("library/order", garbage)
+                self.assertEqual(custom_order(self.settings), [])
+        self.settings.setValue("library/order", json.dumps(["b", "a", "b", "x" * 300]))
+        self.assertEqual(custom_order(self.settings), ["b", "a"])
+        self.assertEqual(self.window.sort_combo.findData("custom"), 4)
+
+    def test_moving_a_row_saves_a_custom_order_and_switches_the_sort(self) -> None:
+        window = self.window
+        names = self.shown()
+        window.cards[names[2]].move_up_action.trigger()
+        expected = [names[0], names[2], names[1], *names[3:]]
+        self.assertEqual(self.shown(), expected)
+        self.assertEqual(window.sort_combo.currentData(), "custom")
+        self.assertEqual(self.settings.value("library/sort"), "custom")
+        self.assertEqual(json.loads(self.settings.value("library/order")), expected)
+        window.cards[names[0]].move_down_action.trigger()
+        expected = [names[2], names[0], names[1], *names[3:]]
+        self.assertEqual(self.shown(), expected)
+        self.settings.sync()
+        reopened = LauncherWindow(self.settings, window.library)
+        self.addCleanup(close_window, reopened)
+        self.assertEqual([row.app.id for row in reopened.app_list.rows], expected)
+        self.assertFalse(window.cards[names[2]].move_up_action.isEnabled())
+        self.assertFalse(window.cards[names[-1]].move_down_action.isEnabled())
+
+    def test_apps_missing_from_the_custom_order_follow_in_name_order(self) -> None:
+        by_name = self.shown()
+        wanted = [by_name[5], "gone", by_name[1]]
+        self.settings.setValue("library/order", json.dumps(wanted))
+        self.choose_sort("custom")
+        rest = [app_id for app_id in by_name if app_id not in (by_name[5], by_name[1])]
+        self.assertEqual(self.shown(), [by_name[5], by_name[1], *rest])
+
+    def test_custom_order_keeps_pinned_apps_above_unpinned_ones(self) -> None:
+        window = self.window
+        names = self.shown()
+        window.toggle_pin(names[4])
+        window.toggle_pin(names[7])
+        pinned = self.shown()[:2]
+        self.assertEqual(set(pinned), {names[4], names[7]})
+        first_unpinned = window.cards[self.shown()[2]]
+        self.assertFalse(first_unpinned.move_up_action.isEnabled())
+        self.assertTrue(window.cards[pinned[0]].move_down_action.isEnabled())
+        self.assertFalse(window.cards[pinned[1]].move_down_action.isEnabled())
+        before = self.shown()
+        window.reorder_app(first_unpinned.app.id, 0)  # clamped below the pinned apps
+        self.assertEqual(self.shown()[:2], pinned)
+        self.assertEqual(self.shown(), before)
+        window.reorder_app(pinned[0], len(before) - 1)  # clamped inside the pinned group
+        self.assertEqual(self.shown()[:2], [pinned[1], pinned[0]])
+        self.assertEqual(self.shown()[2:], before[2:])
+        window.reorder_app(before[-1], 2)
+        self.assertEqual(self.shown()[2], before[-1])
+        self.assertEqual(window.sort_combo.currentData(), "custom")
+
+    def drop_event(self, row_id: str, position: QPointF, cls=QDropEvent):
+        mime = QMimeData()
+        mime.setData(ORDER_MIME, row_id.encode())
+        event = cls(
+            position,
+            Qt.DropAction.MoveAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        return event, mime
+
+    def test_dropping_a_row_reorders_the_list_and_shows_a_drop_line(self) -> None:
+        window = self.window
+        names = self.shown()
+        self.qt.processEvents()
+        app_list = window.app_list
+        self.assertTrue(app_list.reorderable)
+        self.assertTrue(all(row.draggable for row in app_list.rows))
+        target = app_list.rows[1].geometry()
+        position = QPointF(40, target.top() + 5)
+        move, keep = self.drop_event(names[5], position, QDragMoveEvent)
+        app_list.dragMoveEvent(move)
+        self.assertTrue(app_list.drop_line.isVisibleTo(app_list))
+        self.assertEqual(app_list.drop_line.y(), target.top() - 1)
+        drop, keep2 = self.drop_event(names[5], position)
+        app_list.dropEvent(drop)
+        self.assertTrue(app_list.drop_line.isHidden())
+        self.assertEqual(self.shown(), [names[0], names[5], *names[1:5], *names[6:]])
+        self.assertEqual(window.sort_combo.currentData(), "custom")
+        self.assertEqual(json.loads(self.settings.value("library/order")), self.shown())
+        self.assertEqual((keep.hasFormat(ORDER_MIME), keep2.hasFormat(ORDER_MIME)), (True, True))
+        # Dropping a row where it already is changes nothing.
+        self.qt.processEvents()
+        saved = self.settings.value("library/order")
+        same, keep3 = self.drop_event(
+            self.shown()[3], QPointF(40, app_list.rows[3].geometry().top() + 5)
+        )
+        app_list.dropEvent(same)
+        self.assertEqual(self.settings.value("library/order"), saved)
+        self.assertTrue(keep3.hasFormat(ORDER_MIME))
+
+    def test_dropping_below_the_last_row_and_across_the_pin_boundary_is_clamped(self) -> None:
+        window = self.window
+        names = self.shown()
+        window.toggle_pin(names[0])
+        self.qt.processEvents()
+        app_list = window.app_list
+        end = QPointF(40, app_list.rows[-1].geometry().bottom() - 1)
+        drop, keep = self.drop_event(names[0], end)
+        app_list.dropEvent(drop)
+        self.assertEqual(self.shown()[0], names[0])  # the pinned app cannot leave the top
+        top, keep2 = self.drop_event(names[3], QPointF(40, 2))
+        app_list.dropEvent(top)
+        self.assertEqual(self.shown()[:2], [names[0], names[3]])
+        self.assertTrue(keep.hasFormat(ORDER_MIME) and keep2.hasFormat(ORDER_MIME))
+
+    def test_reordering_is_disabled_unless_the_whole_library_is_shown(self) -> None:
+        window = self.window
+        names = self.shown()
+
+        def assert_disabled() -> None:
+            self.assertFalse(window.reorder_enabled())
+            self.assertFalse(window.app_list.reorderable)
+            for row in window.app_list.rows:
+                self.assertFalse(row.draggable)
+                self.assertFalse(row.move_up_action.isEnabled())
+                self.assertFalse(row.move_down_action.isEnabled())
+            order = self.settings.value("library/order")
+            window.reorder_app(names[-1], 0)
+            drop, keep = self.drop_event(names[-1], QPointF(40, 2))
+            window.app_list.dropEvent(drop)
+            self.assertEqual(self.settings.value("library/order"), order)
+            self.assertNotEqual(self.settings.value("library/sort"), "custom")
+            self.assertTrue(keep.hasFormat(ORDER_MIME))
+
+        window.search.setText("craft")
+        assert_disabled()
+        window.search.clear()
+        self.assertTrue(window.reorder_enabled())
+        self.assertTrue(window.cards[names[1]].move_up_action.isEnabled())
+        window.filter_installed.click()
+        window.show_view("library")
+        window.filter_installed.click()
+        window.filter_all.click()
+        self.assertTrue(window.reorder_enabled())
+        window.filter_installed.setChecked(True)
+        assert_disabled()
+        window.filter_all.click()
+        window.show_view("updates")
+        assert_disabled()
+
+    def test_tray_installed_apps_follow_the_custom_order(self) -> None:
+        window = self.window
+        payload = appimage_bytes()
+        chosen = (APP, APPS[3], APPS[6])
+        for app in chosen:
+            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+                window.library.install(
+                    app,
+                    replace(release_for("1.0.0", payload), name=f"{app.id}-1.0.0.AppImage"),
+                    Event(),
+                    lambda *args: None,
+                )
+        window.scan_installed()
+        by_name = sorted(chosen, key=lambda app: app.name.casefold())
+        self.assertEqual(
+            [action.text() for action in window.tray_apps_menu.actions()],
+            [app.name for app in by_name],
+        )
+        window.reorder_app(by_name[-1].id, 0)  # last installed app to the very top
+        self.assertEqual(window.sort_combo.currentData(), "custom")
+        expected = [by_name[-1], *by_name[:-1]]
+        self.assertEqual(
+            [action.text() for action in window.tray_apps_menu.actions()],
+            [app.name for app in expected],
+        )
+        window.toggle_pin(by_name[0].id)  # pinned still leads the menu
+        self.assertEqual(window.tray_apps_menu.actions()[0].text(), by_name[0].name)
+
     def waiting_update(self, version: str = "1.1.0") -> None:
         window = self.window
         if APP.id not in window.installed:
@@ -400,10 +658,11 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(window.tray_has_updates)
         self.assertEqual(window.tray.icon().cacheKey(), window.tray_icons[0].cacheKey())
         card = window.cards[APP.id]
-        self.assertTrue(card.update_button.isHidden())
+        self.assertEqual(card.action_button.text(), "Launch")
         self.assertTrue(window.update_all_button.isHidden())
-        self.assertEqual(card.installed_version.caption.text(), "Held")
-        self.assertEqual(card.checked.text(), "Held · v1.1.0 available")
+        self.assertEqual(card.chip.property("state"), "held")
+        self.assertEqual(card.chip.text(), "‖ Held · 1.1.0 out")
+        self.assertIn("Held at v1.0.0 · v1.1.0 available", card.chip.toolTip())
         self.assertEqual(card.hold_action.text(), "Release hold")
         with patch("appglider.window.discover_releases") as discover:
             window.update_all()
@@ -414,8 +673,8 @@ class LibraryTests(unittest.TestCase):
             discover.assert_not_called()
         card = window.cards[APP.id]
         self.assertEqual(window.updates_count.text(), "1")
-        self.assertFalse(card.update_button.isHidden())
-        self.assertEqual(card.update_button.text(), "Update")
+        self.assertEqual(card.action_button.text(), "Update")
+        self.assertEqual(card.chip.property("state"), "update")
         self.assertEqual(card.hold_action.text(), "Hold at current version")
 
     def test_hold_is_disabled_while_busy_and_details_show_it(self) -> None:
@@ -796,13 +1055,13 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.window.view, "library")
         self.assertEqual(self.window.updates_count.text(), "1")
         card = self.window.cards["solidcraft"]
-        self.assertIn("v0.16.1", card.status.text())
-        self.assertIn("v0.16.2", card.available_version.text.text())
-        self.assertEqual(card.action_button.text(), "Launch")
+        self.assertEqual(card.installed_version.text(), "v0.16.1")
+        self.assertEqual(card.chip.text(), "↑ 0.16.2")
+        self.assertEqual(card.action_button.text(), "Update")
         self.window.show_view("updates")
         self.assertEqual(self.visible_ids(), {"solidcraft"})
-        self.assertIn("v0.16.1", card.status.text())
-        self.assertIn("v0.16.2", card.available_version.text.text())
+        self.assertEqual(card.installed_version.text(), "v0.16.1")
+        self.assertEqual(card.chip.text(), "↑ 0.16.2")
 
         self.window.search.setText("photocraft")
         self.assertFalse(self.visible_ids())
@@ -813,29 +1072,27 @@ class LibraryTests(unittest.TestCase):
         self.window.refresh()
         self.assertEqual(self.window.updates_count.text(), "0")
 
-    def test_grid_reflows_and_preserves_cards_when_filtering(self) -> None:
-        self.window.resize(1400, 800)
-        self.qt.processEvents()
-        wide_columns = self.window.grid.columns
-        first_card = self.window.cards["photocraft"]
-        self.window.resize(860, 600)
-        self.qt.processEvents()
-        self.assertLess(self.window.grid.columns, wide_columns)
-        self.assertEqual(self.window.grid.layout_grid.count(), 14)
-        viewport = self.window.scroll_area.viewport()
-        self.assertLessEqual(self.window.grid.width(), viewport.width())
-        cards = self.window.grid.cards
-        for index, card in enumerate(cards):
-            self.assertGreaterEqual(card.x(), 0)
-            self.assertLessEqual(card.geometry().right(), self.window.grid.width())
-            for other in cards[index + 1 :]:
-                self.assertFalse(card.geometry().intersects(other.geometry()))
+    def test_rows_fill_the_list_without_overlap_and_survive_filtering(self) -> None:
+        first_row = self.window.cards["photocraft"]
+        for width, height in ((1400, 800), (860, 600)):
+            self.window.resize(width, height)
+            self.qt.processEvents()
+            rows = self.window.app_list.rows
+            self.assertEqual(len(rows), 14)
+            viewport = self.window.scroll_area.viewport()
+            self.assertLessEqual(self.window.app_list.width(), viewport.width())
+            for index, row in enumerate(rows):
+                self.assertEqual(row.height(), 60)
+                self.assertGreaterEqual(row.x(), 0)
+                self.assertLessEqual(row.geometry().right(), self.window.app_list.width())
+                if index:
+                    self.assertGreaterEqual(row.y(), rows[index - 1].geometry().bottom())
         self.window.search.setText("PhotoCraft")
-        self.assertIs(self.window.grid.cards[0], first_card)
+        self.assertIs(self.window.app_list.rows[0], first_row)
 
-    def test_compact_cards_keep_versions_and_actions_inline_at_narrow_widths(self) -> None:
+    def test_row_controls_stay_in_one_line_at_narrow_and_wide_widths(self) -> None:
         info = self.release_info()
-        for width in (760, 1120):
+        for width in (860, 1400):
             self.window.resize(width, 1000)
             self.qt.processEvents()
             for installed in (
@@ -848,26 +1105,32 @@ class LibraryTests(unittest.TestCase):
                     prerelease=True,
                 ),
             ):
-                card = self.window.cards[APP.id]
+                row = self.window.cards[APP.id]
                 offered = info.stable.release if installed else info.preview.release
-                card.set_state(installed, offered, False, info=info)
+                row.set_state(installed, offered, False, info=info)
                 self.qt.processEvents()
-                version = card.installed_version if installed else card.available_version
-                label = version.caption if installed else version.text
-                caption = label.mapTo(card, label.rect().center())
-                button = card.action_button.geometry()
-                self.assertLessEqual(button.top(), caption.y())
-                self.assertGreaterEqual(button.bottom(), caption.y())
-                text = version.text.mapTo(card, version.text.rect().topRight())
-                badge = version.badge.mapTo(card, version.badge.rect().bottomRight())
-                self.assertLess(text.x(), button.left())
-                if version.badge.isVisibleTo(card):
-                    self.assertLess(badge.x(), button.left())
-                self.assertLess(card.height(), 280)
-                self.assertEqual(card.action_button.text(), "Launch" if installed else "Install")
+                self.assertEqual(row.height(), 60)
+                parts = [
+                    row.icon,
+                    row.name_button,
+                    row.installed_version,
+                    row.chip,
+                    row.action_button,
+                ]
+                boxes = [part.mapTo(row, part.rect().topLeft()).x() for part in parts]
+                self.assertEqual(boxes, sorted(boxes))
+                for part in parts:
+                    rect = part.rect().translated(part.mapTo(row, part.rect().topLeft()))
+                    self.assertTrue(row.rect().contains(rect), part.objectName())
+                chip = row.chip.mapTo(row, row.chip.rect().topRight())
+                self.assertLess(chip.x(), row.action_button.x())
+                self.assertEqual(row.action_button.width(), 84)
+                if not installed:
+                    self.assertEqual(row.action_button.text(), "Install")
+                    self.assertEqual(row.installed_version.text(), "—")
             self.window.refresh()
             self.qt.processEvents()
-            self.assertLess(max(card.height() for card in self.window.grid.cards), 280)
+            self.assertEqual({row.height() for row in self.window.app_list.rows}, {60})
 
     def test_clicking_name_opens_real_details_dialog(self) -> None:
         observed = []
@@ -1196,9 +1459,9 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(self.window.check_button.isEnabled())
         self.assertFalse(self.window.tray_check_action.isEnabled())
         for card in self.window.cards.values():
-            self.assertEqual(card.available_version.text.text(), "Available")
-            self.assertTrue(card.available_version.badge.isHidden())
-            self.assertTrue(card.checked.isHidden())
+            self.assertEqual(card.chip.text(), "Not installed")
+            self.assertEqual(card.chip.property("state"), "none")
+            self.assertEqual(card.installed_version.text(), "—")
             self.assertTrue(card.action_button.isEnabled())
 
     def test_details_explicitly_checks_an_uninstalled_app_without_downloading(self) -> None:
@@ -1231,7 +1494,7 @@ class LibraryTests(unittest.TestCase):
             download.assert_not_called()
         self.assertEqual(observed, ["Not checked", info.stable.version, info.preview.version, True])
         self.assertEqual(self.window.installed, {})
-        self.assertEqual(self.window.cards[APP.id].available_version.text.text(), "Available")
+        self.assertEqual(self.window.cards[APP.id].chip.text(), "Not installed")
 
     def test_details_can_close_while_its_release_check_finishes(self) -> None:
         info = self.release_info()
@@ -1364,17 +1627,20 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(discover.call_count, 2)
             self.assertTrue(discover.call_args.kwargs["force"])
         card = self.window.cards[APP.id]
-        self.assertEqual(card.available_version.badge.text(), "Latest")
+        self.assertEqual(card.chip.text(), f"↑ {info.stable.version}")
+        self.assertIn("latest release", card.chip.toolTip())
         self.assertNotIn(
             info.preview.version,
             " ".join(
                 label.text() for label in card.findChildren(QLabel) if label.isVisibleTo(card)
             ),
         )
-        self.assertEqual(card.action_button.text(), "Launch")
+        self.assertEqual(card.action_button.text(), "Update")
         self.assertEqual(self.window.updates_count.text(), "1")
         self.change_release_preference(1)
-        self.assertEqual(self.window.cards[APP.id].available_version.badge.text(), "Pre-release")
+        preview_chip = self.window.cards[APP.id].chip
+        self.assertEqual(preview_chip.text(), f"↑ {info.preview.version}")
+        self.assertIn("pre-release", preview_chip.toolTip())
         self.assertEqual(self.window.check_button.toolTip(), "Check for updates")
 
     def change_release_preference(self, index: int) -> None:
@@ -1407,8 +1673,9 @@ class LibraryTests(unittest.TestCase):
             install.assert_not_called()
         card = self.window.cards[APP.id]
         self.assertEqual(self.window.updates_count.text(), "1")
-        self.assertEqual(card.available_version.badge.text(), "Pre-release")
-        self.assertTrue(card.installed_version.badge.isHidden())
+        self.assertEqual(card.chip.text(), f"↑ {info.preview.version}")
+        self.assertIn("pre-release", card.chip.toolTip())
+        self.assertEqual(card.action_button.text(), "Update")
         self.assertTrue(card.app.include_prereleases)
         reopened = LauncherWindow(self.settings, self.window.library)
         self.addCleanup(reopened.deleteLater)
@@ -1419,8 +1686,9 @@ class LibraryTests(unittest.TestCase):
         self.change_release_preference(0)
         self.assertEqual(self.window.updates_count.text(), "0")
         card = self.window.cards[APP.id]
-        self.assertTrue(card.available_version.isHidden())
-        self.assertEqual(card.installed_version.badge.text(), "Latest")
+        self.assertEqual(card.chip.property("state"), "ok")
+        self.assertEqual(card.action_button.text(), "Launch")
+        self.assertIn("latest release", card.chip.toolTip())
 
     def test_preferred_window_size_is_limited_to_the_screen(self) -> None:
         laptop = fit_size(1040, 816, QRect(0, 0, 1366, 728))
@@ -1448,7 +1716,7 @@ class LibraryTests(unittest.TestCase):
             )
         atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
         self.window.scan_installed()
-        self.assertIn("refresh needed", self.window.cards[APP.id].checked.text())
+        self.assertIn("refresh needed", self.window.cards[APP.id].chip.toolTip())
         with (
             patch("appglider.window.discover_releases", side_effect=OSError("Offline")),
             patch("appglider.window.QMessageBox.warning") as warning,
@@ -1457,10 +1725,11 @@ class LibraryTests(unittest.TestCase):
             self.wait_for_release_checks()
             warning.assert_not_called()
         card = self.window.cards[APP.id]
-        self.assertEqual(card.available_version.badge.text(), "Latest")
+        self.assertEqual(card.chip.property("state"), "update")  # the saved release is kept
+        self.assertEqual(card.action_button.text(), "Update")
         self.assertEqual(self.window.release_infos[APP.id].preview, info.preview)
-        self.assertIn("Refresh failed · checked", card.checked.text())
-        self.assertIn("Offline", card.checked.toolTip())
+        self.assertIn("Last checked", card.chip.toolTip())
+        self.assertIn("Offline", card.chip.toolTip())
 
     def test_install_rechecks_an_uninstalled_app_after_a_cached_preview_failure(self) -> None:
         info = replace(
@@ -1473,7 +1742,7 @@ class LibraryTests(unittest.TestCase):
         self.change_release_preference(1)
         card = self.window.cards[APP.id]
         self.assertTrue(card.action_button.isEnabled())
-        self.assertEqual(card.available_version.text.text(), "Available")
+        self.assertEqual(card.chip.text(), "Not installed")
         self.assertEqual(self.window.updates_count.text(), "0")
         payload = appimage_bytes()
         release = replace(release_for("1.1.0-beta.1", payload), prerelease=True, is_latest=False)
@@ -1561,8 +1830,10 @@ class LibraryTests(unittest.TestCase):
                     patch("appglider.window.latest_release", return_value=release),
                     patch("appglider.releases.request", return_value=io.BytesIO(payload)),
                 ):
-                    button = card.update_button if version == "1.1.0" else card.action_button
-                    QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+                    self.assertEqual(
+                        card.action_button.text(), "Update" if version == "1.1.0" else "Install"
+                    )
+                    QTest.mouseClick(card.action_button, Qt.MouseButton.LeftButton)
                     self.wait_for_task()
                 self.assertEqual(self.window.installed[APP.id].version, version)
                 self.assertEqual(card.action_button.text(), "Launch")
@@ -1571,7 +1842,8 @@ class LibraryTests(unittest.TestCase):
             card.rollback_requested.emit(APP.id)
             self.wait_for_task()
             self.assertEqual(self.window.installed[APP.id].version, "1.0.0")
-            self.assertTrue(card.update_button.isVisible())
+            self.assertEqual(card.action_button.text(), "Update")
+            self.assertEqual(card.chip.property("state"), "update")
             warning.assert_not_called()
 
     def test_update_all_counts_only_apps_that_were_really_updated(self) -> None:
@@ -1618,6 +1890,7 @@ class LibraryTests(unittest.TestCase):
         self.assertIsNotNone(task)
         self.assertTrue(self.window.cards[APP.id].action_button.isEnabled())
         self.assertFalse(self.window.cards["solidcraft"].action_button.isEnabled())
+        self.assertFalse(self.window.cards["solidcraft"].chip.text().endswith("…"))
         self.window.task_progress("Large download", 3 * 1024**3, 4 * 1024**3)
         self.assertEqual(self.window.progress_bar.value(), 75)
         QTest.mouseClick(self.window.cancel_button, Qt.MouseButton.LeftButton)
@@ -1739,56 +2012,54 @@ class LibraryTests(unittest.TestCase):
         self.assertIn("0 of 60", observed[2])
         self.assertIn("retry in 10 min", observed[2])
 
-    def test_release_badges_describe_the_version_and_beta_waits_for_stable(self) -> None:
+    def test_row_chip_describes_the_release_and_beta_waits_for_stable(self) -> None:
         card = self.window.cards["solidcraft"]
         beta = Installed(
             Path(self.temp.name) / "beta.AppImage", "1.2.0-beta.1", True, prerelease=True
         )
         stable = Release("1.2.0", "solid.AppImage", "unused", 1, "0" * 64)
         card.set_state(beta, stable, False)
-        self.assertTrue(card.installed_version.badge.isHidden())
-        self.assertEqual(card.available_version.badge.text(), "Latest")
-        self.assertTrue(card.update_button.isVisible())
+        self.assertEqual((card.chip.property("state"), card.chip.text()), ("update", "↑ 1.2.0"))
+        self.assertIn("latest release", card.chip.toolTip())
+        self.assertEqual(card.action_button.text(), "Update")
         previous = Release("1.1.0", "solid.AppImage", "unused", 1, "0" * 64)
         card.set_state(beta, previous, False)
-        self.assertFalse(card.update_button.isVisible())
-        self.assertTrue(card.available_version.isHidden())
-        self.assertEqual(card.installed_version.badge.text(), "Pre-release")
-        self.assertIn("Waiting for a newer stable", card.checked.text())
+        self.assertEqual(card.chip.property("state"), "preview")
+        self.assertEqual(card.chip.text(), "Waiting for stable")
+        self.assertIn("Waiting for a newer stable", card.chip.toolTip())
+        self.assertIn("Pre-release", card.installed_version.toolTip())
         self.assertEqual(card.action_button.text(), "Launch")
         current = Installed(beta.path, "1.1.0", True)
         card.set_state(current, previous, False)
-        self.assertEqual(card.installed_version.badge.text(), "Latest")
+        self.assertEqual((card.chip.property("state"), card.chip.text()), ("ok", "✓ Up to date"))
+        self.assertIn("latest release", card.chip.toolTip())
         card.set_state(current, stable, False)
-        self.assertEqual(card.installed_version.badge.text(), "")
-        self.assertEqual(card.available_version.badge.text(), "Latest")
+        self.assertEqual(card.chip.property("state"), "update")
+        self.assertIn("latest release", card.chip.toolTip())
 
-    def test_preview_update_card_only_shows_the_update_and_installed_version(self) -> None:
+    def test_preview_update_row_shows_the_update_and_installed_version(self) -> None:
         info = self.release_info()
         installed = Installed(
             Path(self.temp.name) / "cura.AppImage", "1.1.0-beta.0", True, prerelease=True
         )
         card = self.window.cards[APP.id]
         card.set_state(installed, info.preview.release, False, info=info)
-        self.assertEqual(card.available_version.text.text(), f"v{info.preview.version}")
-        self.assertEqual(card.installed_version.text.text(), f"v{installed.version}")
-        self.assertEqual(card.available_version.badge.text(), "Pre-release")
-        self.assertTrue(card.installed_version.badge.isHidden())
-        self.assertEqual(card.action_button.text(), "Launch")
-        self.assertTrue(card.update_button.isVisible())
+        self.assertEqual(card.chip.text(), f"↑ {info.preview.version}")
+        self.assertIn("pre-release", card.chip.toolTip())
+        self.assertEqual(card.installed_version.text(), f"v{installed.version}")
+        self.assertEqual(card.action_button.text(), "Update")
+        self.assertEqual(card.action_button.objectName(), "primary")
+        self.assertTrue(card.launch_action.isEnabled())
         self.assertNotIn(
             f"v{info.stable.version}",
             " ".join(
                 label.text() for label in card.findChildren(QLabel) if label.isVisibleTo(card)
             ),
         )
-        self.assertEqual(
-            sum(badge.isVisibleTo(card) for badge in card.findChildren(QLabel, "releaseBadge")), 1
-        )
 
         card.set_state(installed, None, False, info=info)
-        self.assertTrue(card.available_version.isHidden())
-        self.assertEqual(card.installed_version.badge.text(), "Pre-release")
+        self.assertEqual(card.chip.text(), "Waiting for stable")
+        self.assertIn("Pre-release", card.installed_version.toolTip())
 
     def test_preview_only_installation_waits_after_disabling_previews(self) -> None:
         info = self.release_info()
@@ -1798,10 +2069,11 @@ class LibraryTests(unittest.TestCase):
         )
         card = self.window.cards[APP.id]
         card.set_state(installed, None, False, info=info)
-        self.assertIn("Waiting for a newer stable", card.checked.text())
-        self.assertEqual(card.installed_version.badge.text(), "Pre-release")
-        self.assertFalse(card.update_button.isVisible())
+        self.assertEqual(card.chip.text(), "Waiting for stable")
+        self.assertIn("Waiting for a newer stable", card.chip.toolTip())
+        self.assertIn("Pre-release", card.installed_version.toolTip())
         self.assertEqual(card.action_button.text(), "Launch")
+        self.assertEqual(card.action_button.objectName(), "")
 
     def test_scan_keeps_newer_channel_information_when_catalog_timestamp_is_equal(self) -> None:
         info = self.release_info()

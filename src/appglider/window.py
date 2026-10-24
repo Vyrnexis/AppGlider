@@ -1,4 +1,4 @@
-"""Card library, installed applications and background installation controls."""
+"""Library rows, installed applications and background installation controls."""
 
 import html
 import json
@@ -10,8 +10,8 @@ from threading import Event
 
 from PySide6.QtCore import (
     QByteArray,
-    QEvent,
-    QObject,
+    QMimeData,
+    QPoint,
     QPointF,
     QRect,
     QRectF,
@@ -28,7 +28,14 @@ from PySide6.QtGui import (
     QCloseEvent,
     QColor,
     QDesktopServices,
+    QDrag,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QFont,
     QIcon,
+    QMouseEvent,
     QPainter,
     QPainterPath,
     QPalette,
@@ -46,7 +53,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -105,10 +111,8 @@ from appglider.releases import (
 from appglider.repositories_dialog import RepositoriesPanel
 from appglider.version_label import VersionLabel
 
-CARD_MIN_WIDTH = 300
 SIDEBAR_WIDTH = 210
 CHECK_TOOLTIP = "Check for updates"
-SCROLLBAR_GAP = 14
 
 
 def icon_label(app: App, size: int, path: Path | None = None) -> QLabel:
@@ -178,6 +182,7 @@ SORT_CHOICES = (
     ("Installed first", "installed"),
     ("Updates first", "updates"),
     ("Order added", "added"),
+    ("Custom order", "custom"),
 )
 DEFAULT_SORT = "name"
 PIN_COLOUR = "#e6a817"  # gold, readable on both light and dark themes
@@ -223,6 +228,17 @@ def pinned_apps(settings: QSettings) -> set[str]:
     return {item for item in data if len(item) <= 256}
 
 
+def custom_order(settings: QSettings) -> list[str]:
+    """Ids in the order the user dragged them into; anything unreadable counts as none."""
+    try:
+        data = json.loads(str(settings.value("library/order", "[]")))
+    except ValueError:
+        return []
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        return []
+    return list(dict.fromkeys(item for item in data if len(item) <= 256))
+
+
 def notified_versions(settings: QSettings) -> dict[str, str]:
     """Update versions the user was already told about, keyed by app id."""
     try:
@@ -238,7 +254,46 @@ def notified_versions(settings: QSettings) -> dict[str, str]:
     }
 
 
-class AppCard(QFrame):
+CHIP_STATES = ("busy", "update", "build", "held", "preview", "ok", "failed", "none")
+ROW_HEIGHT = 60
+ORDER_MIME = "application/x-appglider-app"
+DRAG_SCROLL_MARGIN = 28
+
+
+def repolish(widget: QWidget) -> None:
+    """Re-apply the stylesheet after a dynamic property or object name changed."""
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
+
+class ElidedLabel(QLabel):
+    """One line of plain text that is cut with an ellipsis instead of widening its row."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.full_text = ""
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def set_full_text(self, text: str) -> None:
+        self.full_text = text
+        self.setToolTip(text)
+        self.elide()
+
+    def elide(self) -> None:
+        shown = self.fontMetrics().elidedText(
+            self.full_text, Qt.TextElideMode.ElideRight, max(0, self.width())
+        )
+        if shown != self.text():
+            self.setText(shown)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.elide()
+
+
+class AppRow(QFrame):
     details_requested = Signal(str)
     launch_requested = Signal(str)
     install_requested = Signal(str)
@@ -249,27 +304,39 @@ class AppCard(QFrame):
     preferences_requested = Signal(str)
     pin_requested = Signal(str)
     build_requested = Signal(str)
+    cancel_requested = Signal(str)
+    move_requested = Signal(str, int)
 
     def __init__(self, app: App, icon_path: Path | None = None) -> None:
         super().__init__()
         self.app = app
         self.installed: Installed | None = None
         self.build_required = False
-        self.setObjectName("appCard")
-        self.setMinimumWidth(CARD_MIN_WIDTH)
-        self.setMinimumHeight(200)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(6)
-        top = QHBoxLayout()
+        self.pinned = False
+        self.draggable = False
+        self.mode = "install"
+        self.press_pos: QPoint | None = None
+        self.setObjectName("appRow")
+        self.setProperty("edge", "mid")
+        self.setFixedHeight(ROW_HEIGHT)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        content = QHBoxLayout()
+        content.setContentsMargins(14, 0, 10, 0)
+        content.setSpacing(12)
+        outer.addLayout(content, stretch=1)
+        self.divider = QFrame()
+        self.divider.setObjectName("rowDivider")
+        self.divider.setFixedHeight(1)
+        outer.addWidget(self.divider)
         self.icon = icon_label(app, 40, icon_path)
-        top.addWidget(self.icon, alignment=Qt.AlignmentFlag.AlignTop)
+        content.addWidget(self.icon)
         identity = QVBoxLayout()
-        identity.setSpacing(3)
+        identity.setSpacing(1)
+        identity.addStretch()
         name = QPushButton(app.name)
         self.name_button = name
-        self.pinned = False
         name.setObjectName("appName")
         name.setAccessibleName(f"View {app.name} details")
         name.setToolTip(app.name)
@@ -286,21 +353,40 @@ class AppCard(QFrame):
         name_row.addWidget(self.pin_star)
         name_row.addWidget(name, stretch=1)
         identity.addLayout(name_row)
-        description = QLabel(app.description)
-        description.setTextFormat(Qt.TextFormat.PlainText)
-        description.setObjectName("cardDescription")
-        description.setWordWrap(True)
-        description.setMinimumWidth(0)
-        identity.addWidget(description)
-        top.addLayout(identity, stretch=1)
-        self.update_button = QPushButton("Update")
-        self.update_button.setObjectName("cardAction")
-        self.update_button.setAccessibleName(f"Update {app.name}")
-        self.update_button.clicked.connect(self.request_update)
-        self.update_button.hide()
+        self.subtitle = ElidedLabel()
+        self.subtitle.setObjectName("rowSubtitle")
+        self.subtitle.set_full_text(app.description or app.repo)
+        identity.addWidget(self.subtitle)
+        identity.addStretch()
+        content.addLayout(identity, stretch=1)
+        self.installed_version = QLabel("—")
+        self.installed_version.setObjectName("rowVersion")
+        self.installed_version.setFixedWidth(104)
+        font = self.installed_version.font()
+        font.setFeature(QFont.Tag("tnum"), 1)
+        self.installed_version.setFont(font)
+        content.addWidget(self.installed_version)
+        chip_slot = QWidget()
+        chip_slot.setFixedWidth(158)
+        chip_layout = QHBoxLayout(chip_slot)
+        chip_layout.setContentsMargins(0, 0, 0, 0)
+        self.chip = QLabel()
+        self.chip.setObjectName("chip")
+        self.chip.setProperty("state", "none")
+        self.chip.setFixedHeight(22)
+        self.chip.setMaximumWidth(158)
+        chip_layout.addWidget(self.chip)
+        chip_layout.addStretch()
+        content.addWidget(chip_slot)
+        self.action_button = QPushButton()
+        self.action_button.setProperty("rowAction", True)
+        self.action_button.setFixedSize(84, 32)
+        self.action_button.clicked.connect(self.activate)
+        content.addWidget(self.action_button)
         more = QToolButton()
         more.setText("⋯")
-        more.setObjectName("cardMenu")
+        more.setObjectName("rowMenu")
+        more.setFixedSize(32, 32)
         more.setAccessibleName(f"More actions for {app.name}")
         more.setToolTip(f"More actions for {app.name}")
         more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -308,11 +394,19 @@ class AppCard(QFrame):
         menu.addAction("View details").triggered.connect(
             lambda: self.details_requested.emit(app.id)
         )
+        self.launch_action = menu.addAction("Launch")
+        self.launch_action.triggered.connect(lambda: self.launch_requested.emit(app.id))
         menu.addAction("Open repository").triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl(app.source_url))
         )
         self.pin_action = menu.addAction("Pin to top")
         self.pin_action.triggered.connect(lambda: self.pin_requested.emit(app.id))
+        self.move_up_action = menu.addAction("Move up")
+        self.move_up_action.triggered.connect(lambda: self.move_requested.emit(app.id, -1))
+        self.move_down_action = menu.addAction("Move down")
+        self.move_down_action.triggered.connect(lambda: self.move_requested.emit(app.id, 1))
+        self.move_up_action.setEnabled(False)
+        self.move_down_action.setEnabled(False)
         self.preferences_action = menu.addAction("Application preferences…")
         self.preferences_action.triggered.connect(lambda: self.preferences_requested.emit(app.id))
         self.hold_action = menu.addAction("Hold at current version")
@@ -325,45 +419,18 @@ class AppCard(QFrame):
         self.remove_action = menu.addAction("Uninstall…")
         self.remove_action.triggered.connect(lambda: self.remove_requested.emit(app.id))
         more.setMenu(menu)
-        top.addWidget(more, alignment=Qt.AlignmentFlag.AlignTop)
-        layout.addLayout(top)
-        layout.addStretch()
-        divider = QFrame()
-        divider.setObjectName("cardDivider")
-        divider.setFixedHeight(1)
-        layout.addWidget(divider)
-        self.available_version = VersionLabel()
-        self.available_row = QHBoxLayout()
-        self.available_row.setSpacing(8)
-        self.available_row.addWidget(self.available_version, stretch=1)
-        self.available_row.addWidget(self.update_button)
-        layout.addLayout(self.available_row)
-        self.installed_version = VersionLabel()
-        self.status = self.installed_version.text
-        self.installed_row = QHBoxLayout()
-        self.installed_row.setSpacing(8)
-        self.installed_row.addWidget(self.installed_version, stretch=1)
-        layout.addLayout(self.installed_row)
-        self.action_button = QPushButton()
-        self.action_button.setObjectName("cardAction")
-        self.action_button.clicked.connect(self.activate)
-        self.available_row.addWidget(self.action_button)
-        self.checked = QLabel("Release information not checked")
-        self.checked.setObjectName("cardChecked")
-        self.checked.setWordWrap(True)
-        layout.addWidget(self.checked)
+        content.addWidget(more)
+        self.set_state(None, None, False)
 
     def activate(self) -> None:
-        if self.installed is not None:
-            self.launch_requested.emit(self.app.id)
-        else:
-            self.install_requested.emit(self.app.id)
-
-    def request_update(self) -> None:
-        if self.build_required:
-            self.build_requested.emit(self.app.id)
-        else:
-            self.install_requested.emit(self.app.id)
+        signal = {
+            "launch": self.launch_requested,
+            "install": self.install_requested,
+            "update": self.install_requested,
+            "build": self.build_requested,
+            "cancel": self.cancel_requested,
+        }[self.mode]
+        signal.emit(self.app.id)
 
     def set_pinned(self, pinned: bool) -> None:
         if pinned == self.pinned:
@@ -375,6 +442,22 @@ class AppCard(QFrame):
         )
         self.pin_action.setText("Unpin" if pinned else "Pin to top")
 
+    def set_edge(self, edge: str) -> None:
+        """Mark the row as first, last, only or middle so the list can round its hover."""
+        if self.property("edge") != edge:
+            self.setProperty("edge", edge)
+            repolish(self)
+        self.divider.setVisible(edge in ("first", "mid"))
+
+    def set_chip(self, state: str, text: str, tooltip: str) -> None:
+        if state not in CHIP_STATES:
+            raise ValueError(f"Unknown chip state: {state}")
+        self.chip.setText(text)
+        self.chip.setToolTip(tooltip)
+        if self.chip.property("state") != state:
+            self.chip.setProperty("state", state)
+            repolish(self.chip)
+
     def set_state(
         self,
         installed: Installed | None,
@@ -384,11 +467,9 @@ class AppCard(QFrame):
         info: ReleaseInfo | None = None,
         refreshing: bool = False,
         refresh_error: str = "",
+        working: str = "",
     ) -> None:
         self.installed = installed
-        action_row = self.installed_row if installed else self.available_row
-        if action_row.indexOf(self.action_button) < 0:
-            action_row.addWidget(self.action_button)
         held = bool(installed and self.app.hold_updates)
         newer_release = bool(installed and release and release.newer_than(installed.version))
         newer = newer_release and not held
@@ -404,11 +485,22 @@ class AppCard(QFrame):
                 and version_key(choice.version) > version_key(installed.version)
             ):
                 pending = choice.version
-        self.action_button.setText("Launch" if installed else "Install")
-        self.action_button.setAccessibleName(
-            f"{'Launch' if installed else 'Install'} {self.app.name}"
+        waiting = bool(
+            installed
+            and installed.prerelease
+            and not self.app.include_prereleases
+            and (info is not None or release is not None)
+            and not newer
+            and (release is None or release.version != installed.version)
         )
-        self.action_button.setEnabled(installed is not None or not busy)
+        if working:
+            self.mode = "cancel"
+        elif installed and self.build_required:
+            self.mode = "build"
+        elif newer:
+            self.mode = "update"
+        else:
+            self.mode = "launch" if installed else "install"
         self.rollback_action.setEnabled(
             bool(
                 not busy
@@ -426,118 +518,239 @@ class AppCard(QFrame):
             bool(not busy and (self.app.hold_updates or (installed and installed.managed)))
         )
         self.shortcut_action.setEnabled(bool(not busy and installed and installed.managed))
-        self.update_button.setText("Choose build" if self.build_required else "Update")
-        self.update_button.setVisible(bool(installed and self.build_required) or newer)
-        self.update_button.setEnabled(not busy)
         self.preferences_action.setEnabled(not busy)
-        waiting = bool(
-            installed
-            and installed.prerelease
-            and not self.app.include_prereleases
-            and (info is not None or release is not None)
-            and not newer
-            and (release is None or release.version != installed.version)
-        )
-        self.available_version.setVisible(bool(newer or not installed or self.build_required))
-        if not installed:
-            self.available_version.set_version("Available")
-        elif release:
-            self.available_version.set_version(
-                f"v{release.version}",
-                release.prerelease,
-                release.is_latest,
-                caption="Update" if newer else "Available",
-            )
-        else:
-            choice = info.choice(self.app.include_prereleases) if info else None
-            self.available_version.set_version(
-                f"v{choice.version} unavailable"
-                if choice
-                else "Only previews available"
-                if info and info.stable is None
-                else "Release unavailable"
-                if error or refresh_error
-                else "Checking releases…"
-                if refreshing
-                else "Release not checked"
-            )
-        self.available_version.setToolTip(error if installed else "Release checked when installing")
-        self.installed_version.setVisible(installed is not None)
-        if installed:
-            latest = info.stable.release if info and info.stable else release
-            self.installed_version.set_version(
-                f"v{installed.version}" if installed.version else "Unknown",
-                installed.prerelease and not newer,
-                bool(
-                    not newer
-                    and latest
-                    and latest.version == installed.version
-                    and latest.is_latest
-                ),
-                caption="Held" if held else "Installed",
-            )
-            self.status.setToolTip(f"Installed with AppGlider\n{installed.path}")
+        self.launch_action.setEnabled(installed is not None)
+        self.set_action(release)
+        self.action_button.setEnabled(self.mode in ("cancel", "launch") or not busy)
         stamp = datetime.fromtimestamp(info.checked_at).strftime("%d %b, %H:%M") if info else ""
-        if refreshing:
-            checked = "Refreshing releases…"
-        elif refresh_error:
-            checked = f"Refresh failed · checked {stamp}" if stamp else "Release check failed"
-        elif held and pending:
-            checked = f"Held · v{pending} available"
-        elif self.build_required:
-            checked = "Choose a build before updating"
-        elif waiting:
-            checked = "Waiting for a newer stable release"
-        elif info:
-            checked = f"Checked {stamp}" + (" · refresh needed" if not info.fresh() else "")
-        else:
-            checked = "Release information not checked"
-        self.checked.setText(checked)
-        self.checked.setVisible(installed is not None)
-        self.checked.setToolTip(
-            refresh_error or error or (f"Last checked {stamp}" if stamp else "")
-        )
-        self.action_button.setToolTip(
-            f"Launch {installed.path}"
-            if installed
-            else "Check the eligible release, then download and verify its AppImage"
-        )
-        if release:
-            self.update_button.setToolTip(
-                f"Update to v{release.version}; keep the previous version"
+        details: list[str] = []
+        if working:
+            state, text = "busy", f"{working}…"
+        elif self.mode == "build":
+            state, text = "build", "Choose build"
+            details.append("Choose a build before updating")
+        elif self.mode == "update" and release:
+            state, text = "update", f"↑ {release.version}"
+            details.append(f"Update available: v{release.version}")
+        elif held and installed:
+            state, text = "held", f"‖ Held · {pending} out" if pending else "‖ Held"
+            details.append(
+                f"Held at v{installed.version} · v{pending} available"
+                if pending
+                else f"Held at v{installed.version}"
             )
+        elif refreshing:
+            state, text = "none", "Checking…"
+            details.append("Refreshing releases…")
+        elif installed and (refresh_error or (error and release is None)):
+            state, text = "failed", "Check failed"
+        elif waiting:
+            state, text = "preview", "Waiting for stable"
+            details.append("Waiting for a newer stable release")
+        elif installed and installed.prerelease:
+            state, text = "preview", "Preview channel"
+            details.append("A preview version, which may be less reliable.")
+        elif installed and (release or choice):
+            state, text = "ok", "✓ Up to date"
+        elif installed and info and info.stable is None:
+            state, text = "none", "Only previews"
+            details.append("Only previews are available; enable previews to use them.")
+        elif installed:
+            state, text = "none", "Not checked"
+        else:
+            state, text = "none", "Not installed"
+        if release and state != "busy":
+            if release.prerelease:
+                details.append(f"v{release.version} is a pre-release.")
+            elif release.is_latest:
+                details.append(f"v{release.version} is GitHub's latest release.")
+        if refresh_error or error:
+            details.append(refresh_error or error)
+        if not installed:
+            details.append("Release checked when installing")
+        elif stamp:
+            details.append(
+                f"Last checked {stamp}" + (" · refresh needed" if info and not info.fresh() else "")
+            )
+        else:
+            details.append("Release information not checked")
+        self.set_chip(state, text, "\n".join(details))
+        if installed:
+            self.installed_version.setText(f"v{installed.version}" if installed.version else "?")
+            self.installed_version.setToolTip(
+                f"Installed with AppGlider\n{installed.path}"
+                + ("\nPre-release" if installed.prerelease else "")
+            )
+        else:
+            self.installed_version.setText("—")
+            self.installed_version.setToolTip("Not installed")
+
+    def set_action(self, release: Release | None) -> None:
+        name = self.app.name
+        text, accessible, tooltip = {
+            "cancel": ("Cancel", f"Cancel {name}", "Cancel the running operation"),
+            "build": ("Choose build", f"Choose build for {name}", "Choose which build to install"),
+            "update": (
+                "Update",
+                f"Update {name}",
+                f"Update to v{release.version}; keep the previous version"
+                if release
+                else "Update; keep the previous version",
+            ),
+            "launch": (
+                "Launch",
+                f"Launch {name}",
+                f"Launch {self.installed.path}" if self.installed else "Launch",
+            ),
+            "install": (
+                "Install",
+                f"Install {name}",
+                "Check the eligible release, then download and verify its AppImage",
+            ),
+        }[self.mode]
+        self.action_button.setText(text)
+        self.action_button.setAccessibleName(accessible)
+        self.action_button.setToolTip(tooltip)
+        object_name = "primary" if self.mode in ("update", "build") else ""
+        if self.action_button.objectName() != object_name:
+            self.action_button.setObjectName(object_name)
+            repolish(self.action_button)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.press_pos = event.position().toPoint()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if (
+            self.press_pos is not None
+            and self.draggable
+            and event.buttons() & Qt.MouseButton.LeftButton
+            and (event.position().toPoint() - self.press_pos).manhattanLength()
+            >= QApplication.startDragDistance()
+        ):
+            self.start_drag()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        pressed = self.press_pos is not None
+        self.press_pos = None
+        if (
+            pressed
+            and event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.details_requested.emit(self.app.id)
+        else:
+            super().mouseReleaseEvent(event)
+
+    def start_drag(self) -> None:
+        hot_spot = self.press_pos or QPoint(0, 0)
+        self.press_pos = None
+        mime = QMimeData()
+        mime.setData(ORDER_MIME, QByteArray(self.app.id.encode()))
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.setPixmap(self.grab())
+        drag.setHotSpot(hot_spot)
+        drag.exec(Qt.DropAction.MoveAction)
 
 
-class CardGrid(QWidget):
-    """Reflow existing cards without losing keyboard focus."""
+class AppList(QFrame):
+    """The bordered list of rows; accepts a dragged row and reports where it was dropped."""
+
+    row_dropped = Signal(str, int)  # app id, index in the shown list to insert before
 
     def __init__(self) -> None:
         super().__init__()
-        self.cards: list[AppCard] = []
-        self.columns = 0
-        self.layout_grid = QGridLayout(self)
-        self.layout_grid.setContentsMargins(0, 0, SCROLLBAR_GAP, 0)
-        self.layout_grid.setSpacing(16)
-        self.layout_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.setObjectName("appList")
+        self.setAcceptDrops(True)
+        self.rows: list[AppRow] = []
+        self.reorderable = False
+        self.scroll_area: QScrollArea | None = None
+        self.box = QVBoxLayout(self)
+        self.box.setContentsMargins(1, 1, 1, 1)
+        self.box.setSpacing(0)
+        self.drop_line = QFrame(self)
+        self.drop_line.setObjectName("dropLine")
+        self.drop_line.setFixedHeight(2)
+        self.drop_line.hide()
 
-    def set_cards(self, cards: list[AppCard], width: int) -> None:
-        self.cards = cards
-        self.reflow(width)
+    def set_rows(self, rows: list[AppRow]) -> None:
+        if rows != self.rows:
+            while self.box.count():
+                self.box.takeAt(0)
+            for row in rows:
+                self.box.addWidget(row)
+            self.rows = rows
+        for index, row in enumerate(rows):
+            edge = "only" if len(rows) == 1 else "first" if index == 0 else "mid"
+            row.set_edge("last" if len(rows) > 1 and index == len(rows) - 1 else edge)
 
-    def reflow(self, width: int) -> None:
-        while self.layout_grid.count():
-            self.layout_grid.takeAt(0)
-        for column in range(self.columns):
-            self.layout_grid.setColumnStretch(column, 0)
-        for row in range(self.layout_grid.rowCount()):
-            self.layout_grid.setRowStretch(row, 0)
-        self.columns = max(1, (width - SCROLLBAR_GAP + 16) // (CARD_MIN_WIDTH + 16))
-        for index, card in enumerate(self.cards):
-            self.layout_grid.addWidget(card, index // self.columns, index % self.columns)
-        for column in range(self.columns):
-            self.layout_grid.setColumnStretch(column, 1)
-        rows = (len(self.cards) + self.columns - 1) // self.columns
-        self.layout_grid.setRowStretch(rows, 1)
+    def dragged(self, event: QDragMoveEvent | QDropEvent) -> AppRow | None:
+        mime = event.mimeData()
+        if not self.reorderable or not mime.hasFormat(ORDER_MIME):
+            return None
+        app_id = bytes(mime.data(ORDER_MIME).data()).decode(errors="replace")
+        return next((row for row in self.rows if row.app.id == app_id), None)
+
+    def drop_index(self, row: AppRow, position: QPoint) -> int:
+        """Index to insert before, kept inside the dragged row's pinned or unpinned group."""
+        before = sum(1 for other in self.rows if other.geometry().center().y() < position.y())
+        group = [index for index, other in enumerate(self.rows) if other.pinned == row.pinned]
+        return min(max(before, group[0]), group[-1] + 1)
+
+    def show_drop_line(self, before: int) -> None:
+        if not self.rows:
+            return
+        y = self.rows[before].y() if before < len(self.rows) else self.rows[-1].geometry().bottom()
+        self.drop_line.setGeometry(1, max(0, y - 1), max(0, self.width() - 2), 2)
+        self.drop_line.show()
+        self.drop_line.raise_()
+
+    def scroll_for(self, position: QPoint) -> None:
+        if self.scroll_area is None:
+            return
+        viewport = self.scroll_area.viewport()
+        y = self.mapTo(viewport, position).y()
+        bar = self.scroll_area.verticalScrollBar()
+        if y < DRAG_SCROLL_MARGIN:
+            bar.setValue(bar.value() - 18)
+        elif y > viewport.height() - DRAG_SCROLL_MARGIN:
+            bar.setValue(bar.value() + 18)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self.dragged(event) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        row = self.dragged(event)
+        if row is None:
+            self.drop_line.hide()
+            event.ignore()
+            return
+        position = event.position().toPoint()
+        self.show_drop_line(self.drop_index(row, position))
+        self.scroll_for(position)
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self.drop_line.hide()
+        event.accept()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        self.drop_line.hide()
+        row = self.dragged(event)
+        if row is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self.row_dropped.emit(row.app.id, self.drop_index(row, event.position().toPoint()))
 
 
 class DetailsDialog(QDialog):
@@ -1094,6 +1307,7 @@ class LauncherWindow(QMainWindow):
         self.background_enabled = False
         self.close_after_release = False
         self.task: Task | None = None
+        self.working: dict[str, str] = {}
         self.close_after_task = False
         self.quitting = False
         self.setWindowTitle(APP_NAME)
@@ -1215,7 +1429,8 @@ class LauncherWindow(QMainWindow):
         self.sort_combo.setItemDelegate(QStyledItemDelegate(self.sort_combo))
         self.sort_combo.setAccessibleName("Sort apps")
         self.sort_combo.setToolTip(
-            "Choose how the apps are ordered. Pinned apps always come first."
+            "Choose how the apps are ordered. Pinned apps always come first. "
+            "Drag a row to set a custom order."
         )
         for label, mode in SORT_CHOICES:
             self.sort_combo.addItem(f"Sort: {label}", mode)
@@ -1255,8 +1470,15 @@ class LauncherWindow(QMainWindow):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.grid = CardGrid()
-        self.scroll_area.setWidget(self.grid)
+        list_page = QWidget()
+        list_layout = QVBoxLayout(list_page)
+        list_layout.setContentsMargins(0, 0, 8, 0)
+        self.app_list = AppList()
+        self.app_list.scroll_area = self.scroll_area
+        self.app_list.row_dropped.connect(self.drop_app)
+        list_layout.addWidget(self.app_list)
+        list_layout.addStretch()
+        self.scroll_area.setWidget(list_page)
         layout.addWidget(self.scroll_area, stretch=1)
         self.empty = QLabel()
         self.empty.setObjectName("emptyState")
@@ -1324,11 +1546,10 @@ class LauncherWindow(QMainWindow):
         self.orphans_button.hide()
         progress_row.addWidget(self.orphans_button)
         layout.addLayout(progress_row)
-        self.cards: dict[str, AppCard] = {}
+        self.cards: dict[str, AppRow] = {}
         self.search.textChanged.connect(self.refresh)
         self.filter_installed.toggled.connect(self.refresh)
         QApplication.styleHints().colorSchemeChanged.connect(self.apply_theme)
-        self.scroll_area.viewport().installEventFilter(self)
         self.tray_icons = (QIcon(str(APP_ICON)), QIcon(str(APP_UPDATE_ICON)))
         self.tray = QSystemTrayIcon(self.tray_icons[0], self)
         self.tray_has_updates = False
@@ -1443,9 +1664,9 @@ class LauncherWindow(QMainWindow):
             text += f" · next {datetime.fromtimestamp(upcoming):%H:%M}"
         return text
 
-    def create_card(self, app: App) -> AppCard:
-        card = AppCard(app, self.library.icon_path(app))
-        card.setParent(self.grid)
+    def create_row(self, app: App) -> AppRow:
+        card = AppRow(app, self.library.icon_path(app))
+        card.setParent(self.app_list)
         card.details_requested.connect(self.open_details)
         card.launch_requested.connect(self.launch_app)
         card.install_requested.connect(self.install_app)
@@ -1456,12 +1677,15 @@ class LauncherWindow(QMainWindow):
         card.pin_requested.connect(self.toggle_pin)
         card.hold_requested.connect(self.toggle_hold)
         card.build_requested.connect(self.choose_build)
+        card.cancel_requested.connect(self.cancel_task)
+        card.move_requested.connect(self.move_app)
         return card
 
     def sorted_apps(self, apps: Iterable[App]) -> list[App]:
         """Pinned apps first, then the chosen order; ties keep the order they were added in."""
         mode = sort_mode(self.settings)
         order = {app.id: index for index, app in enumerate(self.apps)}
+        custom = {app_id: index for index, app_id in enumerate(custom_order(self.settings))}
 
         def key(app: App) -> tuple[object, ...]:
             installed = app.id in self.installed
@@ -1470,6 +1694,7 @@ class LauncherWindow(QMainWindow):
                 "installed": (not installed, app.name.casefold()),
                 "updates": (not self.has_update(app.id), not installed, app.name.casefold()),
                 "added": (),
+                "custom": (custom.get(app.id, len(custom)), app.name.casefold()),
             }[mode]
             return (app.id not in self.pinned, *tail, order.get(app.id, 0))
 
@@ -1477,6 +1702,45 @@ class LauncherWindow(QMainWindow):
 
     def sort_changed(self) -> None:
         self.settings.setValue("library/sort", self.sort_combo.currentData())
+        self.refresh()
+
+    def reorder_enabled(self) -> bool:
+        """Dragging only makes sense in the whole library, where every app is shown."""
+        return self.view == "library" and not self.installed_only and not self.search.text().strip()
+
+    def move_app(self, app_id: str, delta: int) -> None:
+        ids = [row.app.id for row in self.app_list.rows]
+        if app_id in ids:
+            self.reorder_app(app_id, ids.index(app_id) + delta)
+
+    def drop_app(self, app_id: str, before: int) -> None:
+        ids = [row.app.id for row in self.app_list.rows]
+        if app_id in ids:
+            source = ids.index(app_id)
+            self.reorder_app(app_id, before if before <= source else before - 1)
+
+    def reorder_app(self, app_id: str, index: int) -> None:
+        """Move an app to a position among the shown apps, staying within its pinned group."""
+        if not self.reorder_enabled():
+            return
+        shown = [row.app.id for row in self.app_list.rows]
+        if app_id not in shown:
+            return
+        ids = [item for item in shown if item != app_id]
+        pinned = sum(item in self.pinned for item in ids)
+        if app_id in self.pinned:
+            index = min(max(index, 0), pinned)
+        else:
+            index = min(max(index, pinned), len(ids))
+        ids.insert(index, app_id)
+        if ids == shown:
+            return
+        self.settings.setValue("library/order", json.dumps(ids))
+        self.settings.setValue("library/sort", "custom")
+        self.sort_combo.blockSignals(True)
+        self.sort_combo.setCurrentIndex(max(0, self.sort_combo.findData("custom")))
+        self.sort_combo.blockSignals(False)
+        self.footer.setText("Custom order saved.")
         self.refresh()
 
     def toggle_pin(self, app_id: str) -> None:
@@ -1523,13 +1787,6 @@ class LauncherWindow(QMainWindow):
         self.quitting = True
         if not self.close() and not self.close_after_task and not self.close_after_release:
             self.quitting = False
-
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self.scroll_area.viewport() and isinstance(event, QResizeEvent):
-            width = event.size().width()
-            if max(1, (width + 16) // (CARD_MIN_WIDTH + 16)) != self.grid.columns:
-                self.grid.reflow(width)
-        return super().eventFilter(watched, event)
 
     def refresh(self) -> None:
         update_count = sum(self.has_update(app.id) for app in self.apps)
@@ -1584,8 +1841,23 @@ class LauncherWindow(QMainWindow):
                 self.release_infos.get(app_id),
                 self.checks.is_checking(app_id),
                 self.release_errors.get(app_id, ""),
+                self.working.get(app_id, ""),
             )
             card.setVisible(app_id in ids)
+            card.draggable = False
+            card.move_up_action.setEnabled(False)
+            card.move_down_action.setEnabled(False)
+        shown = [self.cards[app.id] for app in visible]
+        reorder = self.reorder_enabled()
+        self.app_list.reorderable = reorder
+        for index, row in enumerate(shown):
+            row.draggable = reorder and len(shown) > 1
+            row.move_up_action.setEnabled(
+                reorder and index > 0 and shown[index - 1].pinned == row.pinned
+            )
+            row.move_down_action.setEnabled(
+                reorder and index + 1 < len(shown) and shown[index + 1].pinned == row.pinned
+            )
         self.nav_add.setEnabled(self.task is None)
         self.search.setPlaceholderText(
             f"Search {update_count if updates_view else len(self.apps)} apps"
@@ -1603,9 +1875,7 @@ class LauncherWindow(QMainWindow):
         self.banner.setVisible(update_count > 0)
         if update_count > 0:
             self.banner_label.setText(self.banner_text())
-        self.grid.set_cards(
-            [self.cards[app.id] for app in visible], self.scroll_area.viewport().width()
-        )
+        self.app_list.set_rows(shown)
         self.scroll_area.setVisible(bool(visible))
         self.empty.setVisible(not visible and bool(self.apps))
         self.welcome.setVisible(not self.apps)
@@ -1837,7 +2107,7 @@ class LauncherWindow(QMainWindow):
                             old.deleteLater()
                         self.releases.pop(app.id, None)
                         self.check_errors.pop(app.id, None)
-                        self.cards[app.id] = self.create_card(app)
+                        self.cards[app.id] = self.create_row(app)
                 self.apps = apps
             cache_dir = self.library.data_dir / "release-cache"
             for app in apps:
@@ -1895,9 +2165,11 @@ class LauncherWindow(QMainWindow):
         operation: Callable[[Event, Progress], TaskResult],
         *,
         details: DetailsDialog | None = None,
+        working: dict[str, str] | None = None,
     ) -> None:
         if self.task is not None:
             return
+        self.working = working or {}
         self.task = Task(operation)
         if details is not None:
             self.task.signals.finished.connect(details.release_check_finished)
@@ -1931,6 +2203,7 @@ class LauncherWindow(QMainWindow):
 
     def reset_task(self) -> None:
         self.task = None
+        self.working = {}
         self.progress_bar.hide()
         self.cancel_button.hide()
         self.scan_installed()
@@ -2085,7 +2358,11 @@ class LauncherWindow(QMainWindow):
                 f"{app.name} v{release.version} is ready to launch.", {app_id: release}
             )
 
-        self.start_task(f"Preparing {app.name}…", operation)
+        self.start_task(
+            f"Preparing {app.name}…",
+            operation,
+            working={app_id: "Updating" if installed else "Installing"},
+        )
 
     def update_all(self) -> None:
         apps = [
@@ -2127,7 +2404,11 @@ class LauncherWindow(QMainWindow):
             return result
 
         if apps:
-            self.start_task("Updating installed apps…", operation)
+            self.start_task(
+                "Updating installed apps…",
+                operation,
+                working={app.id: "Updating" for app in apps},
+            )
 
     def rollback_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
@@ -2213,6 +2494,7 @@ class LauncherWindow(QMainWindow):
         foreground, muted, border = tokens["text"], tokens["muted"], tokens["line"]
         ok, warn, danger = tokens["ok"], tokens["warn"], tokens["danger"]
         raised, faint = tokens["raised"], tokens["faint"]
+        surface2, held = tokens["surface2"], tokens["held"]
         on_accent = background if dark else "#ffffff"
         on_warn = on_accent
         palette = QPalette()
@@ -2302,13 +2584,29 @@ class LauncherWindow(QMainWindow):
             QLabel#muted, QLabel#footer {{ color: {muted}; }}
             QLabel#footer {{ font-size: 12px; padding-top: 8px; }}
             QLabel#emptyState {{ font-size: 17px; color: {muted}; }}
-            QFrame#appCard {{ background: {surface}; border: 1px solid {border};
-                border-radius: 12px; }}
-            QFrame#appCard:hover {{ border-color: {accent}; }}
-            QFrame#cardDivider {{ border: none; background: {border}; }}
-            QLabel#cardDescription, QLabel#versionCaption {{ color: {muted}; font-size: 12px; }}
-            QLabel#cardChecked {{ color: {muted}; font-size: 11px; }}
-            QPushButton#cardAction {{ padding: 7px 12px; font-size: 13px; }}
+            QLabel#versionCaption {{ color: {muted}; font-size: 12px; }}
+            QFrame#appList {{ background: {surface}; border: 1px solid {border};
+                border-radius: 10px; }}
+            QFrame#appRow {{ background: transparent; border: none; }}
+            QFrame#appRow:hover {{ background: {surface2}; }}
+            QFrame#appRow[edge="first"]:hover, QFrame#appRow[edge="only"]:hover {{
+                border-top-left-radius: 9px; border-top-right-radius: 9px; }}
+            QFrame#appRow[edge="last"]:hover, QFrame#appRow[edge="only"]:hover {{
+                border-bottom-left-radius: 9px; border-bottom-right-radius: 9px; }}
+            QFrame#rowDivider {{ border: none; background: {border}; }}
+            QFrame#dropLine {{ border: none; background: {accent}; border-radius: 1px; }}
+            QLabel#rowSubtitle {{ color: {muted}; font-size: 13px; }}
+            QLabel#rowVersion {{ color: {muted}; font-size: 13px; }}
+            QLabel#chip {{ color: {muted}; background: {tint(muted, 0.14)};
+                border-radius: 11px; padding: 0 10px; font-size: 12px; font-weight: 600; }}
+            QLabel#chip[state="busy"], QLabel#chip[state="preview"] {{
+                color: {accent}; background: {tint(accent, 0.14)}; }}
+            QLabel#chip[state="update"], QLabel#chip[state="build"] {{
+                color: {warn}; background: {tint(warn, 0.14)}; }}
+            QLabel#chip[state="held"] {{ color: {held}; background: {tint(held, 0.14)}; }}
+            QLabel#chip[state="ok"] {{ color: {ok}; background: {tint(ok, 0.14)}; }}
+            QLabel#chip[state="failed"] {{ color: {danger}; background: {tint(danger, 0.14)}; }}
+            QPushButton[rowAction="true"] {{ padding: 0; font-size: 13px; }}
             QPushButton, QToolButton {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; border-radius: 7px; padding: 9px 14px; }}
             QPushButton:hover, QToolButton:hover {{ border-color: {accent}; color: {accent}; }}
@@ -2323,10 +2621,10 @@ class LauncherWindow(QMainWindow):
             QPushButton#danger {{ color: {danger}; }}
             QLabel#pinStar {{ color: {PIN_COLOUR}; font-size: 15px; }}
             QPushButton#appName {{ border: none; padding: 0; text-align: left;
-                font-size: 17px; font-weight: 650; background: transparent; }}
+                font-size: 14px; font-weight: 600; background: transparent; }}
             QPushButton#appName:focus {{ outline: 2px solid {accent}; }}
-            QToolButton#cardMenu {{ border: none; background: transparent;
-                font-size: 24px; padding: 0px 6px; }}
+            QToolButton#rowMenu {{ border: none; background: transparent;
+                font-size: 20px; padding: 0; }}
             QToolButton::menu-indicator {{ image: none; }}
             QLabel#status {{ color: {muted}; font-size: 12px; }}
             QLabel#releaseBadge {{ border: 1px solid; border-radius: 9px;

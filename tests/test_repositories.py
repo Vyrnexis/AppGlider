@@ -348,9 +348,8 @@ class RepositoryGuiTests(unittest.TestCase):
         )
         self.run_import(path)
         card = self.window.cards["github-owner__evil"]
-        labels = {label.text(): label for label in card.findChildren(QLabel)}
-        label = labels['<a href="http://x.test">click</a>']
-        self.assertEqual(label.textFormat(), Qt.TextFormat.PlainText)
+        self.assertEqual(card.subtitle.full_text, '<a href="http://x.test">click</a>')
+        self.assertEqual(card.subtitle.textFormat(), Qt.TextFormat.PlainText)
         self.assertEqual(card.findChild(type(card.action_button), "appName").text(), "<b>Bold</b>")
 
     def test_the_example_catalog_button_previews_then_adds_the_example_apps(self):
@@ -894,9 +893,11 @@ class RepositoryGuiTests(unittest.TestCase):
         )
         self.window.refresh()
         card = self.window.cards[selected.id]
-        self.assertEqual(card.action_button.text(), "Launch")
-        self.assertEqual(card.update_button.text(), "Choose build")
-        self.assertTrue(card.update_button.isVisibleTo(card))
+        self.assertEqual(card.action_button.text(), "Choose build")
+        self.assertEqual(card.chip.property("state"), "build")
+        self.assertEqual(card.chip.text(), "Choose build")
+        self.assertTrue(card.action_button.isVisibleTo(card))
+        self.assertTrue(card.launch_action.isEnabled())
         self.assertEqual(self.window.updates_count.text(), "1")
         self.assertTrue(self.window.update_all_button.isHidden())
         observed = []
@@ -920,13 +921,13 @@ class RepositoryGuiTests(unittest.TestCase):
             patch("appglider.library.download") as download,
         ):
             QTimer.singleShot(0, choose_available_build)
-            QTest.mouseClick(card.update_button, Qt.MouseButton.LeftButton)
+            QTest.mouseClick(card.action_button, Qt.MouseButton.LeftButton)
             download.assert_not_called()
         self.assertEqual(observed[0], 2)
         self.assertIn("Build preference saved", observed[1])
         self.assertEqual(self.library.scan()[selected.id], installed)
         self.assertTrue(installed.path.is_file())
-        self.assertEqual(self.window.cards[selected.id].update_button.text(), "Update")
+        self.assertEqual(self.window.cards[selected.id].action_button.text(), "Update")
         with patch.object(releases, "request", return_value=io.BytesIO(payload)):
             self.window.install_app(selected.id)
             self.wait_for_task(self.window)
@@ -1157,8 +1158,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)
         self.assertEqual(self.window.releases[CUSTOM.id], beta)
-        self.assertEqual(self.window.cards[CUSTOM.id].available_version.text.text(), "Available")
-        self.assertTrue(self.window.cards[CUSTOM.id].available_version.badge.isHidden())
+        self.assertEqual(self.window.cards[CUSTOM.id].chip.text(), "Not installed")
         self.assertEqual(self.dialog.version_label.badge.text(), "Pre-release")
         self.dialog.release_channel.setCurrentIndex(0)
         self.assertNotIn(CUSTOM.id, self.window.releases)
