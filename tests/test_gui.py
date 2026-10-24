@@ -55,7 +55,6 @@ from appglider.repositories_dialog import RepositoriesPanel
 from appglider.storage import atomic_json
 from appglider.window import (
     ORDER_MIME,
-    DetailsDialog,
     LauncherWindow,
     OrphansDialog,
     SettingsDialog,
@@ -252,16 +251,9 @@ class LibraryTests(unittest.TestCase):
             calls.append(kwargs)
             return self.release_info()
 
-        def click_check() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, DetailsDialog):
-                dialog.check_button.click()
-                dialog.reject()
-
         with patch("appglider.window.discover_releases", side_effect=discover):
-            QTimer.singleShot(0, click_check)
-            self.window.open_details(APP.id)
-            QTest.qWait(10)
+            self.window.open_app(APP.id)
+            self.window.app_page.check_button.click()
             self.wait_for_task()
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0]["force"])
@@ -683,15 +675,20 @@ class LibraryTests(unittest.TestCase):
         installed = self.window.installed[APP.id]
         card.set_state(installed, self.window.releases[APP.id], True)
         self.assertFalse(card.hold_action.isEnabled())
-        app = replace(APP, hold_updates=True)
-        release = self.window.releases[APP.id]
-        dialog = DetailsDialog(app, self.window, installed, release)
-        self.addCleanup(dialog.deleteLater)
-        self.assertTrue(dialog.hold_label.isVisibleTo(dialog))
-        self.assertEqual(dialog.hold_label.text(), "Held at v1.0.0 · v1.1.0 available")
-        plain = DetailsDialog(APP, self.window, installed, release)
-        self.addCleanup(plain.deleteLater)
-        self.assertFalse(plain.hold_label.isVisibleTo(plain))
+        page = self.window.app_page
+        self.window.open_app(APP.id)
+        self.assertEqual(page.hold_hint.text(), "Keep checking, never offer updates")
+        self.assertFalse(page.hold_switch.isChecked())
+        self.window.library.set_update_hold(APP.id, True)
+        self.window.scan_installed()
+        self.assertEqual(page.hold_hint.text(), "Held at v1.0.0 · v1.1.0 available")
+        self.assertTrue(page.hold_switch.isChecked())
+        self.assertTrue(page.hold_switch.isEnabled())
+        self.window.cards[APP.id].set_state(installed, self.window.releases[APP.id], True)
+        self.window.task = object()  # type: ignore[assignment]
+        page.refresh()
+        self.window.task = None
+        self.assertFalse(page.hold_switch.isEnabled())
 
     def test_update_notifications_are_opt_in_and_sent_once_per_new_version(self) -> None:
         window = self.window
@@ -932,7 +929,7 @@ class LibraryTests(unittest.TestCase):
         for app in APPS:
             with self.subTest(app=app.id):
                 self.assertEqual(self.window.cards[app.id].findChildren(QComboBox), [])
-                self.assertTrue(self.window.cards[app.id].preferences_action.isEnabled())
+                self.assertTrue(self.window.cards[app.id].name_button.isEnabled())
                 self.assertFalse(QPixmap(str(app.icon)).isNull())
                 install = next(
                     button
@@ -1132,27 +1129,20 @@ class LibraryTests(unittest.TestCase):
             self.qt.processEvents()
             self.assertEqual({row.height() for row in self.window.app_list.rows}, {60})
 
-    def test_clicking_name_opens_real_details_dialog(self) -> None:
-        observed = []
+    def test_clicking_name_opens_the_app_page(self) -> None:
         info = self.release_info()
         self.window.release_infos["solidcraft"] = info
         self.window.apply_release_info(self.window.cards["solidcraft"].app)
-
-        def close_details() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, DetailsDialog):
-                observed.append(dialog.windowTitle())
-                observed.extend(label.text() for label in dialog.findChildren(QLabel))
-                dialog.reject()
-
-        QTimer.singleShot(0, close_details)
         name = self.window.cards["solidcraft"].findChild(QPushButton, "appName")
         self.assertIsNotNone(name)
         QTest.mouseClick(name, Qt.MouseButton.LeftButton)
-        self.assertIn("About SolidCraft", observed)
-        self.assertIn("tangency-labs/solidcraft", observed)
-        self.assertIn(info.stable.version, observed)
-        self.assertIn(info.preview.version, observed)
+        page = self.window.app_page
+        self.assertIs(self.window.pages.currentWidget(), page)
+        self.assertEqual(page.title.text(), "SolidCraft")
+        self.assertIn("tangency-labs/solidcraft", page.source.text())
+        self.assertEqual(page.back_button.text(), "‹ Library")
+        self.assertIn(info.stable.version, page.versions["stable"].text.text())
+        self.assertIn(info.preview.version, page.versions["preview"].text.text())
 
     def test_destroyed_windows_stop_receiving_system_theme_changes(self) -> None:
         calls = []
@@ -1464,95 +1454,88 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(card.installed_version.text(), "—")
             self.assertTrue(card.action_button.isEnabled())
 
-    def test_details_explicitly_checks_an_uninstalled_app_without_downloading(self) -> None:
+    def test_the_page_explicitly_checks_an_uninstalled_app_without_downloading(self) -> None:
         info = self.release_info()
-        observed = []
-
-        def inspect() -> None:
-            dialog = self.qt.activeModalWidget()
-            if not isinstance(dialog, DetailsDialog):
-                return
-            try:
-                observed.append(dialog.available_label.text.text())
-                dialog.check_button.click()
-                self.wait_for_task()
-                observed.append(dialog.available_label.text.text())
-                observed.append(dialog.preview_label.text.text())
-                observed.append(dialog.check_button.isEnabled())
-            finally:
-                dialog.reject()
-
+        page = self.window.app_page
         with (
             patch("appglider.window.discover_releases", return_value=info) as discover,
             patch("appglider.library.download") as download,
         ):
-            QTimer.singleShot(0, inspect)
-            self.window.open_details(APP.id)
+            self.window.open_app(APP.id)
+            before = page.versions["stable"].text.text()
+            page.check_button.click()
+            self.wait_for_task()
+            after = (
+                page.versions["stable"].text.text(),
+                page.versions["preview"].text.text(),
+                page.check_button.isEnabled(),
+            )
             discover.assert_called_once()
             self.assertEqual(discover.call_args.args[0].id, APP.id)
             self.assertTrue(discover.call_args.kwargs["force"])
             download.assert_not_called()
-        self.assertEqual(observed, ["Not checked", info.stable.version, info.preview.version, True])
+        self.assertEqual(before, "Not checked")
+        self.assertEqual(after, (f"v{info.stable.version}", f"v{info.preview.version}", True))
         self.assertEqual(self.window.installed, {})
         self.assertEqual(self.window.cards[APP.id].chip.text(), "Not installed")
 
-    def test_details_can_close_while_its_release_check_finishes(self) -> None:
+    def test_the_page_can_change_or_close_while_its_release_check_finishes(self) -> None:
         info = self.release_info()
-        finish = Event()
+        page = self.window.app_page
+        for leave in ("back", "other app", "removed"):
+            finish = Event()
 
-        def discover(app, cancel, cache_dir, *, force):
-            if not finish.wait(5):
-                raise TimeoutError("Test release check was not released")
-            return info
+            def discover(app, cancel, cache_dir, *, force):
+                if not finish.wait(5):
+                    raise TimeoutError("Test release check was not released")
+                return info
 
-        def close_details() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, DetailsDialog):
-                dialog.check_button.click()
-                dialog.reject()
+            with (
+                self.subTest(leave=leave),
+                patch("appglider.window.discover_releases", side_effect=discover),
+            ):
+                self.window.release_infos.pop(APP.id, None)
+                self.window.open_app(APP.id)
+                page.check_button.click()
+                self.assertEqual(page.check_button.text(), "Checking…")
+                try:
+                    if leave == "back":
+                        page.back_button.click()
+                    elif leave == "other app":
+                        self.window.open_app(APPS[1].id)
+                    else:
+                        self.window.library.remove_repository(APP.id)
+                        self.window.scan_installed()
+                        self.assertEqual(self.window.pages.currentIndex(), 0)
+                finally:
+                    finish.set()
+                self.wait_for_task()
+                self.assertEqual(self.window.pages.currentIndex() == 1, leave == "other app")
+                if leave != "removed":
+                    self.assertEqual(self.window.release_infos[APP.id], info)
+                self.assertEqual(page.note.text(), page.message)
+                if leave == "removed":
+                    self.window.library.import_catalog(STARTER_ENTRIES)
+                    self.window.scan_installed()
+                if self.window.pages.currentIndex() == 1:
+                    page.back_button.click()
 
-        with patch("appglider.window.discover_releases", side_effect=discover):
-            try:
-                QTimer.singleShot(0, close_details)
-                self.window.open_details(APP.id)
-                QTest.qWait(10)
-            finally:
-                finish.set()
-            self.wait_for_task()
-        self.assertEqual(self.window.release_infos[APP.id], info)
-
-    def test_failed_details_check_keeps_cached_versions_and_allows_retry(self) -> None:
+    def test_a_failed_page_check_keeps_cached_versions_and_allows_retry(self) -> None:
         info = self.release_info()
         atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
         self.window.scan_installed()
-        observed = []
-
-        def inspect() -> None:
-            dialog = self.qt.activeModalWidget()
-            if not isinstance(dialog, DetailsDialog):
-                return
-            try:
-                dialog.check_button.click()
-                self.wait_for_task()
-                observed.extend(
-                    [
-                        dialog.available_label.text.text(),
-                        dialog.note.text(),
-                        dialog.check_button.isEnabled(),
-                    ]
-                )
-            finally:
-                dialog.reject()
-
+        page = self.window.app_page
         with (
             patch("appglider.window.discover_releases", side_effect=OSError("Offline")),
             patch("appglider.window.QMessageBox.warning"),
             patch("appglider.window.QThreadPool.globalInstance") as pool,
         ):
             pool.return_value.start.side_effect = lambda task: task.run()
-            QTimer.singleShot(0, inspect)
-            self.window.open_details(APP.id)
-        self.assertEqual(observed, [info.stable.version, "Offline", True])
+            self.window.open_app(APP.id)
+            page.check_button.click()
+        self.assertEqual(page.versions["stable"].text.text(), f"v{info.stable.version}")
+        self.assertEqual(page.note.text(), "Offline")
+        self.assertTrue(page.check_button.isEnabled())
         self.assertEqual(self.window.release_infos[APP.id], info)
 
     def test_queued_background_check_skips_an_app_that_was_uninstalled(self) -> None:
@@ -1644,21 +1627,10 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.window.check_button.toolTip(), "Check for updates")
 
     def change_release_preference(self, index: int) -> None:
-        selected = []
-
-        def choose() -> None:
-            dialog = self.qt.activeModalWidget()
-            if isinstance(dialog, SettingsDialog):
-                try:
-                    panel = dialog.repositories
-                    selected.append(panel.selected_app.id)
-                    panel.release_channel.setCurrentIndex(index)
-                finally:
-                    dialog.reject()
-
-        QTimer.singleShot(0, choose)
-        self.window.cards[APP.id].preferences_action.trigger()
-        self.assertEqual(selected, [APP.id])
+        self.window.open_app(APP.id)
+        self.assertEqual(self.window.app_page.app_id, APP.id)
+        self.window.app_page.channel.buttons[index].click()
+        self.window.app_page.back_button.click()
 
     def test_card_preference_changes_offers_and_count_without_installing(self) -> None:
         info = self.release_info()
@@ -1770,7 +1742,7 @@ class LibraryTests(unittest.TestCase):
         ):
             self.window.refresh_releases()
             task = self.window.checks.tasks[APP.id]
-            self.assertTrue(self.window.cards[APP.id].preferences_action.isEnabled())
+            self.assertTrue(self.window.cards[APP.id].name_button.isEnabled())
             self.assertFalse(self.window.close())
             self.assertTrue(task.cancel.is_set())
             self.assertFalse(self.window.checks.queue)

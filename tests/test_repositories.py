@@ -403,18 +403,16 @@ class RepositoryGuiTests(unittest.TestCase):
             self.assertEqual(latest.call_args.args[0], CUSTOM)
         self.assertTrue(self.dialog.add_button.isEnabled())
 
-    def test_repository_views_keep_addition_and_existing_app_actions_separate(self):
+    def test_the_list_opens_apps_on_their_page_and_the_add_flow_has_its_own_view(self):
+        requested = []
+        self.dialog.app_requested.connect(requested.append)
         self.assertEqual(self.dialog.pages.currentIndex(), 0)
         self.assertTrue(self.dialog.repo_list.isVisibleTo(self.dialog))
         self.dialog.open_item(self.dialog.repo_list.item(0))
-        self.assertEqual(self.dialog.pages.currentIndex(), 1)
-        self.assertTrue(self.dialog.details_page.isVisibleTo(self.dialog))
-        self.assertFalse(self.dialog.add_page.isVisibleTo(self.dialog))
-        self.assertFalse(self.dialog.remove_button.isHidden())
-        self.assertFalse(self.dialog.icon_group.isHidden())
-        self.dialog.show_list()
+        self.assertEqual(requested, [self.dialog.repo_list.item(0).data(Qt.ItemDataRole.UserRole)])
         self.assertEqual(self.dialog.pages.currentIndex(), 0)
         QTest.mouseClick(self.dialog.new_repository_button, Qt.MouseButton.LeftButton)
+        self.assertEqual(self.dialog.pages.currentIndex(), 1)
         self.assertTrue(self.dialog.add_page.isVisibleTo(self.dialog))
         self.assertTrue(self.dialog.release_preview.isHidden())
         self.assertTrue(self.dialog.icon_group.isHidden())
@@ -422,13 +420,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertTrue(self.dialog.release_preview.isVisible())
         self.assertTrue(self.dialog.icon_group.isVisible())
         self.dialog.add_repository()
-        self.assertTrue(self.dialog.details_page.isVisibleTo(self.dialog))
-        self.assertEqual(self.dialog.detail_name.text(), CUSTOM.name)
-        self.assertTrue(self.dialog.add_button.isHidden())
-        self.assertTrue(self.dialog.release_preview.isHidden())
-        self.assertTrue(self.dialog.remove_button.isVisible())
-        self.assertTrue(self.dialog.icon_group.isVisible())
-        self.assertFalse(self.dialog.url.isVisibleTo(self.dialog))
+        self.assertTrue(self.dialog.add_button.isHidden() or not self.dialog.add_button.isEnabled())
         self.dialog.show_list()
         self.assertEqual(self.dialog.pages.currentIndex(), 0)
         rows = [self.dialog.repo_list.item(n).text() for n in range(self.dialog.repo_list.count())]
@@ -445,16 +437,6 @@ class RepositoryGuiTests(unittest.TestCase):
         self.dialog.refresh_list()
         rows = [self.dialog.repo_list.item(n).text() for n in range(self.dialog.repo_list.count())]
         self.assertTrue(any(CUSTOM.repo in row and "Previews" in row for row in rows))
-
-    def test_removing_an_app_returns_to_the_list(self):
-        self.library.add_repository(CUSTOM)
-        self.dialog.refresh_list()
-        self.select_custom()
-        self.dialog.open_app(CUSTOM.id)
-        self.assertEqual(self.dialog.pages.currentIndex(), 1)
-        self.dialog.remove_repository()
-        self.assertEqual(self.dialog.pages.currentIndex(), 0)
-        self.assertNotIn(CUSTOM.id, [app.id for app in self.library.apps])
 
     def test_settings_shows_close_instead_of_save_where_changes_save_immediately(self):
         settings = SettingsDialog(self.settings, self.window, self.library)
@@ -542,8 +524,11 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn(CUSTOM.id, reopened.cards)
         self.assertEqual(reopened.library_count.text(), "15")
         self.assertIn("lightcraft", reopened.cards)
-        self.select_custom()
-        QTest.mouseClick(self.dialog.remove_button, Qt.MouseButton.LeftButton)
+        self.window.open_app(CUSTOM.id)
+        with patch(
+            "appglider.app_page.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
+        ):
+            self.window.app_page.remove_button.click()
         self.assertNotIn(CUSTOM.id, self.window.cards)
         self.assertEqual(len(self.window.cards), 14)
         self.assertEqual(self.window.library_count.text(), "14")
@@ -562,6 +547,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.assertFalse(self.dialog.add_button.isEnabled())
 
     def test_missing_appimage_or_checksum_is_reported_without_saving(self):
+        self.dialog.start_add_repository()
         self.dialog.url.setText(CUSTOM.source_url)
         with patch(
             "appglider.repositories_dialog.latest_release",
@@ -602,59 +588,12 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn(f"Icon={cached}", shortcut.read_text())
         self.assertEqual(cached.read_bytes(), second)
         self.assertFalse(self.window.tray_apps_menu.actions()[0].icon().isNull())
-        self.select_custom()
-        with patch("appglider.repositories_dialog.discover_icons", return_value=(choices[0],)):
-            self.dialog.find_existing_icons()
-            self.wait_for_task(self.dialog)
-        self.assertEqual(cached.read_bytes(), first)
-        self.assertEqual(
-            self.window.cards[CUSTOM.id].icon.pixmap().toImage().pixelColor(0, 0).name(), "#ff0000"
-        )
-        self.assertEqual(
-            Library(self.library.data_dir, self.library.apps_dir).icon_path(CUSTOM).read_bytes(),
-            first,
-        )
 
-    def test_icon_lookup_failure_still_allows_add_and_local_choice_for_existing_repo(self):
+    def test_icon_lookup_failure_still_allows_the_repository_to_be_added(self):
         with patch("appglider.repositories_dialog.discover_icons", side_effect=ValueError("quota")):
             self.inspect()
         self.dialog.add_repository()
         self.assertIn(CUSTOM, self.library.apps)
-        self.select_custom()
-        png = normalise_icon(APP_ICON.read_bytes())
-        image = self.root / "a local icon.png"
-        image.write_bytes(png)
-        with patch(
-            "appglider.repositories_dialog.QFileDialog.getOpenFileName",
-            return_value=(str(image), ""),
-        ):
-            self.dialog.choose_icon()
-        cached = self.library.icon_path(CUSTOM)
-        saved = cached.read_bytes()
-        image.write_bytes(b"broken PNG")
-        with patch(
-            "appglider.repositories_dialog.QFileDialog.getOpenFileName",
-            return_value=(str(image), ""),
-        ):
-            self.dialog.choose_icon()
-        self.assertEqual(cached.read_bytes(), saved)
-        self.assertIn("valid PNG or SVG", self.dialog.status.text())
-        for outcome, message in (
-            (ValueError("GitHub request limit reached"), "request limit"),
-            ((), "No icon found"),
-        ):
-            with (
-                self.subTest(outcome=outcome),
-                patch(
-                    "appglider.repositories_dialog.discover_icons",
-                    side_effect=outcome if isinstance(outcome, Exception) else None,
-                    return_value=outcome,
-                ),
-            ):
-                self.dialog.find_existing_icons()
-                self.wait_for_task(self.dialog)
-                self.assertIn(message, self.dialog.status.text())
-                self.assertEqual(cached.read_bytes(), saved)
 
     def test_add_multi_build_repo_remembers_choice_and_keeps_preview_preference_independent(self):
         entries = [bambu_metadata(), bambu_metadata("02.09.00.12", preview=True)]
@@ -681,40 +620,8 @@ class RepositoryGuiTests(unittest.TestCase):
             self.assertEqual(saved.build_variant, chosen_bambu().build_variant)
             self.assertEqual(self.dialog.build_combo.currentData(), saved.build_variant)
             self.assertEqual(self.window.cards[saved.id].action_button.text(), "Install")
-            self.dialog.release_channel.setCurrentIndex(1)
-            self.dialog.inspect_repository()
-            self.wait_for_task(self.dialog)
-            self.assertTrue(self.dialog.release.prerelease)
-            self.assertIn("ubuntu24.04", self.dialog.release.name)
-            self.assertEqual(self.dialog.version_label.badge.text(), "Pre-release")
-            self.dialog.choose_build()
-            self.wait_for_task(self.dialog)
-            self.dialog.build_combo.setCurrentIndex(1)
-            self.wait_for_task(self.dialog)
-            changed = next(app for app in self.library.apps if app.id == BAMBU.id)
-            self.assertTrue(changed.include_prereleases)
-            self.assertIn("ubuntu22.04", changed.build_variant)
             download.assert_not_called()
         self.assertEqual(self.library.scan(), {})
-
-    def test_failed_build_preference_save_keeps_the_old_choice_and_repository(self):
-        selected = chosen_bambu()
-        self.library.add_repository(selected)
-        self.dialog.refresh_list()
-        for row in range(self.dialog.repo_list.count()):
-            if self.dialog.repo_list.item(row).data(Qt.ItemDataRole.UserRole) == selected.id:
-                self.dialog.repo_list.setCurrentRow(row)
-                break
-        with patch.object(releases, "api_entries", return_value=[bambu_metadata()]):
-            self.dialog.choose_build()
-            self.wait_for_task(self.dialog)
-            with patch.object(self.library, "set_build_variant", side_effect=OSError("disk full")):
-                self.dialog.build_combo.setCurrentIndex(1)
-                self.wait_for_task(self.dialog)
-        self.assertIn("could not be saved", self.dialog.status.text())
-        self.assertEqual(next(app for app in self.library.apps if app.id == selected.id), selected)
-        self.assertIsNone(self.dialog.release)
-        self.assertIn(self.dialog.build_combo.currentData(), ("", selected.build_variant))
 
     def test_switching_channel_and_build_retains_repository_icons_and_selection(self):
         first = normalise_icon(APP_ICON.read_bytes())
@@ -900,31 +807,20 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertTrue(card.launch_action.isEnabled())
         self.assertEqual(self.window.updates_count.text(), "1")
         self.assertTrue(self.window.update_all_button.isHidden())
-        observed = []
-
-        def choose_available_build():
-            settings = self.qt.activeModalWidget()
-            if not isinstance(settings, SettingsDialog):
-                return
-            dialog = settings.repositories
-            try:
-                self.wait_for_task(dialog)
-                observed.append(dialog.build_combo.count())
-                dialog.build_combo.setCurrentIndex(1)
-                self.wait_for_task(dialog)
-                observed.append(dialog.status.text())
-            finally:
-                settings.reject()
-
         with (
             patch.object(releases, "api_entries", return_value=entries),
             patch("appglider.library.download") as download,
+            patch("appglider.app_page.QInputDialog.getItem") as picker,
         ):
-            QTimer.singleShot(0, choose_available_build)
             QTest.mouseClick(card.action_button, Qt.MouseButton.LeftButton)
+            self.assertIs(self.window.pages.currentWidget(), self.window.app_page)
+            self.wait_for_task(self.window)
+            picker.assert_not_called()  # one build is left, so nothing to choose between
             download.assert_not_called()
-        self.assertEqual(observed[0], 2)
-        self.assertIn("Build preference saved", observed[1])
+        self.assertEqual(
+            next(app for app in self.library.apps if app.id == selected.id).build_variant, ""
+        )
+        self.assertIn("Build preference saved", self.window.footer.text())
         self.assertEqual(self.library.scan()[selected.id], installed)
         self.assertTrue(installed.path.is_file())
         self.assertEqual(self.window.cards[selected.id].action_button.text(), "Update")
@@ -936,6 +832,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(updated.previous, installed.path)
 
     def test_close_cancels_inspection_and_waits_for_worker(self):
+        self.dialog.start_add_repository()
         self.dialog.url.setText(CUSTOM.source_url)
 
         def lookup(app, cancel, cache):
@@ -954,36 +851,9 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertTrue(stopped)
         self.assertEqual(self.library.apps, APPS)
 
-    def test_a_slow_icon_search_shows_a_moving_bar_and_live_messages(self):
-        self.library.add_repository(CUSTOM)
-        self.dialog.refresh_list()
-        self.select_custom()
-        self.assertTrue(self.dialog.busy_bar.isHidden())
-        proceed = Event()
-
-        def lookup(app, cancel, progress=None):
-            progress("Looking through LightCraft Classic's folders… 7 pages so far")
-            proceed.wait(5)
-            progress("Checking the possible icons…")
-            return ()
-
-        with patch("appglider.repositories_dialog.discover_icons", side_effect=lookup):
-            self.dialog.find_existing_icons()
-            deadline = time.monotonic() + 3
-            while "7 pages so far" not in self.dialog.status.text() and time.monotonic() < deadline:
-                QTest.qWait(10)
-            self.assertTrue(self.dialog.busy_bar.isVisibleTo(self.dialog))
-            self.assertEqual(self.dialog.busy_bar.maximum(), 0)  # "moving", time unknown
-            self.assertIn("7 pages so far", self.dialog.status.text())
-            proceed.set()
-            self.wait_for_task(self.dialog)
-        self.assertTrue(self.dialog.busy_bar.isHidden())
-        self.assertIn("No icon found", self.dialog.status.text())
-
     def test_stopping_a_search_says_so_and_late_messages_do_not_hide_it(self):
-        self.library.add_repository(CUSTOM)
-        self.dialog.refresh_list()
-        self.select_custom()
+        self.dialog.start_add_repository()
+        self.dialog.url.setText(CUSTOM.source_url)
         release = Event()
 
         def lookup(app, cancel, progress=None):
@@ -992,8 +862,11 @@ class RepositoryGuiTests(unittest.TestCase):
             check_cancel(cancel)
             return ()
 
-        with patch("appglider.repositories_dialog.discover_icons", side_effect=lookup):
-            self.dialog.find_existing_icons()
+        with (
+            patch("appglider.repositories_dialog.latest_release", return_value=custom_release()),
+            patch("appglider.repositories_dialog.discover_icons", side_effect=lookup),
+        ):
+            self.dialog.inspect_repository()
             self.dialog.stop()
             self.assertEqual(self.dialog.status.text(), "Stopping… one moment.")
             release.set()
@@ -1025,27 +898,6 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn("3 pages so far", shown[0])
         self.assertTrue(self.dialog.busy_bar.isHidden())
 
-    def test_close_cancels_icon_lookup_for_an_existing_repository(self):
-        self.library.add_repository(CUSTOM)
-        self.dialog.refresh_list()
-        self.select_custom()
-
-        def lookup(app, cancel, progress=None):
-            cancel.wait(timeout=1)
-            check_cancel(cancel)
-            return ()
-
-        with patch("appglider.repositories_dialog.discover_icons", side_effect=lookup):
-            self.dialog.find_existing_icons()
-            task = self.dialog.task
-            stopped = []
-            self.dialog.stopped.connect(lambda: stopped.append(True))
-            self.dialog.stop()
-            self.assertTrue(task.cancel.is_set())
-            self.wait_for_task(self.dialog)
-        self.assertTrue(stopped)
-        self.assertEqual(self.library.icon_path(CUSTOM), APP_ICON)
-
     def test_icon_save_failure_does_not_undo_repository_addition(self):
         png = normalise_icon(APP_ICON.read_bytes())
         with patch(
@@ -1076,10 +928,11 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn(
             CUSTOM.name, [action.text() for action in self.window.tray_apps_menu.actions()]
         )
-        self.select_custom()
-        self.dialog.remove_repository()
-        self.assertIn("Uninstall", self.dialog.status.text())
+        self.window.open_app(CUSTOM.id)
+        self.assertFalse(self.window.app_page.remove_button.isEnabled())
+        self.assertIn("Uninstall", self.window.app_page.remove_row.hint.text())
         self.assertIn(CUSTOM, self.library.apps)
+        self.window.app_page.back_button.click()
         release = custom_release("0.9.5")
         info = ReleaseInfo(ReleaseOption(release.version, release), None, time.time())
         with patch("appglider.window.discover_releases", return_value=info) as discover:
@@ -1106,7 +959,11 @@ class RepositoryGuiTests(unittest.TestCase):
             self.window.remove_app(CUSTOM.id)
             self.wait_for_task(self.window)
         self.assertEqual(self.window.filter_installed.text(), "Installed (0)")
-        self.dialog.remove_repository()
+        self.window.open_app(CUSTOM.id)
+        with patch(
+            "appglider.app_page.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
+        ):
+            self.window.app_page.remove_button.click()
         self.assertNotIn(CUSTOM.id, self.window.cards)
         self.assertEqual(self.library.scan(), {})
 
@@ -1138,44 +995,6 @@ class RepositoryGuiTests(unittest.TestCase):
         reopened = Library(self.library.data_dir, self.library.apps_dir)
         self.assertTrue(reopened.apps[-1].include_prereleases)
         self.assertEqual(self.dialog.release_channel.currentIndex(), 1)
-
-    def test_existing_preferences_clear_old_results_and_update_icons_and_release(self):
-        self.library.add_repository(CUSTOM)
-        self.dialog.refresh_list()
-        self.select_custom()
-        stable = custom_release()
-        self.window.releases[CUSTOM.id] = stable
-        self.window.check_errors[CUSTOM.id] = "Old failure"
-        self.dialog.release_channel.setCurrentIndex(1)
-        self.assertNotIn(CUSTOM.id, self.window.releases)
-        self.assertNotIn(CUSTOM.id, self.window.check_errors)
-        self.assertTrue(self.window.cards[CUSTOM.id].app.include_prereleases)
-        self.assertEqual(self.dialog.icon_target, self.dialog.selected_app)
-        self.dialog.select_icon(self.dialog.icon_choices.count() - 1)
-        self.assertIn("Saved icon", self.dialog.status.text())
-        beta = replace(custom_release("0.10.0-beta.1"), prerelease=True, is_latest=False)
-        with patch("appglider.releases.api_release", return_value=beta):
-            self.dialog.inspect_repository()
-            self.wait_for_task(self.dialog)
-        self.assertEqual(self.window.releases[CUSTOM.id], beta)
-        self.assertEqual(self.window.cards[CUSTOM.id].chip.text(), "Not installed")
-        self.assertEqual(self.dialog.version_label.badge.text(), "Pre-release")
-        self.dialog.release_channel.setCurrentIndex(0)
-        self.assertNotIn(CUSTOM.id, self.window.releases)
-        self.assertFalse(self.window.cards[CUSTOM.id].app.include_prereleases)
-
-    def test_release_preference_saves_for_an_example_catalog_app(self):
-        selected = self.dialog.selected_app
-        self.assertIn(selected.id, {app.id for app in APPS})
-        self.dialog.release_channel.setCurrentIndex(1)
-        self.assertTrue(self.window.cards[selected.id].app.include_prereleases)
-        self.assertEqual(self.dialog.icon_target.id, selected.id)
-        self.assertFalse(self.dialog.remove_button.isHidden())
-        self.assertFalse(self.dialog.icon_group.isHidden())
-        with patch("appglider.repositories_dialog.latest_release", return_value=custom_release()):
-            self.dialog.inspect_repository()
-            self.wait_for_task(self.dialog)
-        self.assertIsNone(self.dialog.task)
 
     def test_direct_add_app_opens_the_add_form(self):
         observed = []

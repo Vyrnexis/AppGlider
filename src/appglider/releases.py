@@ -10,6 +10,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, replace
+from datetime import date
 from html.parser import HTMLParser
 from http.client import HTTPException, HTTPMessage
 from pathlib import Path
@@ -35,6 +36,7 @@ _ETAG_LOCK = Lock()
 _ETAG_FILE: Path | None = None
 
 MAX_METADATA = 4 * 1024 * 1024
+MAX_NOTES = 20_000
 MAX_DOWNLOAD = 4 * 1024 * 1024 * 1024
 DOWNLOAD_CHUNK = 1024 * 1024
 PROGRESS_INTERVAL = 0.1
@@ -480,6 +482,8 @@ class Release:
     sha256: str
     prerelease: bool = False
     is_latest: bool = True
+    notes: str = ""
+    published: str = ""
 
     def newer_than(self, installed_version: str | None) -> bool:
         return installed_version is not None and version_key(self.version) > version_key(
@@ -640,8 +644,32 @@ def select_release(app: App, data: object, arch: str) -> Release:
     if not re.fullmatch(r"[a-fA-F0-9]{64}", sha256):
         sha256 = ""
     return Release(
-        version, name, url, size, sha256.lower(), prerelease, is_latest and not prerelease
+        version,
+        name,
+        url,
+        size,
+        sha256.lower(),
+        prerelease,
+        is_latest and not prerelease,
+        release_notes(data.get("body")),
+        published_date(data.get("published_at")),
     )
+
+
+def release_notes(value: object) -> str:
+    """Return the release description, bounded; anything that is not text is ignored."""
+    return value[:MAX_NOTES] if isinstance(value, str) else ""
+
+
+def published_date(value: object) -> str:
+    """Return the YYYY-MM-DD date of an ISO timestamp, or an empty string when invalid."""
+    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:[T ][\w:.+-]{0,32})?", value):
+        try:
+            date.fromisoformat(value[:10])
+        except ValueError:
+            return ""
+        return value[:10]
+    return ""
 
 
 def checksums(text: str) -> dict[str, str]:
@@ -940,6 +968,8 @@ def release_from_cache(app: App, item: Any) -> Release:
             "tag_name": tag,
             "prerelease": item.get("prerelease", False),
             "is_latest": item.get("is_latest", True),
+            "body": item.get("notes", ""),
+            "published_at": item.get("published", ""),
             "assets": [
                 {
                     "name": item["name"],

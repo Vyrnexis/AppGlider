@@ -82,7 +82,10 @@ from appglider import (
     APP_VERSION,
     github_status,
 )
+from appglider.app_page import AppPage
+from appglider.app_status import app_status
 from appglider.catalog import App
+from appglider.controls import repolish
 from appglider.icons import icon_pixmap
 from appglider.jobs import Task, TaskResult
 from appglider.library import Installed, Library, Orphan
@@ -105,11 +108,9 @@ from appglider.releases import (
     latest_release,
     release_cache_path,
     restore_rate_limits,
-    variant_label,
     version_key,
 )
 from appglider.repositories_dialog import RepositoriesPanel
-from appglider.version_label import VersionLabel
 
 SIDEBAR_WIDTH = 210
 CHECK_TOOLTIP = "Check for updates"
@@ -260,12 +261,6 @@ ORDER_MIME = "application/x-appglider-app"
 DRAG_SCROLL_MARGIN = 28
 
 
-def repolish(widget: QWidget) -> None:
-    """Re-apply the stylesheet after a dynamic property or object name changed."""
-    widget.style().unpolish(widget)
-    widget.style().polish(widget)
-
-
 class ElidedLabel(QLabel):
     """One line of plain text that is cut with an ellipsis instead of widening its row."""
 
@@ -301,7 +296,6 @@ class AppRow(QFrame):
     rollback_requested = Signal(str)
     hold_requested = Signal(str)
     remove_requested = Signal(str)
-    preferences_requested = Signal(str)
     pin_requested = Signal(str)
     build_requested = Signal(str)
     cancel_requested = Signal(str)
@@ -391,7 +385,7 @@ class AppRow(QFrame):
         more.setToolTip(f"More actions for {app.name}")
         more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(more)
-        menu.addAction("View details").triggered.connect(
+        menu.addAction("Open details").triggered.connect(
             lambda: self.details_requested.emit(app.id)
         )
         self.launch_action = menu.addAction("Launch")
@@ -407,8 +401,6 @@ class AppRow(QFrame):
         self.move_down_action.triggered.connect(lambda: self.move_requested.emit(app.id, 1))
         self.move_up_action.setEnabled(False)
         self.move_down_action.setEnabled(False)
-        self.preferences_action = menu.addAction("Application preferences…")
-        self.preferences_action.triggered.connect(lambda: self.preferences_requested.emit(app.id))
         self.hold_action = menu.addAction("Hold at current version")
         self.hold_action.triggered.connect(lambda: self.hold_requested.emit(app.id))
         menu.addSeparator()
@@ -470,37 +462,11 @@ class AppRow(QFrame):
         working: str = "",
     ) -> None:
         self.installed = installed
-        held = bool(installed and self.app.hold_updates)
-        newer_release = bool(installed and release and release.newer_than(installed.version))
-        newer = newer_release and not held
-        choice = info.choice(self.app.include_prereleases) if info else None
-        self.build_required = bool(choice and choice.build_required) and not held
-        pending = ""
-        if held and installed:
-            if newer_release and release:
-                pending = release.version
-            elif (
-                choice
-                and choice.build_required
-                and version_key(choice.version) > version_key(installed.version)
-            ):
-                pending = choice.version
-        waiting = bool(
-            installed
-            and installed.prerelease
-            and not self.app.include_prereleases
-            and (info is not None or release is not None)
-            and not newer
-            and (release is None or release.version != installed.version)
+        status = app_status(
+            self.app, installed, release, error, info, refreshing, refresh_error, working
         )
-        if working:
-            self.mode = "cancel"
-        elif installed and self.build_required:
-            self.mode = "build"
-        elif newer:
-            self.mode = "update"
-        else:
-            self.mode = "launch" if installed else "install"
+        self.build_required = status.build_required
+        self.mode = status.mode
         self.rollback_action.setEnabled(
             bool(
                 not busy
@@ -518,63 +484,10 @@ class AppRow(QFrame):
             bool(not busy and (self.app.hold_updates or (installed and installed.managed)))
         )
         self.shortcut_action.setEnabled(bool(not busy and installed and installed.managed))
-        self.preferences_action.setEnabled(not busy)
         self.launch_action.setEnabled(installed is not None)
         self.set_action(release)
         self.action_button.setEnabled(self.mode in ("cancel", "launch") or not busy)
-        stamp = datetime.fromtimestamp(info.checked_at).strftime("%d %b, %H:%M") if info else ""
-        details: list[str] = []
-        if working:
-            state, text = "busy", f"{working}…"
-        elif self.mode == "build":
-            state, text = "build", "Choose build"
-            details.append("Choose a build before updating")
-        elif self.mode == "update" and release:
-            state, text = "update", f"↑ {release.version}"
-            details.append(f"Update available: v{release.version}")
-        elif held and installed:
-            state, text = "held", f"‖ Held · {pending} out" if pending else "‖ Held"
-            details.append(
-                f"Held at v{installed.version} · v{pending} available"
-                if pending
-                else f"Held at v{installed.version}"
-            )
-        elif refreshing:
-            state, text = "none", "Checking…"
-            details.append("Refreshing releases…")
-        elif installed and (refresh_error or (error and release is None)):
-            state, text = "failed", "Check failed"
-        elif waiting:
-            state, text = "preview", "Waiting for stable"
-            details.append("Waiting for a newer stable release")
-        elif installed and installed.prerelease:
-            state, text = "preview", "Preview channel"
-            details.append("A preview version, which may be less reliable.")
-        elif installed and (release or choice):
-            state, text = "ok", "✓ Up to date"
-        elif installed and info and info.stable is None:
-            state, text = "none", "Only previews"
-            details.append("Only previews are available; enable previews to use them.")
-        elif installed:
-            state, text = "none", "Not checked"
-        else:
-            state, text = "none", "Not installed"
-        if release and state != "busy":
-            if release.prerelease:
-                details.append(f"v{release.version} is a pre-release.")
-            elif release.is_latest:
-                details.append(f"v{release.version} is GitHub's latest release.")
-        if refresh_error or error:
-            details.append(refresh_error or error)
-        if not installed:
-            details.append("Release checked when installing")
-        elif stamp:
-            details.append(
-                f"Last checked {stamp}" + (" · refresh needed" if info and not info.fresh() else "")
-            )
-        else:
-            details.append("Release information not checked")
-        self.set_chip(state, text, "\n".join(details))
+        self.set_chip(status.state, status.text, status.tooltip)
         if installed:
             self.installed_version.setText(f"v{installed.version}" if installed.version else "?")
             self.installed_version.setToolTip(
@@ -751,162 +664,6 @@ class AppList(QFrame):
             return
         event.acceptProposedAction()
         self.row_dropped.emit(row.app.id, self.drop_index(row, event.position().toPoint()))
-
-
-class DetailsDialog(QDialog):
-    check_requested = Signal()
-
-    def __init__(
-        self,
-        app: App,
-        parent: QWidget,
-        installed: Installed | None = None,
-        release: Release | None = None,
-        error: str = "",
-        icon_path: Path | None = None,
-        release_info: ReleaseInfo | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.app = app
-        self.installed = installed
-        self.setWindowTitle(f"About {app.name}")
-        self.setMinimumWidth(440)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 28, 28, 24)
-        layout.setSpacing(18)
-        heading = QHBoxLayout()
-        heading.addWidget(icon_label(app, 64, icon_path))
-        title = QLabel(app.name)
-        title.setTextFormat(Qt.TextFormat.PlainText)
-        title.setObjectName("pageTitle")
-        heading.addWidget(title)
-        heading.addStretch()
-        layout.addLayout(heading)
-        description = QLabel(app.description)
-        description.setTextFormat(Qt.TextFormat.PlainText)
-        description.setWordWrap(True)
-        layout.addWidget(description)
-        info = QFormLayout()
-        repo = QLabel(app.repo)
-        repo.setTextFormat(Qt.TextFormat.PlainText)
-        repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        info.addRow("Repository", repo)
-        info.addRow("Format", QLabel("Linux AppImage"))
-        if app.build_variant:
-            build = QLabel(variant_label(app.build_variant))
-            build.setTextFormat(Qt.TextFormat.PlainText)
-            build.setWordWrap(True)
-            info.addRow("Selected build", build)
-        self.installed_label = VersionLabel()
-        info.addRow("Installed version", self.installed_label)
-        self.available_label = VersionLabel()
-        info.addRow("Available release", self.available_label)
-        info.addRow(
-            "Release preference",
-            QLabel(
-                "Stable and prerelease versions"
-                if app.include_prereleases
-                else "Stable releases only"
-            ),
-        )
-        self.hold_label = QLabel()
-        self.hold_label.setTextFormat(Qt.TextFormat.PlainText)
-        info.addRow("Updates", self.hold_label)
-        self.stable_label = VersionLabel()
-        self.preview_label = VersionLabel()
-        info.addRow("Stable release", self.stable_label)
-        info.addRow("Preview release", self.preview_label)
-        self.release_form = info
-        if installed:
-            location = QLabel(str(installed.path))
-            location.setWordWrap(True)
-            location.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            info.addRow("Location", location)
-            filename = QLabel(installed.path.name)
-            filename.setTextFormat(Qt.TextFormat.PlainText)
-            filename.setWordWrap(True)
-            info.addRow("Installed file", filename)
-        layout.addLayout(info)
-        self.note = QLabel()
-        self.note.setObjectName("muted")
-        self.note.setWordWrap(True)
-        layout.addWidget(self.note)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        self.check_button = buttons.addButton(
-            "Check releases", QDialogButtonBox.ButtonRole.ActionRole
-        )
-        self.check_button.clicked.connect(self.check_requested.emit)
-        source = buttons.addButton("Open repository", QDialogButtonBox.ButtonRole.ActionRole)
-        source.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(app.source_url)))
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        self.set_release_info(release, release_info, error)
-
-    def set_release_info(
-        self, release: Release | None, info: ReleaseInfo | None, error: str = ""
-    ) -> None:
-        installed = self.installed
-        latest = info.stable.release if info and info.stable else release
-        self.installed_label.set_version(
-            installed.version or "Unknown" if installed else "Not installed",
-            bool(installed and installed.prerelease),
-            bool(installed and latest and installed.version == latest.version and latest.is_latest),
-        )
-        self.available_label.set_version(
-            release.version if release else "Not checked" if info is None else "Unavailable",
-            bool(release and release.prerelease),
-            bool(release and release.is_latest),
-        )
-        self.available_label.setToolTip(release.name if release else "")
-        held = bool(installed and self.app.hold_updates)
-        self.release_form.setRowVisible(self.hold_label, held)
-        if held and installed:
-            text = f"Held at v{installed.version or 'unknown'}"
-            choice = info.choice(self.app.include_prereleases) if info else None
-            if release and release.newer_than(installed.version):
-                text += f" · v{release.version} available"
-            elif (
-                choice
-                and choice.build_required
-                and version_key(choice.version) > version_key(installed.version)
-            ):
-                text += f" · v{choice.version} available"
-            self.hold_label.setText(text)
-        for label, option in (
-            (self.stable_label, info.stable if info else None),
-            (self.preview_label, info.preview if info else None),
-        ):
-            self.release_form.setRowVisible(
-                label, option is not None and (release is None or option.version != release.version)
-            )
-            if option:
-                label.set_version(
-                    option.version + (" · unavailable" if option.release is None else ""),
-                    bool(option.release and option.release.prerelease),
-                    bool(option.release and option.release.is_latest),
-                )
-                label.setToolTip(option.error)
-        self.note.setText(
-            error
-            or "Check releases to inspect stable and preview versions without downloading an app."
-        )
-
-    def release_check_finished(self, result: TaskResult) -> None:
-        info = result.release_infos.get(self.app.id)
-        if info:
-            choice = info.choice(self.app.include_prereleases)
-            self.set_release_info(
-                choice.release if choice else None, info, info.error(self.app.include_prereleases)
-            )
-        else:
-            self.note.setText(result.message)
-        self.check_button.setEnabled(True)
-        self.check_button.setText("Check releases")
-
-    def release_check_failed(self, error: str) -> None:
-        self.note.setText(error)
-        self.check_button.setEnabled(True)
-        self.check_button.setText("Check releases")
 
 
 class OrphansDialog(QDialog):
@@ -1394,10 +1151,21 @@ class LauncherWindow(QMainWindow):
         side.addWidget(self.version_button, alignment=Qt.AlignmentFlag.AlignLeft)
         shell_layout.addWidget(sidebar)
         body = QWidget()
-        layout = QVBoxLayout(body)
-        layout.setContentsMargins(24, 20, 24, 12)
-        layout.setSpacing(14)
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
         shell_layout.addWidget(body, stretch=1)
+        self.pages = QStackedWidget()
+        body_layout.addWidget(self.pages, stretch=1)
+        list_widget = QWidget()
+        layout = QVBoxLayout(list_widget)
+        layout.setContentsMargins(24, 20, 24, 0)
+        layout.setSpacing(14)
+        self.pages.addWidget(list_widget)
+        self.app_page = AppPage(self)
+        self.app_page.back_requested.connect(self.close_app)
+        self.pages.addWidget(self.app_page)
+        self.list_scroll = 0
         toolbar = QHBoxLayout()
         toolbar.setSpacing(10)
         self.page_title = QLabel("Library")
@@ -1530,7 +1298,9 @@ class LauncherWindow(QMainWindow):
         self.footer.setObjectName("footer")
         self.footer.setTextFormat(Qt.TextFormat.PlainText)
         self.footer.setWordWrap(True)
-        progress_row = QHBoxLayout()
+        status_line = QWidget()
+        progress_row = QHBoxLayout(status_line)
+        progress_row.setContentsMargins(24, 0, 24, 12)
         progress_row.addWidget(self.footer, stretch=1)
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedWidth(170)
@@ -1545,7 +1315,7 @@ class LauncherWindow(QMainWindow):
         self.orphans_button.clicked.connect(self.review_orphans)
         self.orphans_button.hide()
         progress_row.addWidget(self.orphans_button)
-        layout.addLayout(progress_row)
+        body_layout.addWidget(status_line)
         self.cards: dict[str, AppRow] = {}
         self.search.textChanged.connect(self.refresh)
         self.filter_installed.toggled.connect(self.refresh)
@@ -1667,13 +1437,12 @@ class LauncherWindow(QMainWindow):
     def create_row(self, app: App) -> AppRow:
         card = AppRow(app, self.library.icon_path(app))
         card.setParent(self.app_list)
-        card.details_requested.connect(self.open_details)
+        card.details_requested.connect(self.open_app)
         card.launch_requested.connect(self.launch_app)
         card.install_requested.connect(self.install_app)
         card.shortcut_requested.connect(self.create_shortcut)
         card.rollback_requested.connect(self.rollback_app)
         card.remove_requested.connect(self.remove_app)
-        card.preferences_requested.connect(lambda app_id: self.open_repositories(app_id=app_id))
         card.pin_requested.connect(self.toggle_pin)
         card.hold_requested.connect(self.toggle_hold)
         card.build_requested.connect(self.choose_build)
@@ -1882,6 +1651,11 @@ class LauncherWindow(QMainWindow):
         self.welcome_add_button.setEnabled(self.task is None)
         self.welcome_import_button.setEnabled(self.task is None)
         self.welcome_example_button.setEnabled(self.task is None)
+        if self.app_page.app_id is not None:
+            if any(app.id == self.app_page.app_id for app in self.apps):
+                self.app_page.refresh()
+            else:
+                self.close_app()
         if query:
             self.empty.setText(
                 "No apps match your search in this view.\nTry another name or clear the search."
@@ -1906,6 +1680,7 @@ class LauncherWindow(QMainWindow):
         if view not in ("library", "updates"):
             raise ValueError(f"Unknown view: {view}")
         self.view = view
+        self.close_app()
         (self.nav_updates if view == "updates" else self.nav_library).setChecked(True)
         self.page_title.setText("Updates" if view == "updates" else "Library")
         self.filters.setVisible(view == "library")
@@ -1933,44 +1708,34 @@ class LauncherWindow(QMainWindow):
             tail = names[0]
         return f"{lead} {tail}."
 
-    def open_details(self, app_id: str) -> None:
-        app = next(app for app in self.apps if app.id == app_id)
-        dialog = DetailsDialog(
-            app,
-            self,
-            self.installed.get(app_id),
-            self.releases.get(app_id),
-            self.check_errors.get(app_id, ""),
-            icon_path=self.library.icon_path(app),
-            release_info=self.release_infos.get(app_id),
+    def open_app(self, app_id: str) -> None:
+        """Show the App page; the sidebar keeps the view it was opened from."""
+        if not any(app.id == app_id for app in self.apps):
+            return
+        if self.pages.currentWidget() is not self.app_page:
+            self.list_scroll = self.scroll_area.verticalScrollBar().value()
+        self.app_page.show_app(app_id, "Updates" if self.view == "updates" else "Library")
+        self.pages.setCurrentWidget(self.app_page)
+        self.app_page.back_button.setFocus()
+
+    open_details = open_app
+
+    def close_app(self) -> None:
+        """Return to the list with the view, filter, search and scroll position as they were."""
+        if self.pages.currentWidget() is not self.app_page:
+            return
+        self.app_page.app_id = None
+        self.pages.setCurrentIndex(0)
+        QTimer.singleShot(
+            0, self, lambda: self.scroll_area.verticalScrollBar().setValue(self.list_scroll)
         )
-        dialog.check_button.setEnabled(self.task is None)
-
-        def check_releases() -> None:
-            if self.task is not None:
-                return
-
-            def operation(cancel: Event, progress: Progress) -> TaskResult:
-                info = discover_releases(
-                    app, cancel, self.library.data_dir / "release-cache", force=True
-                )
-                return TaskResult("Release checked.", release_infos={app.id: info})
-
-            dialog.check_button.setEnabled(False)
-            dialog.check_button.setText("Checking…")
-            self.start_task(f"Checking releases for {app.name}…", operation, details=dialog)
-
-        dialog.check_requested.connect(check_releases)
-        dialog.exec()
-        dialog.deleteLater()
+        self.scroll_area.verticalScrollBar().setValue(self.list_scroll)
 
     def open_settings(
         self,
         section: int = 0,
         *,
         adding: bool = False,
-        app_id: str | None = None,
-        choose_build: bool = False,
         import_catalog: bool = False,
         import_example: bool = False,
     ) -> None:
@@ -1982,6 +1747,13 @@ class LauncherWindow(QMainWindow):
         panel = dialog.repositories
         panel.setEnabled(self.task is None)
         panel.catalog_changed.connect(self.catalog_changed)
+        requested: list[str] = []
+
+        def app_requested(app_id: str) -> None:
+            requested.append(app_id)
+            dialog.accept()
+
+        panel.app_requested.connect(app_requested)
         dialog.sections.setCurrentRow(section)
         dialog.theme.currentTextChanged.connect(
             lambda theme: self.apply_theme(theme, dialog.accent.currentText())
@@ -1991,10 +1763,6 @@ class LauncherWindow(QMainWindow):
         )
         if adding:
             panel.start_add_repository()
-        elif app_id:
-            panel.open_app(app_id)
-            if choose_build:
-                panel.choose_build()
         if import_catalog:
             QTimer.singleShot(0, panel.import_catalog)
         elif import_example:
@@ -2015,9 +1783,13 @@ class LauncherWindow(QMainWindow):
             self.library.apps_dir = Path(dialog.folder.text())
             self.apply_theme()
             self.scan_installed()
+            if requested:
+                self.open_app(requested[0])
 
     def choose_build(self, app_id: str) -> None:
-        self.open_repositories(app_id=app_id, choose_build=True)
+        """Open the App page and ask which build of the app to use."""
+        self.open_app(app_id)
+        self.app_page.choose_build()
 
     def review_orphans(self) -> None:
         if self.task is not None:
@@ -2034,9 +1806,7 @@ class LauncherWindow(QMainWindow):
     def open_repositories(
         self,
         adding: bool = False,
-        app_id: str | None = None,
         *,
-        choose_build: bool = False,
         import_catalog: bool = False,
         import_example: bool = False,
     ) -> None:
@@ -2044,8 +1814,6 @@ class LauncherWindow(QMainWindow):
             self.open_settings(
                 1,
                 adding=adding,
-                app_id=app_id,
-                choose_build=choose_build,
                 import_catalog=import_catalog,
                 import_example=import_example,
             )
@@ -2164,19 +1932,20 @@ class LauncherWindow(QMainWindow):
         message: str,
         operation: Callable[[Event, Progress], TaskResult],
         *,
-        details: DetailsDialog | None = None,
+        page: AppPage | None = None,
         working: dict[str, str] | None = None,
     ) -> None:
         if self.task is not None:
             return
         self.working = working or {}
         self.task = Task(operation)
-        if details is not None:
-            self.task.signals.finished.connect(details.release_check_finished)
-            self.task.signals.failed.connect(details.release_check_failed)
         self.task.signals.progress.connect(self.task_progress)
         self.task.signals.finished.connect(self.task_finished)
         self.task.signals.failed.connect(self.task_failed)
+        if page is not None:
+            # After the window's own handlers, so the page sees the settled state.
+            self.task.signals.finished.connect(page.task_done)
+            self.task.signals.failed.connect(page.task_error)
         self.footer.setText(message)
         self.progress_bar.setRange(0, 0)
         self.progress_bar.show()
@@ -2185,6 +1954,20 @@ class LauncherWindow(QMainWindow):
         self.cancel_button.show()
         self.refresh()
         QThreadPool.globalInstance().start(self.task)
+
+    def check_releases(self, app_id: str, page: AppPage | None = None) -> None:
+        """A full release check of one app, even an uninstalled one (never downloads the app)."""
+        app = next((app for app in self.apps if app.id == app_id), None)
+        if app is None or self.task is not None:
+            return
+
+        def operation(cancel: Event, progress: Progress) -> TaskResult:
+            info = discover_releases(
+                app, cancel, self.library.data_dir / "release-cache", force=True
+            )
+            return TaskResult("Release checked.", release_infos={app.id: info})
+
+        self.start_task(f"Checking releases for {app.name}…", operation, page=page)
 
     def create_shortcut(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
@@ -2511,6 +2294,8 @@ class LauncherWindow(QMainWindow):
             (QPalette.ColorRole.Highlight, accent),
             (QPalette.ColorRole.HighlightedText, on_accent),
             (QPalette.ColorRole.PlaceholderText, muted),
+            (QPalette.ColorRole.Link, accent),
+            (QPalette.ColorRole.LinkVisited, accent),
         ):
             palette.setColor(role, QColor(color))
         palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(muted))
@@ -2618,7 +2403,38 @@ class LauncherWindow(QMainWindow):
             QPushButton#primary:hover {{ border-color: {foreground}; }}
             QPushButton#primary:disabled {{ background: {surface}; color: {muted};
                 border-color: {border}; }}
-            QPushButton#danger {{ color: {danger}; }}
+            QPushButton#danger {{ color: {danger}; border-color: {tint(danger, 0.45)}; }}
+            QPushButton#danger:hover {{ color: {danger}; border-color: {danger}; }}
+            QFrame#panel {{ background: {surface}; border: 1px solid {border};
+                border-radius: 10px; }}
+            QFrame#dangerPanel {{ background: {tint(danger, 0.06)};
+                border: 1px solid {tint(danger, 0.35)}; border-radius: 10px; }}
+            QLabel#panelTitle {{ color: {muted}; font-size: 13px; font-weight: 600; }}
+            QLabel#dangerTitle {{ color: {danger}; font-size: 13px; font-weight: 600; }}
+            QLabel#appTitle {{ font-size: 22px; font-weight: 700; }}
+            QLabel#settingLabel {{ font-weight: 600; }}
+            QLabel#settingHint {{ color: {faint}; font-size: 12px; }}
+            QLabel#captionLabel {{ color: {muted}; font-size: 13px; }}
+            QLabel#versionValue {{ color: {foreground}; font-size: 13px; }}
+            QLabel#releaseTitle {{ font-weight: 600; }}
+            QPushButton#linkButton {{ background: transparent; border: 2px solid transparent;
+                color: {accent}; padding: 2px 2px; text-align: left; }}
+            QPushButton#linkButton:hover {{ text-decoration: underline;
+                border-color: transparent; }}
+            QPushButton#linkButton:focus {{ border: 2px solid {accent}; }}
+            QPushButton#linkButton:disabled {{ background: transparent; color: {faint}; }}
+            QTextBrowser#notes {{ background: transparent; border: none; color: {foreground}; }}
+            QFrame#segmented {{ background: {surface2}; border: 1px solid {border};
+                border-radius: 9px; }}
+            QPushButton#segmentedButton {{ background: transparent; color: {muted};
+                border: 2px solid transparent; border-radius: 7px; padding: 4px 8px; }}
+            QPushButton#segmentedButton:hover {{ color: {foreground}; border-color: transparent; }}
+            QPushButton#segmentedButton:checked {{ background: {raised}; color: {foreground}; }}
+            QPushButton#segmentedButton:focus {{ border: 2px solid {accent}; }}
+            QPushButton#segmentedButton:disabled {{ background: transparent; color: {faint}; }}
+            QPushButton#segmentedButton:checked:disabled {{ background: {raised}; }}
+            QAbstractButton#switch {{ qproperty-trackOn: {accent}; qproperty-trackOff: {raised};
+                qproperty-knob: {on_accent}; qproperty-ring: {accent}; }}
             QLabel#pinStar {{ color: {PIN_COLOUR}; font-size: 15px; }}
             QPushButton#appName {{ border: none; padding: 0; text-align: left;
                 font-size: 14px; font-weight: 600; background: transparent; }}

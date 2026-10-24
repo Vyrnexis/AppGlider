@@ -1,6 +1,5 @@
 """Inspect and save custom GitHub repositories without blocking the desktop UI."""
 
-from dataclasses import replace
 from pathlib import Path
 from threading import Event
 
@@ -133,17 +132,17 @@ class ChannelChoice(QWidget):
 
 
 class RepositoriesPanel(QWidget):
-    """The Applications page of Settings: repositories, releases, builds and icons."""
+    """The Applications page of Settings: the list of apps and the add-an-application flow."""
 
     catalog_changed = Signal()
     stopped = Signal()
+    app_requested = Signal(str)
 
     def __init__(self, library: Library, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.library = library
         self.task: Task | None = None
         self.candidate: App | None = None
-        self.selected_app: App | None = None
         self.release: Release | None = None
         self.icon_target: App | None = None
         self.icon_options: tuple[IconCandidate, ...] = ()
@@ -169,7 +168,7 @@ class RepositoriesPanel(QWidget):
         title = QLabel("Your applications")
         title.setObjectName("sectionTitle")
         heading.addWidget(title)
-        self.list_hint = QLabel("Choose an app to change its updates, build or icon.")
+        self.list_hint = QLabel("Choose an app to open its page.")
         self.list_hint.setObjectName("muted")
         heading.addWidget(self.list_hint)
         toolbar.addLayout(heading, stretch=1)
@@ -200,7 +199,6 @@ class RepositoriesPanel(QWidget):
         self.repo_list.setObjectName("repositories")
         self.repo_list.setAccessibleName("Repositories")
         self.repo_list.setIconSize(QSize(40, 40))
-        self.repo_list.currentRowChanged.connect(self.select_repository)
         self.repo_list.itemClicked.connect(self.open_item)
         self.repo_list.itemActivated.connect(self.open_item)
         list_layout.addWidget(self.repo_list, stretch=1)
@@ -213,7 +211,7 @@ class RepositoriesPanel(QWidget):
         list_layout.addWidget(self.list_empty, stretch=1)
         self.pages.addWidget(list_page)
 
-        # Page 1: one application, or the add-an-application flow.
+        # Page 1: the add-an-application flow.
         detail_page = QWidget()
         detail_layout = QVBoxLayout(detail_page)
         detail_layout.setContentsMargins(0, 0, 0, 0)
@@ -234,30 +232,6 @@ class RepositoriesPanel(QWidget):
         self.editor_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.editor_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.editor_scroll.setWidget(editor_widget)
-        self.details_page = QWidget()
-        details = QVBoxLayout(self.details_page)
-        details.setContentsMargins(0, 0, 0, 0)
-        details.setSpacing(12)
-        selected = QHBoxLayout()
-        selected.setSpacing(14)
-        self.detail_icon = QLabel()
-        self.detail_icon.setFixedSize(64, 64)
-        selected.addWidget(self.detail_icon)
-        identity = QVBoxLayout()
-        self.detail_name = QLabel()
-        self.detail_name.setObjectName("sectionTitle")
-        self.detail_name.setTextFormat(Qt.TextFormat.PlainText)
-        self.detail_name.setWordWrap(True)
-        self.detail_source = QLabel()
-        self.detail_source.setObjectName("muted")
-        self.detail_source.setTextFormat(Qt.TextFormat.PlainText)
-        self.detail_source.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.detail_source.setWordWrap(True)
-        identity.addWidget(self.detail_name)
-        identity.addWidget(self.detail_source)
-        selected.addLayout(identity, stretch=1)
-        details.addLayout(selected)
-        detail_layout.addWidget(self.details_page)
         self.add_page = QWidget()
         add_layout = QVBoxLayout(self.add_page)
         add_layout.setContentsMargins(0, 0, 0, 0)
@@ -284,7 +258,6 @@ class RepositoriesPanel(QWidget):
         add_layout.addLayout(form)
         detail_layout.addWidget(self.add_page)
         detail_layout.addWidget(self.editor_scroll, stretch=1)
-        self.add_page.hide()
         release_options = QGroupBox("Updates")
         options_layout = QVBoxLayout(release_options)
         self.release_channel = ChannelChoice()
@@ -296,13 +269,7 @@ class RepositoriesPanel(QWidget):
         )
         release_note.setWordWrap(True)
         release_note.setObjectName("muted")
-        note_row = QHBoxLayout()
-        note_row.addWidget(release_note, stretch=1)
-        self.check_release_button = QPushButton("Check now")
-        self.check_release_button.setToolTip("Look up the release this app would update to.")
-        self.check_release_button.clicked.connect(self.inspect_repository)
-        note_row.addWidget(self.check_release_button)
-        options_layout.addLayout(note_row)
+        options_layout.addWidget(release_note)
         editor.addWidget(release_options)
         self.inspect_button = QPushButton("Inspect repository")
         self.inspect_button.setObjectName("primary")
@@ -319,12 +286,7 @@ class RepositoriesPanel(QWidget):
         )
         self.build_combo.setMinimumContentsLength(20)
         self.build_combo.currentIndexChanged.connect(self.change_build_variant)
-        build_row = QHBoxLayout()
-        build_row.addWidget(self.build_combo, stretch=1)
-        self.choose_build_button = QPushButton("Choose another build…")
-        self.choose_build_button.clicked.connect(self.choose_build)
-        build_row.addWidget(self.choose_build_button)
-        build_layout.addLayout(build_row)
+        build_layout.addWidget(self.build_combo)
         build_note = QLabel(
             "Choose the build suitable for your system. This choice is remembered for updates."
         )
@@ -365,24 +327,13 @@ class RepositoriesPanel(QWidget):
         self.icon_choices.setMinimumContentsLength(12)
         self.icon_choices.currentIndexChanged.connect(self.select_icon)
         icon_controls.addWidget(self.icon_choices)
-        icon_actions = QHBoxLayout()
-        self.find_icons_button = QPushButton("Find online")
-        self.find_icons_button.setToolTip("Look for icons in the application's repository.")
-        self.find_icons_button.clicked.connect(self.find_existing_icons)
-        icon_actions.addWidget(self.find_icons_button)
         self.choose_icon_button = QPushButton("Choose file…")
         self.choose_icon_button.clicked.connect(self.choose_icon)
-        icon_actions.addWidget(self.choose_icon_button)
-        icon_actions.addStretch()
-        icon_controls.addLayout(icon_actions)
+        icon_controls.addWidget(self.choose_icon_button, alignment=Qt.AlignmentFlag.AlignLeft)
         icon_row.addLayout(icon_controls, stretch=1)
         editor.addWidget(self.icon_group)
         editor.addStretch()
         actions = QHBoxLayout()
-        self.remove_button = QPushButton("Remove from library")
-        self.remove_button.setObjectName("danger")
-        self.remove_button.clicked.connect(self.remove_repository)
-        actions.addWidget(self.remove_button)
         actions.addStretch()
         self.add_button = QPushButton("Add to library")
         self.add_button.setObjectName("primary")
@@ -415,7 +366,6 @@ class RepositoriesPanel(QWidget):
         strip_layout.addWidget(self.busy_bar)
         layout.addWidget(strip)
         self.refresh_list()
-        self.repo_list.setCurrentRow(0)
         self.set_busy(False)
 
     def refresh_list(self) -> None:
@@ -434,96 +384,28 @@ class RepositoriesPanel(QWidget):
         self.repo_list.blockSignals(False)
         self.repo_list.setVisible(bool(apps))
         self.list_empty.setVisible(not apps)
-        self.update_remove_button()
 
     def open_item(self, item: QListWidgetItem) -> None:
-        if self.task is not None:
-            return
-        self.repo_list.setCurrentItem(item)
-        self.select_repository()
-        self.pages.setCurrentIndex(1)
-
-    def open_app(self, app_id: str) -> None:
-        for row in range(self.repo_list.count()):
-            item = self.repo_list.item(row)
-            if item.data(Qt.ItemDataRole.UserRole) == app_id:
-                self.open_item(item)
-                return
+        if self.task is None:
+            self.app_requested.emit(str(item.data(Qt.ItemDataRole.UserRole)))
 
     def show_list(self) -> None:
         if self.task is not None:
             return
-        if self.adding:
-            self.adding = False
-            self.invalidate_preview()
-            self.add_page.hide()
-            self.details_page.show()
+        self.adding = False
+        self.invalidate_preview()
         self.refresh_list()
         self.pages.setCurrentIndex(0)
         self.status.setText("Repository, release and icon changes save immediately.")
-        self.set_busy(False)
-
-    def update_remove_button(self) -> None:
-        item = self.repo_list.currentItem()
-        app_id = item.data(Qt.ItemDataRole.UserRole) if item else None
-        enabled = self.task is None and app_id is not None
-        self.remove_button.setVisible(not self.adding and app_id is not None)
-        self.remove_button.setEnabled(enabled)
-        self.find_icons_button.setVisible(not self.adding)
-        self.find_icons_button.setEnabled(
-            enabled and self.icon_target is not None and self.candidate is None
-        )
-
-    def select_repository(self) -> None:
-        if self.task is not None or not hasattr(self, "icon_choices"):
-            return
-        self.adding = False
-        self.details_page.show()
-        self.add_page.hide()
-        self.invalidate_preview()
-        item = self.repo_list.currentItem()
-        selected = item.data(Qt.ItemDataRole.UserRole) if item else None
-        app = next((app for app in self.library.apps if app.id == selected), None)
-        self.selected_app = app
-        if app and app.build_variant:
-            self.show_build_choices(
-                ((app.build_variant, variant_label(app.build_variant)),),
-                app.build_variant,
-                reveal=False,
-            )
-        self.release_channel.blockSignals(True)
-        self.release_channel.setCurrentIndex(int(bool(app and app.include_prereleases)))
-        self.release_channel.blockSignals(False)
-        self.icon_target = app
-        self.detail_name.setText(app.name if app else "Select an application")
-        self.detail_source.setText(app.repo if app else "")
-        self.set_icon_options(())
-        if self.icon_target:
-            path = self.library.icon_path(self.icon_target)
-            if path != APP_ICON:
-                try:
-                    self.set_icon_options((IconCandidate("Saved icon", path.read_bytes()),))
-                except OSError:
-                    self.show_icon(APP_ICON)
-            else:
-                self.show_icon(path)
-            self.status.setText("Repository, release and icon changes save immediately.")
         self.set_busy(False)
 
     def start_add_repository(self) -> None:
         if self.task is not None:
             return
         self.adding = True
-        self.selected_app = None
         self.release_channel.blockSignals(True)
         self.release_channel.setCurrentIndex(0)
         self.release_channel.blockSignals(False)
-        self.repo_list.blockSignals(True)
-        self.repo_list.setCurrentRow(-1)
-        self.repo_list.clearSelection()
-        self.repo_list.blockSignals(False)
-        self.details_page.hide()
-        self.add_page.show()
         self.pages.setCurrentIndex(1)
         self.url.clear()
         self.name.clear()
@@ -532,28 +414,8 @@ class RepositoriesPanel(QWidget):
         self.set_busy(False)
 
     def change_release_preference(self) -> None:
-        if self.task is not None:
-            return
-        if self.adding:
+        if self.task is None and self.adding:
             self.invalidate_preview(clear_icons=False)
-            return
-        app = self.selected_app
-        if app is None:
-            return
-        try:
-            self.library.set_release_preference(app.id, self.release_channel.currentIndex() == 1)
-        except (OSError, ValueError) as error:
-            self.release_channel.blockSignals(True)
-            self.release_channel.setCurrentIndex(int(app.include_prereleases))
-            self.release_channel.blockSignals(False)
-            self.status.setText(str(error))
-            return
-        self.selected_app = next(known for known in self.library.apps if known.id == app.id)
-        self.icon_target = self.selected_app
-        self.release = None
-        self.release_preview.hide()
-        self.status.setText("Release preference saved. Check the available release.")
-        self.catalog_changed.emit()
 
     def invalidate_preview(self, *, clear_build: bool = True, clear_icons: bool = True) -> None:
         self.candidate = None
@@ -576,11 +438,8 @@ class RepositoriesPanel(QWidget):
             self.build_combo.clear()
             self.build_combo.blockSignals(False)
             self.build_group.hide()
-        self.update_remove_button()
 
-    def show_build_choices(
-        self, choices: tuple[tuple[str, str], ...], selected: str = "", *, reveal: bool = True
-    ) -> None:
+    def show_build_choices(self, choices: tuple[tuple[str, str], ...], selected: str = "") -> None:
         self.build_combo.blockSignals(True)
         self.build_combo.clear()
         self.build_combo.addItem("Choose a build…", "")
@@ -591,17 +450,8 @@ class RepositoriesPanel(QWidget):
             )
         self.build_combo.setCurrentIndex(max(0, self.build_combo.findData(selected)))
         self.build_combo.blockSignals(False)
-        self.choose_build_button.setVisible(not self.adding and bool(selected))
         self.build_group.show()
-        if reveal:
-            QTimer.singleShot(
-                0, self, lambda: self.editor_scroll.ensureWidgetVisible(self.build_group)
-            )
-
-    def choose_build(self) -> None:
-        if self.task is None:
-            self.build_override = ""
-            self.inspect_repository()
+        QTimer.singleShot(0, self, lambda: self.editor_scroll.ensureWidgetVisible(self.build_group))
 
     def change_build_variant(self) -> None:
         if self.task is not None or not self.build_combo.currentData():
@@ -610,38 +460,27 @@ class RepositoriesPanel(QWidget):
         self.inspect_repository()
 
     def inspect_repository(self) -> None:
-        if self.task is not None:
+        if self.task is not None or not self.adding:
             return
-        if self.adding:
-            self.invalidate_preview(clear_build=False, clear_icons=False)
-            try:
-                app = custom_app(
-                    self.url.text(),
-                    self.name.text() or None,
-                    self.release_channel.currentIndex() == 1,
-                    self.build_override or "",
-                )
-                if any(known.repo.casefold() == app.repo.casefold() for known in self.library.apps):
-                    raise ValueError("This repository is already in the catalog.")
-            except (OSError, ValueError) as error:
-                self.status.setText(str(error))
-                return
-            self.name.blockSignals(True)
-            self.name.setText(app.name)
-            self.name.blockSignals(False)
-            self.candidate = app
-            self.icon_target = app
-        elif self.selected_app is not None:
-            app = (
-                replace(self.selected_app, build_variant=self.build_override)
-                if self.build_override is not None
-                else self.selected_app
+        self.invalidate_preview(clear_build=False, clear_icons=False)
+        try:
+            app = custom_app(
+                self.url.text(),
+                self.name.text() or None,
+                self.release_channel.currentIndex() == 1,
+                self.build_override or "",
             )
-            self.release = None
-        else:
+            if any(known.repo.casefold() == app.repo.casefold() for known in self.library.apps):
+                raise ValueError("This repository is already in the catalog.")
+        except (OSError, ValueError) as error:
+            self.status.setText(str(error))
             return
-        adding = self.adding
-        lookup_icons = adding and not self.icon_options
+        self.name.blockSignals(True)
+        self.name.setText(app.name)
+        self.name.blockSignals(False)
+        self.candidate = app
+        self.icon_target = app
+        lookup_icons = not self.icon_options
         self.inspection_app = app
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
@@ -665,10 +504,7 @@ class RepositoriesPanel(QWidget):
     def set_busy(self, busy: bool) -> None:
         self.busy_bar.setVisible(busy)
         self.build_combo.setEnabled(not busy)
-        self.choose_build_button.setEnabled(not busy)
         self.release_channel.setEnabled(not busy)
-        self.check_release_button.setVisible(not self.adding)
-        self.check_release_button.setEnabled(not busy and self.selected_app is not None)
         self.repo_list.setEnabled(not busy)
         self.url.setEnabled(not busy)
         self.name.setEnabled(not busy)
@@ -687,10 +523,8 @@ class RepositoriesPanel(QWidget):
         self.icon_group.setVisible(
             self.icon_target is not None and (not self.adding or self.release is not None)
         )
-        self.icon_preview.setVisible(self.adding)
         self.choose_icon_button.setEnabled(not busy and self.icon_target is not None)
         self.icon_choices.setEnabled(not busy and self.icon_target is not None)
-        self.update_remove_button()
 
     def inspection_finished(self, result: TaskResult) -> None:
         self.task = None
@@ -712,24 +546,6 @@ class RepositoriesPanel(QWidget):
         if self.release is None:
             self.status.setText(result.message)
             return
-        build_changed = bool(
-            target and self.selected_app and target.build_variant != self.selected_app.build_variant
-        )
-        if build_changed and target and self.selected_app:
-            try:
-                self.library.set_build_variant(target.id, target.build_variant)
-            except (OSError, ValueError) as error:
-                self.release = None
-                self.build_override = None
-                self.build_combo.blockSignals(True)
-                self.build_combo.setCurrentIndex(
-                    max(0, self.build_combo.findData(self.selected_app.build_variant))
-                )
-                self.build_combo.blockSignals(False)
-                self.status.setText(f"Build preference could not be saved: {error}")
-                return
-            self.selected_app = target
-            self.icon_target = target
         if target is not None:
             remember_release(target, self.release, self.library.data_dir / "release-cache")
         self.version_label.set_version(
@@ -739,25 +555,16 @@ class RepositoriesPanel(QWidget):
         )
         self.filename.setText(self.release.name)
         self.checksum.setText("Published SHA-256 available; verified when downloaded")
-        if self.adding:
-            if not self.icon_options:
-                self.set_icon_options(result.icons)
-            self.status.setText(
-                (
-                    "Ready to add."
-                    if self.selected_icon is not None
-                    else "Ready to add with the default icon."
-                )
-                + (" " + result.errors[target.id] if target and target.id in result.errors else "")
+        if not self.icon_options:
+            self.set_icon_options(result.icons)
+        self.status.setText(
+            (
+                "Ready to add."
+                if self.selected_icon is not None
+                else "Ready to add with the default icon."
             )
-        else:
-            self.status.setText(
-                "Build preference saved for future installs and updates. "
-                "The installed copy was kept."
-                if build_changed
-                else "Release checked."
-            )
-            self.catalog_changed.emit()
+            + (" " + result.errors[target.id] if target and target.id in result.errors else "")
+        )
         self.set_busy(False)
 
         QTimer.singleShot(
@@ -780,10 +587,6 @@ class RepositoriesPanel(QWidget):
                 except (OSError, ValueError) as error:
                     warning = f" Icon could not be saved: {error}"
             self.refresh_list()
-            for row in range(self.repo_list.count()):
-                if self.repo_list.item(row).data(Qt.ItemDataRole.UserRole) == app.id:
-                    self.repo_list.setCurrentRow(row)
-                    break
         except (OSError, ValueError) as error:
             self.status.setText(str(error))
             return
@@ -809,7 +612,6 @@ class RepositoriesPanel(QWidget):
                 Qt.TransformationMode.SmoothTransformation,
             )
         )
-        self.detail_icon.setPixmap(self.icon_preview.pixmap())
 
     def set_icon_options(self, icons: tuple[IconCandidate, ...]) -> None:
         self.icon_options = icons
@@ -832,17 +634,6 @@ class RepositoriesPanel(QWidget):
             self.icon_options[index].png if index < len(self.icon_options) else None
         )
         self.show_icon(self.selected_icon if self.selected_icon is not None else APP_ICON)
-        if self.icon_target is not None and self.candidate is None:
-            try:
-                self.library.set_icon(self.icon_target, self.selected_icon)
-            except (OSError, ValueError) as error:
-                self.status.setText(f"Icon could not be saved: {error}")
-                return
-            self.status.setText(f"Saved icon for {self.icon_target.name}.")
-            item = self.repo_list.currentItem()
-            if item and item.data(Qt.ItemDataRole.UserRole) == self.icon_target.id:
-                item.setIcon(QIcon(self.icon_preview.pixmap()))
-            self.catalog_changed.emit()
 
     def import_catalog(self) -> None:
         if self.task is not None or self.adding:
@@ -879,7 +670,7 @@ class RepositoriesPanel(QWidget):
         count = len(added.new)
         self.status.setText(
             f"Added {count} {'app' if count == 1 else 'apps'} from {source.name}. "
-            "Select one and choose Find icons to add its icon."
+            "Open an app to choose its icon."
         )
 
     def export_catalog(self) -> None:
@@ -915,58 +706,9 @@ class RepositoriesPanel(QWidget):
         self.set_icon_options((IconCandidate(Path(path).name, png),))
         self.select_icon(0)
 
-    def find_existing_icons(self) -> None:
-        if self.task is not None or self.icon_target is None or self.candidate is not None:
-            return
-        app = self.icon_target
-
-        def operation(cancel: Event, progress: Progress) -> TaskResult:
-            return TaskResult(
-                "No icon found. Choose an image to replace the current icon.",
-                icons=discover_icons(app, cancel, lambda text: progress(text, 0, 0)),
-            )
-
-        self.task = Task(operation)
-        self.task.signals.progress.connect(self.task_progress)
-        self.task.signals.finished.connect(self.icons_finished)
-        self.task.signals.failed.connect(self.icons_failed)
-        self.set_busy(True)
-        self.status.setText(f"Looking for icons for {app.name}…")
-        QThreadPool.globalInstance().start(self.task)
-
     def task_progress(self, message: str, received: object, total: object) -> None:
         if self.task is not None and message and not self.closing:
             self.status.setText(message)
-
-    def icons_finished(self, result: TaskResult) -> None:
-        self.task = None
-        self.set_busy(False)
-        if self.closing:
-            self.stopped.emit()
-            return
-        if not result.icons:
-            self.status.setText(result.message)
-            return
-        self.set_icon_options(result.icons)
-        self.select_icon(0)
-
-    def icons_failed(self, error: str) -> None:
-        self.icons_finished(TaskResult(error))
-
-    def remove_repository(self) -> None:
-        item = self.repo_list.currentItem()
-        if self.task is not None or item is None:
-            return
-        try:
-            self.library.remove_repository(str(item.data(Qt.ItemDataRole.UserRole)))
-            self.refresh_list()
-            self.repo_list.setCurrentRow(0)
-        except (OSError, ValueError) as error:
-            self.status.setText(str(error))
-            return
-        self.show_list()
-        self.status.setText("Repository removed. No application files were deleted.")
-        self.catalog_changed.emit()
 
     def stop(self) -> bool:
         """Cancel any running search; return True when nothing is left running."""

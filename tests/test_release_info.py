@@ -152,6 +152,41 @@ class ReleaseInfoTests(unittest.TestCase):
         path.write_text("[]")
         self.assertIsNone(cached_info(APP, self.cache))
 
+    def test_release_notes_are_kept_in_the_catalog_cache_and_old_caches_still_load(self):
+        self.stable = {
+            **self.stable,
+            "body": "Stable notes",
+            "published_at": "2026-10-01T10:00:00Z",
+        }
+        self.beta = {**self.beta, "body": "Beta notes", "published_at": "2026-10-10T10:00:00Z"}
+        self.entries = [self.beta, self.stable]
+        info = self.discover()
+        self.assertEqual(
+            (info.stable.release.notes, info.stable.release.published),
+            ("Stable notes", "2026-10-01"),
+        )
+        self.assertEqual(info.preview.release.notes, "Beta notes")
+        self.assertEqual(cached_info(APP, self.cache), info)
+        written = releases.release_cache_path(APP, self.cache)
+        self.assertEqual(releases.cached_release(APP, self.cache), info.stable.release)
+        self.assertIn("Stable notes", written.read_text())
+        path = info_path(APP, self.cache)
+        data = json.loads(path.read_text())
+        for channel in ("stable", "preview"):
+            for key in ("notes", "published"):
+                del data[channel]["release"][key]
+        path.write_text(json.dumps(data))
+        old = cached_info(APP, self.cache)
+        self.assertIsNotNone(old)
+        self.assertEqual(old.stable.release, replace(info.stable.release, notes="", published=""))
+        self.assertEqual(old.preview.release.notes, "")
+        data["stable"]["release"]["notes"] = ["not text"]
+        path.write_text(json.dumps(data))
+        self.assertEqual(cached_info(APP, self.cache).stable.release.notes, "")
+        remembered = remember_release(APP, info.stable.release, self.cache)
+        self.assertEqual(remembered.stable.release.notes, "Stable notes")
+        self.assertEqual(cached_info(APP, self.cache).stable.release.notes, "Stable notes")
+
     def test_quota_fallback_discovers_both_channels_with_the_same_checksums(self):
         info = self.discover()
         with (

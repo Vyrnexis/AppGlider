@@ -17,7 +17,14 @@ from unittest.mock import patch
 from catalog_fixture import APPS, stock
 
 from appglider import APP_TASKBAR_ICON
-from appglider.library import Installed, Library, Orphan, check_appimage, desktop_exec
+from appglider.library import (
+    Installed,
+    Library,
+    Orphan,
+    check_appimage,
+    desktop_exec,
+    previous_copy,
+)
 from appglider.releases import (
     Cancelled,
     Release,
@@ -774,6 +781,29 @@ class LibraryTests(unittest.TestCase):
                     self.assertEqual(target.read_text(), contents)
 
 
+class PreviousCopyTests(unittest.TestCase):
+    def test_the_kept_copy_is_described_by_version_and_size_or_not_at_all(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            folder = Path(name) / "1.0.0"
+            folder.mkdir()
+            kept = folder / "app.AppImage"
+            kept.write_bytes(b"x" * 1234)
+            current = Installed(
+                Path(name) / "1.1.0" / "app.AppImage", "1.1.0", True, kept, False, True
+            )
+            described = previous_copy(current)
+            assert described is not None
+            self.assertEqual(
+                (described.path, described.version, described.size, described.prerelease),
+                (kept, "1.0.0", 1234, True),
+            )
+            self.assertIsNone(previous_copy(None))
+            self.assertIsNone(previous_copy(Installed(current.path, "1.1.0", True)))
+            self.assertIsNone(previous_copy(Installed(current.path, "1.1.0", True, folder)))
+            kept.unlink()
+            self.assertIsNone(previous_copy(current))
+
+
 class ReleaseTests(unittest.TestCase):
     def metadata(self) -> dict:
         data = appimage_bytes()
@@ -831,6 +861,27 @@ class ReleaseTests(unittest.TestCase):
         metadata["assets"][0]["size"] = -1
         with self.assertRaises(ValueError):
             select_release(APP, metadata, architecture())
+
+    def test_release_notes_and_date_come_from_the_api_and_are_bounded_and_validated(self) -> None:
+        metadata = {
+            **self.metadata(),
+            "body": "## New\n\n- one",
+            "published_at": "2026-10-19T14:02:11Z",
+        }
+        release = select_release(APP, metadata, architecture())
+        self.assertEqual((release.notes, release.published), ("## New\n\n- one", "2026-10-19"))
+        long = select_release(APP, {**metadata, "body": "x" * 50_000}, architecture())
+        self.assertEqual(len(long.notes), 20_000)
+        for bad in (None, 5, ["x"], {"a": 1}):
+            self.assertEqual(
+                select_release(APP, {**metadata, "body": bad}, architecture()).notes, ""
+            )
+        for bad in (None, 20261019, "yesterday", "2026-13-45", "2026-10-19" + "T" * 200, ""):
+            self.assertEqual(
+                select_release(APP, {**metadata, "published_at": bad}, architecture()).published, ""
+            )
+        plain = select_release(APP, self.metadata(), architecture())
+        self.assertEqual((plain.notes, plain.published), ("", ""))
 
     def test_versions_compare_numerically_and_do_not_guess_unknown_versions(self) -> None:
         self.assertGreater(version_key("1.10.0"), version_key("1.9.0"))

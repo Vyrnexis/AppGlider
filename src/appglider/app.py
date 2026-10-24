@@ -59,7 +59,7 @@ def main() -> int:
                         "header_version": window.version_button.text(),
                         "refresh_action": window.check_button.text(),
                         "release_preferences": sum(
-                            card.preferences_action.isEnabled() for card in window.cards.values()
+                            card.name_button.isEnabled() for card in window.cards.values()
                         ),
                         "card_dropdowns": sum(
                             len(card.findChildren(QComboBox)) for card in window.cards.values()

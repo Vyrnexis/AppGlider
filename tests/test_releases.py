@@ -458,6 +458,29 @@ class ReleaseTests(unittest.TestCase):
             api.assert_called_once()
             fallback.assert_not_called()
 
+    def test_release_notes_survive_the_cache_and_old_caches_still_load(self):
+        notes = replace(self.release, notes="## What's new\n\n- one", published="2026-10-19")
+        now = time.time()
+        atomic_json(self.cache_file, {"checked_at": now, "release": asdict(notes)})
+        self.assertEqual(releases.cached_release(APP, self.cache), notes)
+        old = asdict(self.release)
+        del old["notes"], old["published"]
+        atomic_json(self.cache_file, {"checked_at": now, "release": old})
+        self.assertEqual(releases.cached_release(APP, self.cache), self.release)
+        self.assertEqual(releases.cached_release(APP, self.cache).notes, "")
+        for field, value, expected in (
+            ("notes", 5, ""),
+            ("notes", ["x"], ""),
+            ("notes", "x" * 50_000, "x" * releases.MAX_NOTES),
+            ("published", "not a date", ""),
+            ("published", 20261019, ""),
+        ):
+            with self.subTest(field=field):
+                item = {**asdict(notes), field: value}
+                atomic_json(self.cache_file, {"checked_at": now, "release": item})
+                loaded = releases.cached_release(APP, self.cache)
+                self.assertEqual(getattr(loaded, field), expected)
+
     def test_expired_or_invalid_cache_is_refetched(self):
         bad_items = (
             {

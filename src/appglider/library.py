@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -83,6 +84,32 @@ class Installed:
     previous: Path | None = None
     prerelease: bool = False
     previous_prerelease: bool = False
+
+
+@dataclass(frozen=True)
+class PreviousCopy:
+    path: Path
+    version: str
+    prerelease: bool
+    size: int
+
+
+def previous_copy(installed: Installed | None) -> PreviousCopy | None:
+    """Describe the kept previous copy, or None when there is none or it is not a file."""
+    if installed is None or installed.previous is None:
+        return None
+    try:
+        info = installed.previous.stat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    return PreviousCopy(
+        installed.previous,
+        installed.previous.parent.name,
+        installed.previous_prerelease,
+        info.st_size,
+    )
 
 
 @dataclass(frozen=True)
