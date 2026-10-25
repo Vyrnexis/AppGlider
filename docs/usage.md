@@ -371,3 +371,16 @@ allowance for the hour. It resets on its own. Scheduled checks pause meanwhile.
 **An app will not run.** Apps installed through AppGlider are the project's own AppImages,
 and they may need libraries your system lacks. Check the project's page for its
 requirements.
+
+**On NixOS, no app will start.** NixOS cannot run AppImages until its AppImage support is
+turned on; AppGlider says so when you press Launch. Add this to your NixOS configuration and
+run `sudo nixos-rebuild switch`:
+
+```nix
+programs.appimage = {
+  enable = true;
+  binfmt = true;
+};
+```
+
+Menu entries for your apps start working at the same time.

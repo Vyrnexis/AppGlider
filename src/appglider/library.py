@@ -138,6 +138,46 @@ def check_appimage(path: Path) -> None:
         raise ValueError("This AppImage was built for a different CPU architecture.")
 
 
+NIXOS_MARKER = Path("/etc/NIXOS")
+BINFMT_DIR = Path("/proc/sys/fs/binfmt_misc")
+NIXOS_APPIMAGE_HELP = (
+    "NixOS cannot start AppImages until AppImage support is turned on. Add "
+    "programs.appimage.enable = true; and programs.appimage.binfmt = true; to your NixOS "
+    "configuration, run sudo nixos-rebuild switch, then try again."
+)
+
+
+def appimages_registered() -> bool | None:
+    """Whether the kernel hands AppImages to a runner; None when that cannot be read."""
+    try:
+        if BINFMT_DIR.joinpath("status").read_text().strip() != "enabled":
+            return False
+        entries = list(BINFMT_DIR.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if entry.name in ("register", "status"):
+            continue
+        try:
+            lines = entry.read_text().splitlines()
+        except OSError:
+            continue
+        # Type 2 AppImages are recognised by the bytes "AI\x02" (hex 414902).
+        if lines[:1] == ["enabled"] and any(
+            line.startswith("magic ") and "414902" in line for line in lines
+        ):
+            return True
+    return False
+
+
+def nixos_cannot_start() -> bool:
+    """NixOS stops generic Linux programs, which AppImages carry, unless they run through
+    its AppImage support (binfmt) or nix-ld."""
+    return (
+        NIXOS_MARKER.exists() and not os.environ.get("NIX_LD") and appimages_registered() is False
+    )
+
+
 def running(path: Path) -> bool:
     target = os.fsencode(path.resolve())
     for process in Path("/proc").iterdir():
@@ -499,6 +539,8 @@ class Library:
         check_appimage(installed.path)
         if not os.access(installed.path, os.X_OK):
             raise ValueError("Make this AppImage executable in file properties, then try again.")
+        if nixos_cannot_start():
+            raise ValueError(NIXOS_APPIMAGE_HELP)
         environment = os.environ.copy()
         appdir = environment.get("APPDIR")
         if appdir:

@@ -12,7 +12,7 @@ import time
 import unittest
 from pathlib import Path
 from threading import Event, Thread
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from catalog_fixture import APPS, stock
 
@@ -432,6 +432,56 @@ class LibraryTests(unittest.TestCase):
         self.library.remove(APP)
         self.assertEqual((root / "user-data.txt").read_text(), "keep me")
         self.assertTrue((root / ".appglider").is_file())
+
+    def test_nixos_without_appimage_support_explains_the_setting_instead_of_failing(
+        self,
+    ) -> None:
+        installed = self.install("1.0.0")
+        root = self.root / "nixos"
+        marker, binfmt = root / "NIXOS", root / "binfmt_misc"
+        binfmt.mkdir(parents=True)
+        marker.write_text("")
+        (binfmt / "status").write_text("enabled\n")
+        (binfmt / "register").write_text("")
+        (binfmt / "DOSWin").write_text("enabled\ninterpreter /usr/bin/wine\nmagic 4d5a\n")
+        environment = {key: value for key, value in os.environ.items() if key != "NIX_LD"}
+
+        def launch() -> MagicMock:
+            with (
+                patch("appglider.library.NIXOS_MARKER", marker),
+                patch("appglider.library.BINFMT_DIR", binfmt),
+                patch.dict(os.environ, environment, clear=True),
+                patch("appglider.library.subprocess.Popen") as spawn,
+            ):
+                spawn.return_value.poll.return_value = None
+                self.library.processes.clear()
+                self.library.launch(APP, installed)
+                return spawn
+
+        with self.assertRaisesRegex(ValueError, r"programs\.appimage\.binfmt = true") as raised:
+            launch()
+        self.assertIn("nixos-rebuild switch", str(raised.exception))
+
+        environment["NIX_LD"] = "/run/current-system/sw/share/nix-ld/lib/ld.so"
+        launch().assert_called_once()
+        del environment["NIX_LD"]
+
+        (binfmt / "appimage-type2").write_text(
+            "enabled\ninterpreter /nix/store/x-appimage-run\nflags: \noffset 0\n"
+            "magic 7f454c46000000000000414902\n"
+        )
+        launch().assert_called_once()
+
+        (binfmt / "appimage-type2").write_text("disabled\nmagic 7f454c46000000000000414902\n")
+        with self.assertRaises(ValueError):
+            launch()
+
+        (binfmt / "status").unlink()  # binfmt_misc not mounted: unknown, so do not block
+        launch().assert_called_once()
+
+        marker.unlink()
+        (binfmt / "status").write_text("enabled\n")
+        launch().assert_called_once()
 
     def test_oversized_launch_log_is_rotated(self) -> None:
         installed = self.install("1.0.0")
