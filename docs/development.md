@@ -103,6 +103,12 @@ Update its retained binding list if the application starts importing another Qt 
 Runtime licence texts and source/replacement instructions are bundled with the application;
 keep [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) current when dependencies change.
 
+`packaging/io.github.vyrnexis.AppGlider.appdata.xml` is the AppStream metadata that software
+catalogs such as [appimage.github.io](https://appimage.github.io/) read. It replaces the
+Python runtime's own metadata. Add each new version at the top of its `<releases>` list; the
+build stops if the newest entry does not match the project version. Check it with
+`appstreamcli validate packaging/io.github.vyrnexis.AppGlider.appdata.xml`.
+
 Review these files together when updating the runtime:
 
 | File | Purpose |

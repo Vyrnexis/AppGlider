@@ -11,6 +11,7 @@ import tempfile
 import tomllib
 import urllib.request
 from pathlib import Path
+from xml.etree import ElementTree
 
 from trim_appdir import trim
 
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGING = ROOT / "packaging"
 BUILD = ROOT / "build" / "appimage"
 CACHE = ROOT / "build" / "downloads"
+METAINFO = "io.github.vyrnexis.AppGlider.appdata.xml"
 
 
 def run(*args: str, cwd: Path = ROOT) -> None:
@@ -62,6 +64,12 @@ def main() -> None:
         recipe = stage / "appglider"
         recipe.mkdir()
         shutil.copy2(PACKAGING / "appglider.desktop", recipe)
+        metainfo = PACKAGING / METAINFO
+        newest = ElementTree.parse(metainfo).find("releases/release")
+        if newest is None or newest.get("version") != version:
+            raise SystemExit(f"Add a {version} release at the top of {metainfo.name}.")
+        # python-appimage ships this in place of its own Python metadata.
+        shutil.copy2(metainfo, recipe)
         icon = ROOT / "src/appglider/assets/icons/appglider-taskbar.png"
         shutil.copy2(icon, recipe / "appglider.png")
         (recipe / "requirements.txt").write_text(
@@ -80,6 +88,9 @@ def main() -> None:
             cwd=stage,
         )
         appdir = stage / "AppGlider-x86_64"
+        shipped = sorted(path.name for path in (appdir / "usr/share/metainfo").iterdir())
+        if shipped != [METAINFO]:
+            raise SystemExit(f"Unexpected AppStream metadata in the AppDir: {shipped}")
         (appdir / "AppRun").unlink()
         shutil.copy2(PACKAGING / "AppRun", appdir / "AppRun")
         (appdir / "AppRun").chmod(0o755)
