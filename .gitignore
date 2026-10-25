@@ -23,6 +23,7 @@ htmlcov/
 /HANDOFF.md
 /agents.md
 /handoff.md
+/.claude/
 
 # Local environment and editor files
 .env
