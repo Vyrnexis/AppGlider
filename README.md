@@ -44,7 +44,7 @@ already taken. Version 0.4.0 and later start with a fresh library and settings.
 
 ## Get AppGlider
 
-1. Download the latest `AppGlider-…-linux-x86_64.AppImage` from the
+1. Download the latest `AppGlider-…-x86_64.AppImage` from the
    [Releases page](https://github.com/Vyrnexis/AppGlider/releases/latest).
 2. Make it runnable: right-click it, open **Properties → Permissions** and tick **Allow
    executing as a program**, or run `chmod +x AppGlider-*.AppImage` in a terminal.

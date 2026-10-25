@@ -23,7 +23,7 @@ home to check startup, certificates and its shortcut. They upload the AppImage a
 packaging, so pushing a commit and its tag builds the AppImage only once.
 
 Open **Actions → Linux AppImage**, select a successful tag or manual run and download
-**AppGlider-linux-x86_64** under **Artifacts**. GitHub requires a signed-in
+**AppGlider-x86_64** under **Artifacts**. GitHub requires a signed-in
 account with repository access to download workflow artifacts. Restore the AppImage's
 executable permission with `chmod +x` after downloading.
 

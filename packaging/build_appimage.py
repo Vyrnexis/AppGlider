@@ -113,7 +113,7 @@ def main() -> None:
         trim(appdir)
         output = ROOT / "dist"
         output.mkdir(exist_ok=True)
-        image = output / f"AppGlider-{version}-linux-x86_64.AppImage"
+        image = output / f"AppGlider-{version}-x86_64.AppImage"
         staged_image = stage / image.name
         os.environ["ARCH"] = "x86_64"
         os.environ["VERSION"] = version

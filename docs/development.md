@@ -75,13 +75,13 @@ build/packaging-env/bin/python -m pip install -r packaging/build-requirements.tx
 build/packaging-env/bin/python packaging/build_appimage.py
 ```
 
-Output goes to `dist/`: `AppGlider-<version>-linux-x86_64.AppImage` and `SHA256SUMS.txt`.
+Output goes to `dist/`: `AppGlider-<version>-x86_64.AppImage` and `SHA256SUMS.txt`.
 The version comes from `pyproject.toml`.
 
 Test the package without FUSE, using a disposable first-run home:
 
 ```sh
-python3 packaging/smoke_test.py dist/AppGlider-<version>-linux-x86_64.AppImage
+python3 packaging/smoke_test.py dist/AppGlider-<version>-x86_64.AppImage
 ```
 
 The smoke test runs twice: once as an empty first run, and once with two sample repositories
