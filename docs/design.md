@@ -1,8 +1,8 @@
 # AppGlider interface design
 
 This is the design brief for AppGlider's interface: the layout, the visual tokens and the
-rules for new screens. It applies to people and AI agents alike. Change it deliberately, in
-its own commit, before changing the interface it describes.
+rules for new screens. Change it deliberately, in its own commit, before changing the
+interface it describes.
 
 AppGlider is a hobbyist Linux tool. The goal is an interface that is calm, obvious and
 consistent rather than flashy: people open it to launch an app or apply an update and leave.
@@ -147,5 +147,5 @@ deciding. Do not mention GitHub's API; say "GitHub's allowance".
 
 The redesign changes presentation only. Install safety, checksums, rollback, holds, release
 checks and their request budget, tray and single-instance behaviour, ownership rules and
-stored data stay as described in `AGENTS.md`. Settings keep their QSettings keys unless a
-migration is written and tested.
+stored data stay as described in the [technical notes](technical-notes.md). Settings keep
+their QSettings keys unless a migration is written and tested.

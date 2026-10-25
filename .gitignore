@@ -18,7 +18,7 @@ dist/
 .coverage.*
 htmlcov/
 
-# Local agent instructions and handoff notes
+# Local notes
 /AGENTS.md
 /HANDOFF.md
 /agents.md
