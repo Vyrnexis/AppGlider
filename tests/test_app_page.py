@@ -16,7 +16,7 @@ from catalog_fixture import APPS, stock
 from gui_helpers import close_window
 from PySide6.QtCore import QSettings, Qt, QUrl
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QBoxLayout, QMessageBox
 from test_builds import BAMBU, bambu_metadata, chosen_bambu
 from test_library import APP, appimage_bytes, release_for
 
@@ -609,6 +609,22 @@ class AppPageTests(unittest.TestCase):
         content = self.page.widget()
         self.assertLessEqual(content.minimumSizeHint().width(), self.page.viewport().width())
         self.assertEqual(self.page.horizontalScrollBar().maximum(), 0)
+
+    def test_columns_stack_when_a_wide_font_leaves_too_little_room(self) -> None:
+        self.install("1.3.0", "1.3.1")
+        self.window.resize(1400, 700)
+        self.window.open_app(APP.id)
+        for _ in range(3):
+            self.qt.processEvents()
+        self.assertEqual(self.page.columns.direction(), QBoxLayout.Direction.LeftToRight)
+        # Stands in for a wider desktop font, which the stylesheet's pixel sizes rule out here.
+        self.page.notes_panel.setMinimumWidth(900)
+        for _ in range(3):
+            self.qt.processEvents()
+        self.assertEqual(self.page.columns.direction(), QBoxLayout.Direction.TopToBottom)
+        self.assertLessEqual(
+            self.page.widget().minimumSizeHint().width(), self.page.viewport().width()
+        )
 
     def test_up_to_date_apps_show_the_notes_of_their_current_release(self) -> None:
         self.install("1.0.0")

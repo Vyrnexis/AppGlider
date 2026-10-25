@@ -7,9 +7,10 @@ from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -265,7 +266,8 @@ class AppPage(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = QWidget()
         self.setWidget(content)
-        root = QVBoxLayout(content)
+        content.installEventFilter(self)
+        self.root_layout = root = QVBoxLayout(content)
         root.setContentsMargins(22, 16, 22, 20)
         root.setSpacing(16)
         self.back_button = QPushButton("‹ Library")
@@ -275,14 +277,15 @@ class AppPage(QScrollArea):
         self.back_button.clicked.connect(self.back_requested)
         root.addWidget(self.back_button, alignment=Qt.AlignmentFlag.AlignLeft)
         self.build_header(root)
-        columns = QHBoxLayout()
-        columns.setSpacing(14)
-        left, right = QVBoxLayout(), QVBoxLayout()
+        # Two columns, stacked into one when a wide font leaves too little room for both.
+        self.columns = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.columns.setSpacing(14)
+        self.column_layouts = left, right = QVBoxLayout(), QVBoxLayout()
         left.setSpacing(16)
         right.setSpacing(16)
-        columns.addLayout(left, stretch=13)
-        columns.addLayout(right, stretch=10)
-        root.addLayout(columns)
+        self.columns.addLayout(left, stretch=13)
+        self.columns.addLayout(right, stretch=10)
+        root.addLayout(self.columns)
         root.addStretch()
         self.build_notes(left)
         self.build_versions(left)
@@ -290,6 +293,33 @@ class AppPage(QScrollArea):
         self.build_preferences(right)
         self.build_manage(right)
         right.addStretch()
+
+    def fit_columns(self) -> None:
+        left, right = self.column_layouts
+        margins = self.root_layout.contentsMargins()
+        needed = (
+            left.minimumSize().width()
+            + right.minimumSize().width()
+            + self.columns.spacing()
+            + margins.left()
+            + margins.right()
+        )
+        wide = self.viewport().width() >= needed
+        direction = QBoxLayout.Direction.LeftToRight if wide else QBoxLayout.Direction.TopToBottom
+        if self.columns.direction() != direction:
+            self.columns.setDirection(direction)
+            self.columns.setStretch(0, 13 if wide else 0)
+            self.columns.setStretch(1, 10 if wide else 0)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.fit_columns()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        # Minimum widths settle only after styling and new text, so check again then.
+        if watched is self.widget() and event.type() == QEvent.Type.LayoutRequest:
+            self.fit_columns()
+        return super().eventFilter(watched, event)
 
     # Construction
 
@@ -366,6 +396,8 @@ class AppPage(QScrollArea):
         self.notes_link = link_button("Full release notes on GitHub ↗")
         self.notes_link.clicked.connect(self.open_release_page)
         layout.addWidget(self.notes_link, alignment=Qt.AlignmentFlag.AlignLeft)
+        # The notes view sizes itself; spare height belongs below the panels, not inside.
+        frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         column.addWidget(frame)
 
     def build_versions(self, column: QVBoxLayout) -> None:
