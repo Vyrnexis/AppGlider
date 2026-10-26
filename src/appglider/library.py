@@ -195,6 +195,36 @@ def running(path: Path) -> bool:
     return False
 
 
+def clean_environment() -> dict[str, str]:
+    """This process's environment without what a running AppImage sets for itself.
+
+    Another AppImage started with it must not inherit our mount's libraries or certificates.
+    """
+    environment = os.environ.copy()
+    appdir = environment.get("APPDIR")
+    if appdir:
+        for name in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+            value = environment.get(name)
+            if value and Path(value).is_relative_to(Path(appdir)):
+                environment.pop(name)
+    for name in (
+        "APPIMAGE",
+        "APPDIR",
+        "ARGV0",
+        "OWD",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "QT_PLUGIN_PATH",
+        "QT_QPA_PLATFORM_PLUGIN_PATH",
+        "QML2_IMPORT_PATH",
+        "QML_IMPORT_PATH",
+    ):
+        environment.pop(name, None)
+    return environment
+
+
 class Library:
     def __init__(
         self,
@@ -541,28 +571,7 @@ class Library:
             raise ValueError("Make this AppImage executable in file properties, then try again.")
         if nixos_cannot_start():
             raise ValueError(NIXOS_APPIMAGE_HELP)
-        environment = os.environ.copy()
-        appdir = environment.get("APPDIR")
-        if appdir:
-            for name in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
-                value = environment.get(name)
-                if value and Path(value).is_relative_to(Path(appdir)):
-                    environment.pop(name)
-        for name in (
-            "APPIMAGE",
-            "APPDIR",
-            "ARGV0",
-            "OWD",
-            "LD_LIBRARY_PATH",
-            "LD_PRELOAD",
-            "PYTHONHOME",
-            "PYTHONPATH",
-            "QT_PLUGIN_PATH",
-            "QT_QPA_PLATFORM_PLUGIN_PATH",
-            "QML2_IMPORT_PATH",
-            "QML_IMPORT_PATH",
-        ):
-            environment.pop(name, None)
+        environment = clean_environment()
         log = self.data_dir / "logs" / f"{app.id}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         with contextlib.suppress(OSError):

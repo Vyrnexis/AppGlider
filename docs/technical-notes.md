@@ -56,8 +56,8 @@ who want to know exactly what AppGlider does with their system, and for contribu
   cache, confirms there is enough free disk space (the download size plus 64 MiB),
   downloads the file, and rejects it if the server's reported size differs from the
   published size. A failed or cancelled download leaves the installed version untouched.
-- AppGlider itself is updated by replacing its AppImage with a newer one and starting it;
-  it does not yet do this for you (see [AppGlider's own updates](#appgliders-own-updates)).
+- AppGlider itself is updated by downloading a newer AppImage next to the running one
+  (see [AppGlider's own updates](#appgliders-own-updates)).
 
 ## AppGlider's own updates
 
@@ -76,6 +76,54 @@ badge and, if notifications are on, one scheduled-check message per version, rem
 the reserved key `AppGlider:self` in `notifications/seen` (app identifiers never contain a
 colon). The running AppImage is recognised by `APPIMAGE` and `APPDIR` together with the Python
 prefix lying inside `APPDIR`; the same test builds the menu shortcut's command.
+
+**Updating in place.** The **Update AppGlider** button works only when the running AppImage is
+recognised (as above) and is a regular file in a folder the user can write. Otherwise it opens
+the release page. The update runs in the window's single task slot, so it never overlaps an
+app install, and its banner button is disabled while any task runs.
+
+- The release comes from the same full check app installs use (`latest_release` for
+  `Vyrnexis/AppGlider`, stable only, so unlike the quick check it can use the API allowance). It must be the version the quick check found, stable and
+  still newer than the running version; otherwise nothing is downloaded and the footer says
+  so. The file must have a published SHA-256 (GitHub's asset digest or `SHA256SUMS.txt`), and
+  the download is bounded and verified by `releases.download` (size and SHA-256), then by
+  `library.check_appimage` (ELF, AppImage type 2 and the CPU), with the same free-space check
+  as installs (download size plus 64 MiB).
+- The download goes to a hidden `.AppGlider-update-*` file in the running image's folder,
+  is made executable and is renamed onto `AppGlider-<version>-x86_64.AppImage` (the asset's
+  own name when it matches `AppGlider-*.AppImage`, ignoring case) only after verification. A
+  failure or cancel deletes the temporary file. An existing file of that name is replaced
+  only at that last step; a symbolic link, a folder or the running image itself is refused.
+  The running image is never written to.
+- Afterwards the menu entry (`library.create_launcher_shortcut`) and, only if it already
+  exists and carries our marker, the login entry (`library.enable_autostart`) are pointed at
+  the new file, with the usual rules: only entries marked `X-AppGlider=true`, never a symbolic
+  link. A refusal is reported in the footer and does not undo the update.
+- Settings keys: `selfupdate/ready` (the new file), `selfupdate/replaced` (the file it
+  replaced, for removal) and `selfupdate/version` (the new file's version, so the "ready"
+  banner can come back). On startup a still-valid `ready` file that is newer than the running
+  version shows the ready banner instead of "available"; if it vanished or is no longer a
+  valid newer AppImage the keys are cleared.
+- **Restart now** starts the new file with the flag `--after-update` the way apps are
+  launched: `subprocess.Popen` in a new session with no inherited file descriptors (an
+  inherited handle on this image's FUSE mount would keep the old file in use), in an
+  environment cleaned of the running image's `APPIMAGE`, `APPDIR`, library and certificate
+  variables (the same cleaning used to launch apps), then quits through the normal
+  quit path. It refuses while a task or release check is running, and stays open with an error
+  if the new file cannot start.
+- `--after-update` makes the new instance retry the single-instance lock quietly (every 150 ms
+  for up to 15 s) while the old window finishes quitting, instead of waking it and exiting.
+  If the lock never frees it behaves like any second start.
+- **Cleanup.** After taking the lock (never in `--smoke-test`) the new instance reads
+  `selfupdate/replaced` and deletes that file only when it runs from an AppImage, the path is
+  not the running image, it is in the running image's folder, it is a regular file and not a
+  symbolic link, its name matches `AppGlider-*.AppImage` (ignoring case), it passes
+  `library.check_appimage` and `library.running` finds no process using it. `ready` and
+  `version` are cleared once the running image is the `ready` file. `replaced` is kept only
+  while that file passes every other rule and is still running (the old version closing after
+  a restart); an instance started with `--after-update` tries again after 10 seconds, and later
+  starts try again too. A `ready` file that vanished clears everything without deleting
+  anything. Nothing else is deleted.
 
 ## Release notes
 
@@ -262,7 +310,8 @@ Only one AppGlider runs per data folder; starting it again raises the running wi
 Choices such as the theme and accent (`appearance/theme`, `appearance/accent`), update schedule, your own order (`library/order`, a JSON list of app identifiers; apps not in it follow, A–Z by name) and pinned apps
 (`library/pinned`, a JSON list of app identifiers), the notification choice
 (`notifications/updates`) and the versions already announced (`notifications/seen`, a JSON
-object) live in the settings file. Unreadable or
+object) live in the settings file, as do the three `selfupdate/…` keys that track an
+AppGlider update waiting for a restart. Unreadable or
 unknown values fall back to the defaults instead of causing an error.
 
 The retired `library/sort` key (name, installed, updates, added or custom) is migrated once at

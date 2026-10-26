@@ -5,12 +5,15 @@ import hashlib
 import os
 import socket
 import tempfile
+import time
 from pathlib import Path
 from typing import IO
 
 from PySide6.QtCore import QObject, QSocketNotifier, Signal
 
 CONNECT_TIMEOUT = 1.0
+AFTER_UPDATE_WAIT = 15.0
+AFTER_UPDATE_INTERVAL = 0.15
 
 
 class SingleInstance(QObject):
@@ -44,6 +47,19 @@ class SingleInstance(QObject):
         self._lock = lock
         self._listen()
         return True
+
+    def acquire_after_update(self, wake: bool = True) -> bool:
+        """Like ``acquire``, but first wait for the previous AppGlider to finish quitting.
+
+        A restart after an update starts the new instance while the old one is still closing.
+        The lock is tried quietly for a few seconds; if it never frees, behave as usual.
+        """
+        deadline = time.monotonic() + AFTER_UPDATE_WAIT
+        while time.monotonic() < deadline:
+            if self.acquire(wake=False):
+                return True
+            time.sleep(AFTER_UPDATE_INTERVAL)
+        return self.acquire(wake=wake)
 
     def release(self) -> None:
         if self._notifier is not None:

@@ -2,6 +2,8 @@
 
 import html
 import json
+import os
+import subprocess
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -67,7 +69,7 @@ from appglider.app_page import AppPage, link_button
 from appglider.catalog import App
 from appglider.icons import icon_pixmap
 from appglider.jobs import Lookup, Task, TaskResult
-from appglider.library import Installed, Library, Orphan
+from appglider.library import Installed, Library, Orphan, check_appimage, clean_environment
 from appglider.preferences import (
     ACCENTS,
     DEFAULT_ACCENT,
@@ -88,6 +90,7 @@ from appglider.release_info import (
 )
 from appglider.releases import (
     BuildChoiceRequired,
+    Cancelled,
     Progress,
     Release,
     cached_release,
@@ -226,6 +229,7 @@ class LauncherWindow(QMainWindow):
         self.self_task: Lookup | None = None
         self.self_explicit = False
         self.self_notify = False
+        self.self_ready = self_update.ready_update(self.settings)
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QIcon(str(APP_TASKBAR_ICON)))
         self.resize(fit_size(1040, 816, screen_area(None)))
@@ -426,7 +430,7 @@ class LauncherWindow(QMainWindow):
         self_layout.addWidget(self.self_notes_button)
         # Not accent-filled: Update all just below stays the one primary action on the page.
         self.self_update_button = QPushButton("Releases on GitHub ↗")
-        self.self_update_button.clicked.connect(self.update_self)
+        self.self_update_button.clicked.connect(self.self_button_clicked)
         self_layout.addWidget(self.self_update_button)
         self.self_banner.hide()
         layout.addWidget(self.self_banner)
@@ -1327,6 +1331,8 @@ class LauncherWindow(QMainWindow):
             self.check_errors.pop(app_id, None)
         self.reset_task()
         self.footer.setText(result.message)
+        if result.downloaded is not None:
+            self.self_update_downloaded(result.downloaded)
         if result.build_choices and not self.close_after_task:
             self.choose_build(next(iter(result.build_choices)))
         if result.errors and not self.close_after_task:
@@ -1438,13 +1444,25 @@ class LauncherWindow(QMainWindow):
                 self.notify_updates()
 
     def show_self_banner(self) -> None:
-        version = self.self_state.version
+        ready = self.self_ready
+        version = ready.version if ready else self.self_state.version
         self.self_banner.setVisible(bool(version))
         if not version:
             return
+        shown = html.escape(version)
+        if ready:
+            self.self_banner_label.setText(
+                f"<b>AppGlider {shown}</b> is ready. It starts the next time you open AppGlider."
+            )
+            self.self_notes_button.hide()
+            self.self_update_button.setText("Restart now")
+            self.self_update_button.setAccessibleName(f"Restart now to use AppGlider {version}")
+            self.self_update_button.setEnabled(self.task is None and not self.checks.busy)
+            return
         image = self_update.running_image()
         replaceable = image is not None and self_update.can_replace(image)
-        self.self_banner_label.setText(f"<b>AppGlider {html.escape(version)}</b> is available")
+        self.self_banner_label.setText(f"<b>AppGlider {shown}</b> is available")
+        self.self_notes_button.show()
         self.self_notes_button.setAccessibleName(f"What's new in AppGlider {version}")
         self.self_update_button.setText(
             "Update AppGlider" if replaceable else "Releases on GitHub ↗"
@@ -1452,13 +1470,86 @@ class LauncherWindow(QMainWindow):
         self.self_update_button.setAccessibleName(
             "Update AppGlider" if replaceable else "AppGlider releases on GitHub"
         )
+        self.self_update_button.setEnabled(self.task is None or not replaceable)
 
     def open_self_release(self) -> None:
         QDesktopServices.openUrl(QUrl(self.self_state.url))
 
+    def self_button_clicked(self) -> None:
+        if self.self_ready:
+            self.restart_self()
+        else:
+            self.update_self()
+
     def update_self(self) -> None:
-        """Update AppGlider in place. For now this only opens the release page."""
-        self.open_self_release()
+        """Download the new AppImage next to the running one; else open the release page."""
+        image = self_update.running_image()
+        if image is None or not self_update.can_replace(image):
+            self.open_self_release()
+            return
+        tag, version = self.self_state.tag, self.self_state.version
+        if self.task is not None or not version:
+            return
+        cache_dir = self.library.data_dir / "release-cache"
+
+        def operation(cancel: Event, progress: Progress) -> TaskResult:
+            try:
+                done = self_update.download_update(image, tag, cache_dir, cancel, progress)
+            except Cancelled:
+                raise
+            except Exception as error:
+                return TaskResult(f"Couldn't update AppGlider: {error}")
+            return TaskResult(f"AppGlider {done.version} is ready.", downloaded=done)
+
+        self.start_task(f"Downloading AppGlider {version}…", operation)
+
+    def self_update_downloaded(self, done: self_update.Downloaded) -> None:
+        """Point the menu and login entries at the new file and offer the restart."""
+        self_update.record(self.settings, done)
+        self.self_ready = self_update.Ready(done.new, done.version)
+        problems = []
+        try:
+            self.library.create_launcher_shortcut([str(done.new)])
+        except (OSError, ValueError) as error:
+            problems.append(f"The menu shortcut was not updated: {error}")
+        try:
+            if self.library.autostart_enabled():
+                self.library.enable_autostart([str(done.new)])
+        except (OSError, ValueError) as error:
+            problems.append(f"The login entry was not updated: {error}")
+        self.footer.setText(" ".join([self.footer.text(), *problems]))
+        self.refresh()
+        self.settings_page.update_self_update()
+
+    def restart_self(self) -> None:
+        """Start the downloaded AppGlider, which waits for this one to quit, then quit."""
+        ready = self.self_ready
+        if ready is None or self.task is not None or self.checks.busy:
+            return
+        try:
+            check_appimage(ready.path)
+            if not os.access(ready.path, os.X_OK):
+                raise ValueError("The new file is not executable.")
+        except (OSError, ValueError) as error:
+            self.footer.setText(f"Couldn't start AppGlider {ready.version}: {error}")
+            return
+        try:
+            # Like app launches: a new session with no inherited descriptors. An inherited
+            # handle on this image's mount would keep the old file busy, so it could not be
+            # removed once the new version runs.
+            subprocess.Popen(
+                [str(ready.path), self_update.AFTER_UPDATE_FLAG],
+                cwd=ready.path.parent,
+                env=clean_environment(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as error:
+            self.footer.setText(f"Couldn't start AppGlider {ready.version}: {error}")
+            return
+        self.quit_launcher()
 
     def refresh_releases(self, *, force: bool = False) -> None:
         if self.checks.busy or self.close_after_release:

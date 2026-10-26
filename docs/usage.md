@@ -180,23 +180,55 @@ cancelled never replaces the version you already have.
 
 ## Updating AppGlider
 
-AppGlider also looks for a newer version of itself. When one is out, a banner in your accent colour appears
-above the list on the Library and Updates pages: "**AppGlider 0.9.1** is available", with a
-**What's new ↗** link to that release on GitHub and a button. The button is **Update
-AppGlider** when AppGlider was started from its AppImage in a folder it can write to, and
-**Releases on GitHub ↗** otherwise (for example when you run it from source). For now both
-open the release page in your browser, where you can download the new AppImage; updating in
-place will come later. AppGlider itself is not a row in the list and is not counted in the
-Updates number or in **Update all**.
+AppGlider also looks for a newer version of itself. When one is out, a banner in your accent
+colour appears above the list on the Library and Updates pages: "**AppGlider 0.9.1** is
+available", with a **What's new ↗** link to that release on GitHub and a button. AppGlider
+itself is not a row in the list and is not counted in the Updates number or in **Update
+all**.
+
+**Update AppGlider** appears when AppGlider was started from its AppImage and that file sits in
+a folder AppGlider can write to. Pressing it:
+
+1. Downloads the new AppImage into the same folder as the one you are running, named like
+   `AppGlider-0.9.1-x86_64.AppImage`. The footer shows the progress and **Cancel** stops it.
+   It uses the same checks as installing an app: a published SHA-256 checksum, the published
+   size, and a look at the file's own header (a type 2 AppImage for your CPU) before it is
+   used. The file only gets its final name once all of that passed, so a failed or cancelled
+   download leaves nothing behind, the footer says what went wrong and the banner stays so
+   you can try again. A file of that name from an earlier manual download is replaced only
+   after the new one is verified.
+2. Points AppGlider's menu entry at the new file, and the login entry too if you turned on
+   **Start with my desktop**. Your running AppGlider and its file are not touched.
+3. Changes the banner to "**AppGlider 0.9.1** is ready. It starts the next time you open
+   AppGlider." with a **Restart now** button. **Settings → About** says "Version 0.9.1 is
+   ready · restart to use it".
+
+**Restart now** opens the new AppGlider and closes this one. It is greyed out while an
+install, update or release check is running; wait for it or cancel it first. You do not have
+to restart: the menu entry already opens the new version, so the next time you start AppGlider
+you get it. If you run the old file again before then, the "ready" banner shows instead of a
+second download.
+
+The old file is removed for you. The first time the new version starts, it deletes the file it
+replaced, but only when that file is in the same folder, is named like `AppGlider-….AppImage`,
+is a real AppImage (not a link) and is not running. Any other AppGlider files in that folder,
+such as older versions you downloaded yourself, are never touched. After **Restart now** the
+old version may take a moment to close, so the new one tries again a few seconds later; if the
+old file is still running then, it is removed on a later start.
+
+When AppGlider was not started from an AppImage (for example when you run it from source), or
+its folder cannot be written, the button is **Releases on GitHub ↗** and opens the release
+page in your browser, where you can download the new AppImage yourself.
 
 It looks only for stable releases, and it does so by reading GitHub's ordinary release page,
-so it uses none of GitHub's request allowance. It checks shortly after AppGlider starts, on
-your schedule from **Settings → Updates → Check for updates**, when you press **Check for
-updates**, and when you press **Check now** under **Settings → About**, which also shows when
-it last looked ("Up to date · checked 14:05", "Version 0.9.1 is available" or "Couldn't
-check"). With **Only when I choose**, nothing is checked at startup or on a schedule. It
-works even when you have no apps installed. A failed automatic check is silent; a check you
-asked for says so. There is no setting to turn the check off.
+so the check uses none of GitHub's request allowance (pressing **Update AppGlider** does a
+normal release check first, like installing an app, which uses a couple of requests). It checks shortly after AppGlider
+starts, on your schedule from **Settings → Updates → Check for updates**, when you press
+**Check for updates**, and when you press **Check now** under **Settings → About**, which also
+shows when it last looked ("Up to date · checked 14:05", "Version 0.9.1 is available" or
+"Couldn't check"). With **Only when I choose**, nothing is checked at startup or on a
+schedule. It works even when you have no apps installed. A failed automatic check is silent; a
+check you asked for says so. There is no setting to turn the check off.
 
 When an update is waiting, the tray icon gets the same badge as for app updates. If you turned
 on **Notify me about new updates**, a scheduled check also tells you once for each new

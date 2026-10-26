@@ -6,7 +6,7 @@ import ssl
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths, QTimer
+from PySide6.QtCore import QSettings, QStandardPaths, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QComboBox, QSystemTrayIcon
 
@@ -14,7 +14,7 @@ from appglider import APP_NAME, APP_TASKBAR_ICON, APP_VERSION
 from appglider.catalogfile import EXAMPLE_CATALOG
 from appglider.catalogfile import read as read_catalog
 from appglider.instance import SingleInstance
-from appglider.self_update import running_image
+from appglider.self_update import AFTER_UPDATE_FLAG, cleanup, running_image
 from appglider.window import LauncherWindow
 
 
@@ -43,6 +43,19 @@ def show_initial(window: LauncherWindow, tray: bool) -> None:
         window.showMinimized()
 
 
+def acquire_instance(instance: SingleInstance, *, quiet: bool, after_update: bool) -> bool:
+    """Take the single-instance lock; after an update's restart, wait for the old one to quit."""
+    if after_update:
+        return instance.acquire_after_update(wake=not quiet)
+    return instance.acquire(wake=not quiet)
+
+
+def remove_replaced_image(smoke: bool) -> None:
+    """Delete the file the last update replaced. Never part of a smoke test."""
+    if not smoke:
+        cleanup(QSettings())
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     app.setOrganizationName(APP_NAME)
@@ -58,8 +71,13 @@ def main() -> int:
         Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation))
         / "appglider"
     )
-    if not smoke and not instance.acquire(wake=not quiet):
+    after_update = AFTER_UPDATE_FLAG in sys.argv
+    if not smoke and not acquire_instance(instance, quiet=quiet, after_update=after_update):
         return 0
+    remove_replaced_image(smoke)
+    if after_update:
+        # The version that restarted us may still be closing; its file goes once it has.
+        QTimer.singleShot(10_000, lambda: remove_replaced_image(smoke))
     window = LauncherWindow()
     instance.activated.connect(window.show_launcher)
     command = launcher_command()

@@ -580,7 +580,12 @@ class SettingsPage(QWidget):
     def update_self_update(self) -> None:
         """Show what the last check of AppGlider itself found, and whether one is running."""
         checking = self.launcher.self_task is not None
-        self.self_row.hint.setText(self.launcher.self_state.hint(self_update.running_image()))
+        ready = self.launcher.self_ready
+        self.self_row.hint.setText(
+            self.launcher.self_state.hint(
+                self_update.running_image(), ready.version if ready else ""
+            )
+        )
         self.self_check_button.setText("Checking…" if checking else "Check now")
         self.self_check_button.setEnabled(not checking)
 

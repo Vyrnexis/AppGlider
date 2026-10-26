@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, QRunnable, Signal
 from appglider.icons import IconCandidate
 from appglider.release_info import ReleaseInfo
 from appglider.releases import BuildChoiceRequired, Cancelled, Progress, Release
+from appglider.self_update import Downloaded
 
 
 @dataclass
@@ -19,6 +20,7 @@ class TaskResult:
     icons: tuple[IconCandidate, ...] = ()
     release_infos: dict[str, ReleaseInfo] = field(default_factory=dict)
     build_choices: dict[str, BuildChoiceRequired] = field(default_factory=dict)
+    downloaded: Downloaded | None = None
 
 
 class TaskSignals(QObject):
