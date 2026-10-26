@@ -1,8 +1,8 @@
 {
   "python": {
-    "name": "python3.13.16-cp313-cp313-manylinux2014_x86_64.AppImage",
-    "url": "https://github.com/niess/python-appimage/releases/download/python3.13/python3.13.16-cp313-cp313-manylinux2014_x86_64.AppImage",
-    "sha256": "6d033c863d5a8a829318456500de2ce9e8851b39f5b801d666eaf17351c945ca"
+    "name": "python3.13.17-cp313-cp313-manylinux2014_x86_64.AppImage",
+    "url": "https://github.com/niess/python-appimage/releases/download/python3.13/python3.13.17-cp313-cp313-manylinux2014_x86_64.AppImage",
+    "sha256": "79b23d803d18bc6c9bca94accfa4022541dc1dfad064dceaa92ad20776ab3cb4"
   },
   "tool": {
     "name": "appimagetool-x86_64.AppImage",

@@ -39,9 +39,9 @@ prevents running the extracted application with modified libraries.
 
 ## Other runtime components
 
-- **Python 3.13.16:** Python Software Foundation and contributors; the Python licence is
+- **Python 3.13.17:** Python Software Foundation and contributors; the Python licence is
   preserved at `opt/python3.13/lib/python3.13/LICENSE.txt` inside the AppImage.
-  [Source](https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tar.xz).
+  [Source](https://www.python.org/ftp/python/3.13.17/Python-3.13.17.tar.xz).
 - **ICU 73.2:** Unicode, Inc. and contributors; Unicode/ICU and third-party notices are
   included in `appglider/assets/licenses/ICU-73.2.txt`.
   [Source](https://github.com/unicode-org/icu/releases/tag/release-73-2).
