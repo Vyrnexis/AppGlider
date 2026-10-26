@@ -231,6 +231,39 @@ class LauncherWindow(QMainWindow):
         shell_layout.setContentsMargins(0, 0, 0, 0)
         shell_layout.setSpacing(0)
         self.setCentralWidget(shell)
+        self.build_sidebar(shell_layout)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        shell_layout.addWidget(body, stretch=1)
+        self.pages = QStackedWidget()
+        body_layout.addWidget(self.pages, stretch=1)
+        layout = self.build_pages(body_layout)
+        self.build_toolbar(layout)
+        self.build_banner(layout)
+        self.build_list(layout)
+        self.build_welcome(layout)
+        self.build_footer(body_layout)
+        self.cards: dict[str, AppRow] = {}
+        self.search.textChanged.connect(self.refresh)
+        self.filter_installed.toggled.connect(self.refresh)
+        QApplication.styleHints().colorSchemeChanged.connect(self.system_theme_changed)
+        self.build_tray()
+        self.apply_theme()
+        restore_rate_limits(self.library.data_dir / "release-cache")
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.scheduled_check)
+        self.github_timer = QTimer(self)
+        self.github_timer.timeout.connect(self.update_github_status)
+        self.github_timer.start(1000)
+        self.update_github_status()
+        self.scan_installed()
+        self.schedule_update_checks()
+        self.setup_keyboard()
+
+    def build_sidebar(self, shell_layout: QHBoxLayout) -> None:
+        """Navigation, GitHub status block and version button."""
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(SIDEBAR_WIDTH)
@@ -300,13 +333,9 @@ class LauncherWindow(QMainWindow):
         self.version_button.clicked.connect(lambda: self.open_settings("About"))
         side.addWidget(self.version_button, alignment=Qt.AlignmentFlag.AlignLeft)
         shell_layout.addWidget(sidebar)
-        body = QWidget()
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(0)
-        shell_layout.addWidget(body, stretch=1)
-        self.pages = QStackedWidget()
-        body_layout.addWidget(self.pages, stretch=1)
+
+    def build_pages(self, body_layout: QVBoxLayout) -> QVBoxLayout:
+        """Page stack with the library page, returning its layout."""
         list_widget = self.list_page = QWidget()
         layout = QVBoxLayout(list_widget)
         layout.setContentsMargins(22, 20, 22, 16)
@@ -322,6 +351,10 @@ class LauncherWindow(QMainWindow):
         self.pages.addWidget(self.add_page)
         self.pages.currentChanged.connect(self.page_changed)
         self.list_scroll = 0
+        return layout
+
+    def build_toolbar(self, layout: QVBoxLayout) -> None:
+        """Title, search, filters and the library buttons."""
         toolbar = QHBoxLayout()
         toolbar.setSpacing(10)
         self.page_title = QLabel("Library")
@@ -368,6 +401,9 @@ class LauncherWindow(QMainWindow):
         self.check_button.clicked.connect(lambda: self.refresh_releases(force=True))
         toolbar.addWidget(self.check_button)
         layout.addLayout(toolbar)
+
+    def build_banner(self, layout: QVBoxLayout) -> None:
+        """Updates banner above the list."""
         self.banner = QFrame()
         self.banner.setObjectName("updatesBanner")
         banner_layout = QHBoxLayout(self.banner)
@@ -388,6 +424,9 @@ class LauncherWindow(QMainWindow):
         self.banner.hide()
         layout.addWidget(self.banner)
         self.search.setFocus()
+
+    def build_list(self, layout: QVBoxLayout) -> None:
+        """Scrolling app list and the empty-state label."""
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
@@ -407,6 +446,9 @@ class LauncherWindow(QMainWindow):
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setWordWrap(True)
         layout.addWidget(self.empty, stretch=1)
+
+    def build_welcome(self, layout: QVBoxLayout) -> None:
+        """First-run panel shown while the library is empty."""
         self.welcome = QWidget()
         welcome_layout = QVBoxLayout(self.welcome)
         welcome_layout.setSpacing(16)
@@ -444,6 +486,9 @@ class LauncherWindow(QMainWindow):
         welcome_layout.addLayout(welcome_buttons)
         welcome_layout.addStretch()
         layout.addWidget(self.welcome, stretch=1)
+
+    def build_footer(self, body_layout: QVBoxLayout) -> None:
+        """Status line with progress, cancel and orphans buttons."""
         self.footer = StatusMessage()
         self.footer.changed.connect(self.update_status_line)
         self.footer.expired.connect(self.expire_footer)
@@ -466,10 +511,9 @@ class LauncherWindow(QMainWindow):
         progress_row.addWidget(self.orphans_button)
         body_layout.addWidget(self.status_line)
         self.update_status_line()
-        self.cards: dict[str, AppRow] = {}
-        self.search.textChanged.connect(self.refresh)
-        self.filter_installed.toggled.connect(self.refresh)
-        QApplication.styleHints().colorSchemeChanged.connect(self.system_theme_changed)
+
+    def build_tray(self) -> None:
+        """System tray icon and its menu."""
         self.tray_icons = (QIcon(str(APP_ICON)), QIcon(str(APP_UPDATE_ICON)))
         self.tray = QSystemTrayIcon(self.tray_icons[0], self)
         self.tray_has_updates = False
@@ -488,17 +532,6 @@ class LauncherWindow(QMainWindow):
         self.notified = notified_versions(self.settings)
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
-        self.apply_theme()
-        restore_rate_limits(self.library.data_dir / "release-cache")
-        self.update_timer = QTimer(self)
-        self.update_timer.timeout.connect(self.scheduled_check)
-        self.github_timer = QTimer(self)
-        self.github_timer.timeout.connect(self.update_github_status)
-        self.github_timer.start(1000)
-        self.update_github_status()
-        self.scan_installed()
-        self.schedule_update_checks()
-        self.setup_keyboard()
 
     def setup_keyboard(self) -> None:
         """Shortcuts, focus behaviour and the order Tab walks through the controls."""
