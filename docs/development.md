@@ -15,7 +15,7 @@ Local generated directories are ignored by Git:
 
 - `.venv/` — development environment.
 - `build/` — packaging environment, cached downloads and temporary build files.
-- `dist/` — finished AppImage and checksum file.
+- `dist/` — finished AppImage, its `.zsync` file and checksum file.
 - `.backups/` — local recovery archives; preserve these when cleaning generated files.
 
 Keep obsolete research and extra screenshots in `.backups/`, outside the published docs.
@@ -78,6 +78,9 @@ build/packaging-env/bin/python packaging/build_appimage.py
 ```
 
 Output goes to `dist/`: `AppGlider-<version>-x86_64.AppImage` and `SHA256SUMS.txt`.
+The build embeds update information and checks it with `--appimage-updateinformation`.
+It also writes `AppGlider-<version>-x86_64.AppImage.zsync`; if appimagetool cannot, a
+local build skips that file and CI stops.
 The version comes from `pyproject.toml`.
 
 Test the package without FUSE, using a disposable first-run home:

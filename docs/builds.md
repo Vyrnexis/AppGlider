@@ -18,9 +18,12 @@ On pushes, pull requests and manual dispatch, the workflow:
 
 Version-tag pushes and manual dispatch also install the packaging dependencies, build
 the trimmed AppImage with bundled Python and Qt, and open it with a disposable first-run
-home to check startup, certificates and its shortcut. They upload the AppImage and
-`SHA256SUMS.txt` as a workflow artifact. Ordinary branch pushes and pull requests skip
-packaging, so pushing a commit and its tag builds the AppImage only once.
+home to check startup, certificates and its shortcut. They upload the AppImage, its
+`.zsync` file and `SHA256SUMS.txt` as a workflow artifact. The build embeds update
+information (`gh-releases-zsync|Vyrnexis|AppGlider|latest|...`) so AppImageUpdate and
+similar tools can update the image; in CI the build fails if no `.zsync` file is made.
+Ordinary branch pushes and pull requests skip packaging, so pushing a commit and its tag
+builds the AppImage only once.
 
 Open **Actions → Linux AppImage**, select a successful tag or manual run and download
 **AppGlider-x86_64** under **Artifacts**. GitHub requires a signed-in
@@ -57,8 +60,8 @@ To prepare a release:
 The tag must exactly match `v` plus the project version; a mismatch stops the build.
 After all checks pass, the release job downloads the tested artifact, verifies its checksum
 and creates a draft on the repository's **Releases** page. The draft contains the AppImage,
-`SHA256SUMS.txt`, the example catalog `artcraft.toml` (copied from `docs/catalogs/`) and
-generated release notes. No additional personal access token is required;
+its `.zsync` file, `SHA256SUMS.txt`, the example catalog `artcraft.toml` (copied from
+`docs/catalogs/`) and generated release notes. No additional personal access token is required;
 the job uses GitHub's workflow token.
 
 Test the AppImage on a real desktop, review the draft's notes, then choose **Publish release**.

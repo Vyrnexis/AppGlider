@@ -20,10 +20,28 @@ PACKAGING = ROOT / "packaging"
 BUILD = ROOT / "build" / "appimage"
 CACHE = ROOT / "build" / "downloads"
 METAINFO = "io.github.vyrnexis.AppGlider.appdata.xml"
+UPDATE_INFORMATION = "gh-releases-zsync|Vyrnexis|AppGlider|latest|AppGlider-*x86_64.AppImage.zsync"
 
 
 def run(*args: str, cwd: Path = ROOT) -> None:
     subprocess.run(args, cwd=cwd, check=True)
+
+
+def installed_update_information(image: Path) -> str:
+    """Ask the image runtime for the update information embedded in it."""
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"APPDIR", "APPIMAGE", "OWD", "ARGV0"}
+    }
+    result = subprocess.run(
+        [str(image), "--appimage-updateinformation"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=environment,
+    )
+    return result.stdout.strip()
 
 
 def download(item: dict[str, str]) -> Path:
@@ -115,6 +133,11 @@ def main() -> None:
         output.mkdir(exist_ok=True)
         image = output / f"AppGlider-{version}-x86_64.AppImage"
         staged_image = stage / image.name
+        zsync = image.with_name(image.name + ".zsync")
+        # Never ship a .zsync that does not belong to this build.
+        zsync.unlink(missing_ok=True)
+        # appimagetool's extract-and-run mode would otherwise change into $OWD.
+        os.environ.pop("OWD", None)
         os.environ["ARCH"] = "x86_64"
         os.environ["VERSION"] = version
         run(
@@ -125,11 +148,25 @@ def main() -> None:
             "--comp",
             "zstd",
             "--no-appstream",
+            "--updateinformation",
+            UPDATE_INFORMATION,
             str(appdir),
             str(staged_image),
+            cwd=stage,
         )
+        # appimagetool writes the .zsync into its working directory, using its own zsyncmake.
+        made = stage / (staged_image.name + ".zsync")
+        if made.is_file():
+            made.replace(zsync)
+        elif os.environ.get("GITHUB_ACTIONS") == "true":
+            raise SystemExit("appimagetool did not write the release .zsync file; install zsync.")
+        else:
+            print("Skipped the .zsync file: zsyncmake is not installed.")
         # Replace the inode after packing so an already running image keeps its contents.
         staged_image.replace(image)
+        embedded = installed_update_information(image)
+        if embedded != UPDATE_INFORMATION:
+            raise SystemExit(f"Unexpected update information in {image.name}: {embedded!r}")
         with image.open("rb") as source:
             digest = hashlib.file_digest(source, "sha256").hexdigest()
         (output / "SHA256SUMS.txt").write_text(f"{digest}  {image.name}\n")
