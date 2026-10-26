@@ -22,8 +22,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from test_library import APP, appimage_bytes, release_for
 
+from appglider import APP_VERSION, self_update
 from appglider import app as app_module
-from appglider import self_update
 from appglider.instance import SingleInstance
 from appglider.jobs import TaskResult
 from appglider.library import Library
@@ -767,7 +767,7 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(window.self_banner.isHidden())
         self.assertEqual(self.calls, 0)
         self.assertEqual(self.hint(), "Not checked yet")
-        self.assertEqual(window.settings_page.self_row.label.text(), "AppGlider 0.8.1")
+        self.assertEqual(window.settings_page.self_row.label.text(), f"AppGlider {APP_VERSION}")
         self.assertEqual(window.settings_page.self_check_button.text(), "Check now")
         self.assertTrue(window.settings_page.self_check_button.isEnabled())
 

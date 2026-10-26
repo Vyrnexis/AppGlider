@@ -26,7 +26,7 @@ including reverse engineering to debug those modifications, under the applicable
 To use replacement libraries, extract the AppImage into a writable directory:
 
 ```sh
-./AppGlider-0.8.1-x86_64.AppImage --appimage-extract
+./AppGlider-0.9.0-x86_64.AppImage --appimage-extract
 ./squashfs-root/AppRun
 ```
 
