@@ -37,12 +37,13 @@ The interface is one main window with a sidebar and stacked pages, all in `src/a
 
 | Module | Responsibility |
 | --- | --- |
-| `window.py` | Main window: sidebar, Library and Updates pages, tray |
+| `window.py` | Main window: sidebar, Library and Updates pages, banners, tray |
+| `self_update.py` | Check for, download and install new AppGlider versions; remove the replaced image |
 | `rows.py` | Library row widgets, status chips and drag reordering |
 | `theme.py` | Colour tokens, palette, stylesheet and the painted sidebar icons |
 | `app_page.py` | App page: release notes, versions, preferences, Manage; shared panel and setting-row helpers |
 | `app_status.py` | The status chip and main action of an app, from its install and release state |
-| `settings_page.py` | Settings page and its six sections (instant apply) |
+| `settings_page.py` | Settings page and its six sections (instant apply), including Space used |
 | `add_page.py` | Add app page: inspect a repository, choose build and icon, add |
 | `controls.py` | Switch and segmented controls |
 | `preferences.py` | Theme, accent and update-check choices, migration of retired themes, pinned apps, custom order and seen update notices |
@@ -120,7 +121,7 @@ Review these files together when updating the runtime:
 | --- | --- |
 | `packaging/build-requirements.txt` | Build-tool version |
 | `packaging/runtime-requirements.txt` | Bundled Python dependencies |
-| `packaging/downloads.json` | Python AppImage, packaging tool and runtime hashes |
+| `packaging/downloads.json` | Python AppImage (Python 3.13.17), packaging tool and runtime hashes |
 | `packaging/ubuntu-libs.json` | Bundled X11 library downloads and hashes |
 
 Some upstream tool URLs use mutable `continuous` releases. A changed download fails the

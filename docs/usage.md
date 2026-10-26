@@ -261,10 +261,10 @@ buttons **Launch** and the main action (Install, Update, Choose build or Cancel)
   (**Check now** looks again).
 - **Preferences**: **Release channel**, **Hold at this version**, **Pin to top**, **Build**,
   **Icon** and **Menu shortcut** (**Repair**). Changes apply immediately.
-- **Manage** (in red): **Roll back**, **Uninstall…** and **Remove…** from the library.
-  Each asks before it does anything. Uninstalling keeps your documents and the app's own
-  settings. An app must be uninstalled before it can be removed from the library, and
-  removing it deletes no files.
+- **Manage** (in red): **Roll back** when there is a kept copy, then **Uninstall…** while the
+  app is installed or **Remove…** from the library once it is not. Each asks before it does
+  anything. Uninstalling keeps your documents and the app's own settings. Removing an app
+  from the library deletes no files.
 
 ## Choosing a build
 
@@ -346,7 +346,7 @@ page says "Changes save automatically".
 - **Updates**: how often to check for updates, and whether to **Notify me about new
   updates**.
 - **Catalogs**: import a catalog, add the example catalog, or export your own.
-- **Storage**: the folder new apps are installed into.
+- **Storage**: the folder new apps are installed into, and the space your apps use.
 - **GitHub**: how many requests GitHub reports as remaining (no requests are made).
 - **About**: the version, **Check now** for a new AppGlider version, and project links.
 
@@ -356,8 +356,19 @@ page says "Changes save automatically".
 changes as you pick, so you can try them out. If you used the older Forest, Earthy or
 Sandstone themes, AppGlider now shows them as Dark with a Green or Amber accent.
 
-Changing the install folder (under **Storage**) only affects new installs. Apps you already installed stay where
-they are and keep updating there. The new folder is used once you finish typing it or choose it with **Browse…**.
+Changing the install folder (under **Storage**) only affects new installs. Apps you already
+installed stay where they are and keep updating there. The new folder is used once you finish
+typing it or choose it with **Browse…**.
+
+**Space used.** Below the folder, **Storage** shows how much disk space your installed apps
+take, and how much is free on that drive. One bar splits the total into **In use**, the
+versions you run (solid), and **Kept for roll back**, the earlier copies (striped). Below it
+every installed app is listed, largest first, with its own bar. The panel only shows
+numbers. It has no delete buttons: each app keeps just one earlier version, and an update
+replaces it, so the space does not keep growing. The sizes are the app files themselves, not
+the documents or settings the apps keep for themselves.
+
+![Settings, Storage section with the space used by each app](previews/appglider-storage.png)
 
 ## The tray icon
 
@@ -399,7 +410,7 @@ own entry is removed too, so no dead entry is left behind.
 
 **⋯ → Uninstall…** removes the app and its menu entries. Your documents and the app's
 own settings stay. You cannot uninstall an app while it is running. To remove an app from
-the list as well, uninstall it first, then use **Remove…** under **Manage** on its page.
+the list as well, uninstall it first. Its page then offers **Remove…** under **Manage**.
 
 ## If something goes wrong
 

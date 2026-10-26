@@ -28,6 +28,9 @@ confirmations, file pickers and choices that block an action (such as choosing a
 ```
 ┌──────────────┬─────────────────────────────────────────────┐
 │ ◢ AppGlider  │ Page title   [Search……………] [⋯] [⟳]           │
+│              │ ┌ AppGlider banner (new version, accent)  ┐ │
+│              │ │ AppGlider 0.9.1 is available [Update]   │ │
+│              │ └─────────────────────────────────────────┘ │
 │              │ ┌ updates banner (only when updates wait) ┐ │
 │ ▣ Library 12 │ │ 2 updates ready.        [Update all]    │ │
 │ ↓ Updates  2 │ └─────────────────────────────────────────┘ │
@@ -61,6 +64,12 @@ confirmations, file pickers and choices that block an action (such as choosing a
   Storage also has a read-only Space used panel: the total, one bar split into the versions
   in use and the copies kept for roll back, and every installed app largest first with its
   own bar. It has no actions.
+
+The AppGlider banner shows when a new version of AppGlider is out. It sits above the amber
+updates banner on Library and Updates, tinted in the accent colour, with a "What's new ↗"
+link and one normal-style button (Update AppGlider, Restart now or Releases on GitHub ↗).
+AppGlider is never a row. Settings → About has a row with the version, a hint with the result
+of the last check and a Check now button.
 
 Space bars have no track behind them, so no part reads as free space. The version in use
 is solid accent; the kept copy is accent stripes, so the two differ by pattern as well as

@@ -67,7 +67,8 @@ the job uses GitHub's workflow token.
 Test the AppImage on a real desktop, review the draft's notes, then choose **Publish release**.
 Ordinary branch pushes, pull requests and manual builds do not create releases.
 An existing release for the same tag is not overwritten; creating it again fails.
-Automatic AppGlider self-updates are separate work.
+AppGlider's own update button reads the published release, so publish the draft before
+expecting anyone to be offered the new version.
 
 ## References
 

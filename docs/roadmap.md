@@ -7,14 +7,6 @@ change after discussion. Something being listed here is not a promise that it wi
 
 - **Install queue:** line up several installs or updates, with clear progress and a way to
   cancel.
-- **AppGlider updating itself:** check for new versions of AppGlider, show what changed and
-  offer an update button. Today you update AppGlider by downloading the new AppImage.
-- **Space used:** a read-only panel in Settings → Storage showing how much space your apps
-  use, split into the versions in use and the copies kept for roll back (striped), with
-  every installed app listed largest first. It has no delete buttons: each app keeps only one
-  earlier version and updating replaces it, so the space cannot keep growing.
-- **A tidier Manage area:** an app page shows Uninstall while the app is installed and
-  Remove from library once it is not, instead of both with one greyed out.
 
 ## Under discussion
 
@@ -24,6 +16,18 @@ change after discussion. Something being listed here is not a promise that it wi
 
 ## Done
 
+- **AppGlider updating itself:** AppGlider checks for new versions of itself, shows a banner
+  with what changed and offers **Update AppGlider**. It downloads and checks the new file,
+  points the menu entry at it and offers **Restart now**. The replaced file is removed for
+  you. **Settings → About** has **Check now**.
+- **Space used:** a read-only panel in Settings → Storage shows how much space your apps use,
+  split into the versions in use and the copies kept for roll back (striped), with every
+  installed app listed largest first. It has no delete buttons: each app keeps only one
+  earlier version and updating replaces it, so the space cannot keep growing.
+- **A tidier Manage area:** an app page shows Uninstall while the app is installed and
+  Remove from library once it is not, instead of both with one greyed out.
+- **Update information for other tools:** the AppImage carries update information and each
+  release includes a `.zsync` file, so tools such as AppImageUpdate can update it.
 - **A new interface:** a sidebar (Library, Updates, Add app, Settings) with a status block,
   apps as rows with status chips, an updates banner with **Update all**, and a page for each
   app with its release notes, versions, preferences and a Manage area. Settings and Add app

@@ -23,7 +23,8 @@ made up.*
   A banner offers **Update all**, and a badge appears on its tray icon when something is
   waiting.
 - Checks each download against the checksum the project published before installing.
-- Keeps the previous version so you can roll back if an update misbehaves.
+- Keeps the previous version so you can roll back if an update misbehaves, and shows how
+  much space your apps and those kept copies use.
 - Lets you choose stable releases only, or try previews, for each app, and read the release
   notes on the app's own page before you update.
 - Can hold an app at its current version so it is never offered an update.
@@ -33,6 +34,8 @@ made up.*
 - Can show a desktop notification when new updates are found (off unless you turn it on).
 - Shares lists of apps as plain text files you can read, edit and import
   (see [catalogs](docs/usage.md#catalogs-sharing-a-list-of-apps)).
+- Looks for new versions of AppGlider itself and, when you agree, downloads and checks the
+  new file for you.
 - Follows your desktop's light or dark setting, or choose Light or Dark and one of four
   accent colours (Blue, Green, Amber or Teal).
 
@@ -52,7 +55,8 @@ already taken. Version 0.4.0 and later start with a fresh library and settings.
 
 Keep the file somewhere permanent, such as `~/Applications`. AppGlider adds a menu entry
 that points at it. If you move the file, start it once from its new place and the entry is
-repaired.
+repaired. When a new version of AppGlider is out, it offers to download it next to the old
+file and removes the old file after you switch.
 
 **What you need:** a 64-bit (x86_64) Linux desktop that is about as new as Ubuntu 22.04 or
 newer (technically, glibc 2.35 or newer). That covers current Ubuntu, Linux Mint, Fedora,
