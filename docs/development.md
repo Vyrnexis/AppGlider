@@ -37,7 +37,8 @@ The interface is one main window with a sidebar and stacked pages, all in `src/a
 
 | Module | Responsibility |
 | --- | --- |
-| `window.py` | Main window: sidebar, Library and Updates pages, rows, drag reordering, tray, theme stylesheet |
+| `window.py` | Main window: sidebar, Library and Updates pages, rows, drag reordering, tray |
+| `theme.py` | Colour tokens, palette, stylesheet and the painted sidebar icons |
 | `app_page.py` | App page: release notes, versions, preferences, Manage; shared panel and setting-row helpers |
 | `app_status.py` | The status chip and main action of an app, from its install and release state |
 | `settings_page.py` | Settings page and its six sections (instant apply) |
@@ -46,7 +47,7 @@ The interface is one main window with a sidebar and stacked pages, all in `src/a
 | `preferences.py` | Theme, accent and update-check choices, and migration of retired themes |
 | `catalog_preview.py` | The read-only preview shown before a catalog is imported |
 
-Visual values (colours, radii, sizes) are defined once, as theme tokens, in `window.py`;
+Visual values (colours, radii, sizes) are defined once, as theme tokens, in `theme.py`;
 [the design brief](design.md) describes them and the rules for new screens. Sidebar and
 check-button icons are drawn with `QPainter` in the current theme's colours, so the
 AppImage needs no SVG support.
