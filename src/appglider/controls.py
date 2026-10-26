@@ -1,13 +1,14 @@
-"""Small reusable controls: a switch and a segmented choice, coloured by the theme tokens."""
+"""Small reusable controls: switch, segmented choice and space bars."""
 
 from PySide6.QtCore import Property, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPalette, QPen
+from PySide6.QtGui import QBrush, QColor, QPainter, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
     QPushButton,
+    QSizePolicy,
     QWidget,
 )
 
@@ -109,6 +110,160 @@ class Switch(QAbstractButton):
             painter.drawRoundedRect(outline, outline.height() / 2, outline.height() / 2)
 
 
+def paint_space_segments(
+    painter: QPainter,
+    rect: QRectF,
+    in_use: int,
+    kept: int,
+    scale: int,
+    accent: QColor,
+) -> None:
+    """Draw in-use (solid accent) and kept (accent stripes with 1px outline) segments."""
+    total_bytes = in_use + kept
+    if scale <= 0 or total_bytes <= 0:
+        return
+    width = rect.width()
+    height = rect.height()
+    radius = 3.0
+    total_w = width * min(1.0, total_bytes / scale)
+    if total_w <= 0:
+        return
+
+    in_use_rect: QRectF | None = None
+    kept_rect: QRectF | None = None
+
+    if in_use > 0 and kept > 0:
+        bar_w = max(0.0, total_w - 2.0)
+        w_in_use = bar_w * (in_use / total_bytes)
+        if bar_w >= 4.0:
+            w_in_use = max(2.0, min(bar_w - 2.0, w_in_use))
+        w_kept = bar_w - w_in_use
+        in_use_rect = QRectF(rect.x(), rect.y(), w_in_use, height)
+        kept_rect = QRectF(rect.x() + w_in_use + 2.0, rect.y(), w_kept, height)
+    elif in_use > 0:
+        in_use_rect = QRectF(rect.x(), rect.y(), total_w, height)
+    elif kept > 0:
+        kept_rect = QRectF(rect.x(), rect.y(), total_w, height)
+
+    if in_use_rect is not None and in_use_rect.width() > 0:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(accent))
+        r = min(radius, in_use_rect.width() / 2, in_use_rect.height() / 2)
+        painter.drawRoundedRect(in_use_rect, r, r)
+
+    if kept_rect is not None and kept_rect.width() > 0:
+        outline = QColor(accent)
+        outline.setAlphaF(0.4)
+        pen = QPen(outline, 1.0)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        brush = QBrush(accent, Qt.BrushStyle.BDiagPattern)
+        painter.setPen(pen)
+        painter.setBrush(brush)
+        adjusted_rect = kept_rect.adjusted(0.5, 0.5, -0.5, -0.5)
+        r = min(radius, adjusted_rect.width() / 2, adjusted_rect.height() / 2)
+        painter.drawRoundedRect(adjusted_rect, r, r)
+
+
+class SpaceBar(QWidget):
+    """A bar split into in-use and roll-back kept bytes, painted without a background track.
+
+    The colours come from the stylesheet (`qproperty-accent`) and fall back to the
+    palette highlight colour.
+    """
+
+    def __init__(
+        self,
+        in_use: int = 0,
+        kept: int = 0,
+        scale: int = 0,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("spaceBar")
+        self._in_use = max(0, in_use)
+        self._kept = max(0, kept)
+        self._scale = max(0, scale)
+        self._accent = QColor()
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def sizeHint(self) -> QSize:
+        return QSize(100, 8)
+
+    def get_accent(self) -> QColor:
+        return self._accent
+
+    def set_accent(self, colour: QColor) -> None:
+        self._accent = colour
+        self.update()
+
+    accent = Property(QColor, get_accent, set_accent)
+
+    @property
+    def in_use(self) -> int:
+        return self._in_use
+
+    @property
+    def kept(self) -> int:
+        return self._kept
+
+    @property
+    def scale(self) -> int:
+        return self._scale
+
+    def set_values(self, in_use: int, kept: int, scale: int) -> None:
+        self._in_use = max(0, in_use)
+        self._kept = max(0, kept)
+        self._scale = max(0, scale)
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        accent = (
+            self._accent
+            if self._accent.isValid()
+            else self.palette().color(QPalette.ColorRole.Highlight)
+        )
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(0, 0, float(self.width()), float(self.height()))
+        paint_space_segments(painter, rect, self._in_use, self._kept, self._scale, accent)
+
+
+class SpaceSwatch(QWidget):
+    """A legend swatch showing one segment style (in-use solid or kept stripes)."""
+
+    def __init__(self, kind: str = "in_use", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("spaceSwatch")
+        self.kind = kind
+        self._accent = QColor()
+        self.setFixedSize(12, 12)
+
+    def sizeHint(self) -> QSize:
+        return QSize(12, 12)
+
+    def get_accent(self) -> QColor:
+        return self._accent
+
+    def set_accent(self, colour: QColor) -> None:
+        self._accent = colour
+        self.update()
+
+    accent = Property(QColor, get_accent, set_accent)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        accent = (
+            self._accent
+            if self._accent.isValid()
+            else self.palette().color(QPalette.ColorRole.Highlight)
+        )
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(0, 0, float(self.width()), float(self.height()))
+        in_use = 1 if self.kind == "in_use" else 0
+        kept = 1 if self.kind == "kept" else 0
+        paint_space_segments(painter, rect, in_use, kept, 1, accent)
+
+
 class Segmented(QFrame):
     """Two to four exclusive choices side by side. Emits `currentIndexChanged` on user choice."""
 
@@ -140,7 +295,7 @@ class Segmented(QFrame):
             self.currentIndexChanged.emit(index)
 
     def currentIndex(self) -> int:  # noqa: N802
-        return max(0, self.group.checkedId())
+        return max(0, self.group.checkedId() if self.group.checkedId() != -1 else 0)
 
     def setCurrentIndex(self, index: int, *, notify: bool = False) -> None:  # noqa: N802
         """Choose a segment. Programmatic changes are silent unless `notify` is set."""

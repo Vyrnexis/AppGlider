@@ -3,11 +3,13 @@
 Every control saves as it changes; there is no Save or Cancel.
 """
 
+import shutil
+import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSettings, QSignalBlocker, QStandardPaths, Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QShowEvent
+from PySide6.QtGui import QDesktopServices, QFont, QShowEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -27,10 +29,11 @@ from PySide6.QtWidgets import (
 )
 
 from appglider import APP_NAME, APP_VERSION
-from appglider.app_page import SettingRow, add_setting_rows, panel
+from appglider.app_page import SettingRow, add_setting_rows, format_size, panel
 from appglider.catalog_preview import CatalogPreviewDialog
 from appglider.catalogfile import EXAMPLE_CATALOG, CatalogError, read, render
-from appglider.controls import Segmented, Switch
+from appglider.controls import Segmented, SpaceBar, SpaceSwatch, Switch
+from appglider.library import previous_copy
 from appglider.preferences import (
     ACCENTS,
     CHECK_INTERVALS,
@@ -39,6 +42,7 @@ from appglider.preferences import (
     check_interval_hours,
 )
 from appglider.releases import github_request_status
+from appglider.rows import ElidedLabel
 from appglider.storage import atomic_bytes
 
 if TYPE_CHECKING:
@@ -66,6 +70,29 @@ def checked_folder(text: str) -> tuple[Path | None, str]:
     if folder.exists() and not folder.is_dir():
         return None, "The selected path is a file."
     return folder, ""
+
+
+def format_space(size: int) -> str:
+    """Format byte counts: 0 MB for zero, MB under 1 GB, decimal GB for 1 GB and over."""
+    if size <= 0:
+        return "0 MB"
+    if size >= 1_000_000_000:
+        return f"{size / 1_000_000_000:.1f} GB"
+    return format_size(size)
+
+
+def drive_free_space(folder: Path) -> int | None:
+    """Free bytes on the folder's drive, or the nearest existing parent."""
+    current = folder.resolve()
+    while True:
+        try:
+            if current.exists():
+                return shutil.disk_usage(current).free
+        except OSError:
+            pass
+        if current.parent == current:
+            return None
+        current = current.parent
 
 
 class SettingsPage(QWidget):
@@ -129,7 +156,7 @@ class SettingsPage(QWidget):
             page = QWidget()
             layout = QVBoxLayout(page)
             layout.setContentsMargins(0, 0, 8, 0)
-            layout.setSpacing(14)
+            layout.setSpacing(16)
             build(layout)
             layout.addStretch()
             self.stack.addWidget(page)
@@ -331,6 +358,179 @@ class SettingsPage(QWidget):
         layout.addWidget(self.folder_error)
         column.addWidget(frame)
 
+        space_frame, space_layout, _ = panel("Space used")
+        self.space_panel = space_frame
+
+        total_line = QWidget()
+        total_layout = QHBoxLayout(total_line)
+        total_layout.setContentsMargins(0, 0, 0, 0)
+        total_layout.setSpacing(8)
+        total_layout.setAlignment(Qt.AlignmentFlag.AlignBaseline)
+
+        self.space_total_label = QLabel()
+        self.space_total_label.setObjectName("spaceTotal")
+
+        self.space_free_label = QLabel()
+        self.space_free_label.setObjectName("muted")
+
+        total_layout.addWidget(self.space_total_label)
+        total_layout.addWidget(self.space_free_label)
+        total_layout.addStretch()
+        space_layout.addWidget(total_line)
+
+        self.space_summary_bar = SpaceBar()
+        self.space_summary_bar.setFixedHeight(12)
+        space_layout.addWidget(self.space_summary_bar)
+
+        self.space_legend = QWidget()
+        legend_layout = QHBoxLayout(self.space_legend)
+        legend_layout.setContentsMargins(0, 0, 0, 0)
+        legend_layout.setSpacing(6)
+        legend_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        swatch_in_use = SpaceSwatch(kind="in_use")
+        in_use_label = QLabel("In use")
+        self.space_legend_in_use_size = QLabel()
+        font_in_use = self.space_legend_in_use_size.font()
+        font_in_use.setBold(True)
+        self.space_legend_in_use_size.setFont(font_in_use)
+
+        swatch_kept = SpaceSwatch(kind="kept")
+        kept_label = QLabel("Kept for roll back")
+        self.space_legend_kept_size = QLabel()
+        font_kept = self.space_legend_kept_size.font()
+        font_kept.setBold(True)
+        self.space_legend_kept_size.setFont(font_kept)
+
+        legend_layout.addWidget(swatch_in_use)
+        legend_layout.addWidget(in_use_label)
+        legend_layout.addWidget(self.space_legend_in_use_size)
+        legend_layout.addSpacing(16)
+        legend_layout.addWidget(swatch_kept)
+        legend_layout.addWidget(kept_label)
+        legend_layout.addWidget(self.space_legend_kept_size)
+        legend_layout.addStretch()
+        space_layout.addWidget(self.space_legend)
+
+        self.space_empty_label = QLabel("No apps installed yet")
+        self.space_empty_label.setObjectName("muted")
+        space_layout.addWidget(self.space_empty_label)
+
+        self.space_list = QWidget()
+        self.space_list_layout = QVBoxLayout(self.space_list)
+        self.space_list_layout.setContentsMargins(0, 4, 0, 4)
+        self.space_list_layout.setSpacing(8)
+        space_layout.addWidget(self.space_list)
+
+        hint = QLabel("Each app keeps one earlier version for roll back; updating replaces it.")
+        hint.setObjectName("settingHint")
+        hint.setWordWrap(True)
+        space_layout.addWidget(hint)
+
+        column.addWidget(space_frame)
+        self.update_space_used()
+
+    def update_space_used(self) -> None:
+        """Refresh the space used panel with current stats from disk."""
+        folder = Path(self.applied_folder)
+        free_bytes = drive_free_space(folder)
+        free_part = (
+            f" · {format_space(free_bytes)} free on this drive" if free_bytes is not None else ""
+        )
+
+        app_names = {app.id: app.name for app in self.launcher.apps}
+        apps_data: list[tuple[str, str, int, int, int]] = []
+        for app_id, installed in self.launcher.installed.items():
+            try:
+                stat_result = installed.path.stat()
+                if not stat.S_ISREG(stat_result.st_mode):
+                    continue
+                in_use = stat_result.st_size
+            except OSError:
+                continue
+            prev = previous_copy(installed)
+            kept = prev.size if prev is not None else 0
+            total = in_use + kept
+            name = app_names.get(app_id, app_id)
+            apps_data.append((app_id, name, in_use, kept, total))
+
+        if not apps_data:
+            self.space_total_label.setText(format_space(0))
+            self.space_free_label.setText(f"by 0 apps{free_part}")
+            self.space_summary_bar.hide()
+            self.space_legend.hide()
+            self.space_list.hide()
+            self.space_empty_label.show()
+            self._clear_space_list()
+            return
+
+        self.space_empty_label.hide()
+        self.space_summary_bar.show()
+        self.space_legend.show()
+        self.space_list.show()
+
+        total_in_use = sum(item[2] for item in apps_data)
+        total_kept = sum(item[3] for item in apps_data)
+        total_size = total_in_use + total_kept
+        count = len(apps_data)
+        app_word = "app" if count == 1 else "apps"
+
+        self.space_total_label.setText(format_space(total_size))
+        self.space_free_label.setText(f"by {count} {app_word}{free_part}")
+
+        self.space_summary_bar.set_values(total_in_use, total_kept, total_size)
+        self.space_summary_bar.setAccessibleName(
+            f"In use {format_space(total_in_use)}, kept for roll back {format_space(total_kept)}"
+        )
+
+        self.space_legend_in_use_size.setText(format_space(total_in_use))
+        self.space_legend_kept_size.setText(format_space(total_kept))
+
+        apps_data.sort(key=lambda item: (-item[4], item[1].lower()))
+        max_total = apps_data[0][4]
+
+        self._clear_space_list()
+        for _app_id, name, in_use, kept, total in apps_data:
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(12)
+
+            name_label = ElidedLabel()
+            name_label.set_full_text(name)
+            name_label.setFixedWidth(160)
+            # ElidedLabel ignores its width hint; without this the bar paints over the name.
+            name_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+
+            bar = SpaceBar(in_use=in_use, kept=kept, scale=max_total)
+            bar.setFixedHeight(8)
+            if kept > 0:
+                bar.setAccessibleName(
+                    f"{name}: {format_space(in_use)}, {format_space(kept)} kept for roll back"
+                )
+            else:
+                bar.setAccessibleName(f"{name}: {format_space(in_use)}")
+
+            size_label = QLabel(format_space(total))
+            size_label.setObjectName("muted")
+            font = size_label.font()
+            font.setFeature(QFont.Tag("tnum"), 1)
+            size_label.setFont(font)
+            size_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            size_label.setFixedWidth(72)
+
+            row_layout.addWidget(name_label)
+            row_layout.addWidget(bar, stretch=1)
+            row_layout.addWidget(size_label)
+
+            self.space_list_layout.addWidget(row)
+
+    def _clear_space_list(self) -> None:
+        while self.space_list_layout.count():
+            item = self.space_list_layout.takeAt(0)
+            if item is not None and (widget := item.widget()) is not None:
+                widget.deleteLater()
+
     def build_github(self, column: QVBoxLayout) -> None:
         frame, layout, _ = panel("GitHub")
         self.github_details = QLabel()
@@ -376,6 +576,8 @@ class SettingsPage(QWidget):
         if name not in SECTIONS:
             raise ValueError(f"Unknown settings section: {name}")
         self.sections[SECTIONS.index(name)].setChecked(True)
+        if name == "Storage":
+            self.update_space_used()
 
     def focus_section(self) -> None:
         """Put the keyboard on the chosen section, so focus does not sit on another one."""
@@ -385,6 +587,8 @@ class SettingsPage(QWidget):
         if checked:
             self.stack.setCurrentIndex(index)
             self.body_scroll.verticalScrollBar().setValue(0)
+            if SECTIONS[index] == "Storage":
+                self.update_space_used()
 
     def current_section(self) -> str:
         return SECTIONS[self.stack.currentIndex()]
@@ -400,6 +604,8 @@ class SettingsPage(QWidget):
             self.browse_button,
         ):
             widget.setEnabled(idle)
+        if self.isVisible() and self.current_section() == "Storage":
+            self.update_space_used()
 
     def update_github_status(self) -> None:
         self.github_details.setText(github_request_status()[1])
@@ -411,6 +617,8 @@ class SettingsPage(QWidget):
         if enabled != self.autostart.isChecked():
             with QSignalBlocker(self.autostart):
                 self.autostart.setChecked(enabled)
+        if self.current_section() == "Storage":
+            self.update_space_used()
 
     # Appearance, window and updates
 
@@ -514,4 +722,5 @@ class SettingsPage(QWidget):
             self.launcher.library.apps_dir = folder
             self.applied_folder = text
             self.launcher.scan_installed()
+            self.update_space_used()
         return True

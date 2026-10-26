@@ -56,8 +56,9 @@ from test_library import APP, appimage_bytes, release_for
 
 from appglider import APP_ICON, APP_UPDATE_ICON, APP_VERSION, github_status, releases
 from appglider.catalog import App, custom_app
+from appglider.controls import SpaceBar
 from appglider.jobs import TaskResult
-from appglider.library import Installed, Library
+from appglider.library import Installed, Library, previous_copy
 from appglider.preferences import (
     appearance_choice,
     check_interval_hours,
@@ -68,7 +69,7 @@ from appglider.preferences import (
 from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
 from appglider.releases import Release
 from appglider.rows import ORDER_MIME
-from appglider.settings_page import SettingsPage
+from appglider.settings_page import SettingsPage, format_space
 from appglider.storage import atomic_json
 from appglider.window import (
     LauncherWindow,
@@ -2077,6 +2078,108 @@ class LibraryTests(unittest.TestCase):
         with patch("appglider.settings_page.QFileDialog.getExistingDirectory", return_value=""):
             page.browse_button.click()
         self.assertEqual(self.settings.value("installation/folder"), chosen)
+
+    def test_storage_space_used_empty_library(self) -> None:
+        page = self.window.settings_page
+        self.window.open_settings("Storage")
+        self.assertTrue(page.space_empty_label.isVisible())
+        self.assertEqual(page.space_empty_label.text(), "No apps installed yet")
+        self.assertTrue(page.space_summary_bar.isHidden())
+        self.assertTrue(page.space_legend.isHidden())
+        self.assertTrue(page.space_list.isHidden())
+        self.assertEqual(page.space_total_label.text(), "0 MB")
+        self.assertIn("by 0 apps", page.space_free_label.text())
+        self.assertEqual(page.space_panel.findChildren(QPushButton), [])
+
+    def test_storage_space_used_order_and_sizes_with_rollback(self) -> None:
+        page = self.window.settings_page
+        library = self.window.library
+        self.window.open_settings("Storage")
+
+        app_rolled = self.window.apps[0]
+        app_single = self.window.apps[1]
+
+        payload_rolled_old = appimage_bytes(b"v1" + b"x" * 200_000)
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload_rolled_old)):
+            library.install(
+                app_rolled, release_for("1.0.0", payload_rolled_old), Event(), lambda *a: None
+            )
+
+        payload_rolled_new = appimage_bytes(b"v2" + b"y" * 100_000)
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload_rolled_new)):
+            library.install(
+                app_rolled, release_for("1.1.0", payload_rolled_new), Event(), lambda *a: None
+            )
+
+        # Roll back: active version is 1.0.0, kept copy is 1.1.0 (newer than in use)
+        library.rollback(app_rolled)
+        installed_rolled = library.scan()[app_rolled.id]
+        self.assertEqual(installed_rolled.version, "1.0.0")
+        prev = previous_copy(installed_rolled)
+        self.assertIsNotNone(prev)
+        assert prev is not None
+        self.assertEqual(prev.version, "1.1.0")
+
+        # Single app with no kept copy
+        payload_single = appimage_bytes(b"v3" + b"z" * 500_000)
+        with patch("appglider.releases.request", return_value=io.BytesIO(payload_single)):
+            library.install(
+                app_single, release_for("1.0.0", payload_single), Event(), lambda *a: None
+            )
+
+        self.window.scan_installed()
+
+        self.assertTrue(page.space_empty_label.isHidden())
+        self.assertTrue(page.space_summary_bar.isVisible())
+        self.assertTrue(page.space_legend.isVisible())
+        self.assertTrue(page.space_list.isVisible())
+
+        # No QPushButton inside Space used panel
+        self.assertEqual(page.space_panel.findChildren(QPushButton), [])
+
+        # Total line
+        expected_in_use = len(payload_rolled_old) + len(payload_single)
+        expected_kept = len(payload_rolled_new)
+        expected_total = expected_in_use + expected_kept
+        self.assertEqual(page.space_total_label.text(), format_space(expected_total))
+        self.assertIn("by 2 apps", page.space_free_label.text())
+
+        # Summary bar
+        self.assertEqual(page.space_summary_bar.in_use, expected_in_use)
+        self.assertEqual(page.space_summary_bar.kept, expected_kept)
+        self.assertEqual(
+            page.space_summary_bar.accessibleName(),
+            f"In use {format_space(expected_in_use)}, "
+            f"kept for roll back {format_space(expected_kept)}",
+        )
+
+        # Per-app list order: largest total first
+        # app_single (500 KB) > app_rolled (200 KB in use + 100 KB kept = 300 KB)
+        list_bars = page.space_list.findChildren(SpaceBar)
+        self.assertEqual(len(list_bars), 2)
+        self.qt.processEvents()
+        for bar in list_bars:
+            name = bar.parentWidget().layout().itemAt(0).widget()
+            self.assertGreater(bar.geometry().left(), name.geometry().right())
+
+        # First app: app_single (no kept copy)
+        bar_single = list_bars[0]
+        self.assertEqual(bar_single.in_use, len(payload_single))
+        self.assertEqual(bar_single.kept, 0)
+        self.assertEqual(
+            bar_single.accessibleName(), f"{app_single.name}: {format_space(len(payload_single))}"
+        )
+        self.assertNotIn("kept for roll back", bar_single.accessibleName())
+
+        # Second app: app_rolled (kept copy whose version is newer than in use)
+        bar_rolled = list_bars[1]
+        self.assertEqual(bar_rolled.in_use, len(payload_rolled_old))
+        self.assertEqual(bar_rolled.kept, len(payload_rolled_new))
+        self.assertEqual(
+            bar_rolled.accessibleName(),
+            f"{app_rolled.name}: {format_space(len(payload_rolled_old))}, "
+            f"{format_space(len(payload_rolled_new))} kept for roll back",
+        )
 
     def test_about_links_open_the_project_pages(self) -> None:
         page = self.window.settings_page

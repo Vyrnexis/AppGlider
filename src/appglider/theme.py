@@ -194,6 +194,7 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
             QLabel#pageTitle {{ font-size: 20px; font-weight: 700; }}
             QLabel#welcomeTitle {{ font-size: 27px; font-weight: 650; }}
             QLabel#sectionTitle {{ font-size: 18px; font-weight: 650; }}
+            QLabel#spaceTotal {{ font-size: 20px; font-weight: 700; }}
             QPushButton#compact {{ padding: 6px 12px; }}
             QToolButton#checkNow, QToolButton#libraryOptions {{ padding: 0;
                 min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; }}
@@ -310,6 +311,8 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
             QPushButton#segmentedButton:checked:disabled {{ background: {raised}; }}
             QAbstractButton#switch {{ qproperty-trackOn: {accent}; qproperty-trackOff: {raised};
                 qproperty-knob: {on_accent}; qproperty-ring: {accent}; }}
+            SpaceBar, SpaceSwatch, QWidget#spaceBar, QWidget#spaceSwatch {{
+                qproperty-accent: {accent}; }}
             QLabel#pinStar {{ color: {PIN_COLOUR}; font-size: 15px; }}
             QPushButton#appName {{ border: none; padding: 0; text-align: left;
                 font-size: 14px; font-weight: 600; background: transparent; }}
