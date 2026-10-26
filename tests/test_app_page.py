@@ -62,11 +62,14 @@ class AppPageTests(unittest.TestCase):
         self.qt.processEvents()
 
     def wait_for_task(self) -> None:
+        # The window and the page get the result as two separate events; on a slow machine
+        # the task can be cleared before the page has seen it, so wait for both.
         deadline = time.monotonic() + 5
-        while self.window.task is not None and time.monotonic() < deadline:
+        while (self.window.task is not None or self.page.pending) and time.monotonic() < deadline:
             QTest.qWait(10)
             time.sleep(0.001)
         self.assertIsNone(self.window.task, "Background operation did not finish")
+        self.assertEqual(self.page.pending, "", "The page did not receive the result")
 
     def install(self, *versions: str) -> None:
         for version in versions:
