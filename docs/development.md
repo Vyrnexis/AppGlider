@@ -37,14 +37,15 @@ The interface is one main window with a sidebar and stacked pages, all in `src/a
 
 | Module | Responsibility |
 | --- | --- |
-| `window.py` | Main window: sidebar, Library and Updates pages, rows, drag reordering, tray |
+| `window.py` | Main window: sidebar, Library and Updates pages, tray |
+| `rows.py` | Library row widgets, status chips and drag reordering |
 | `theme.py` | Colour tokens, palette, stylesheet and the painted sidebar icons |
 | `app_page.py` | App page: release notes, versions, preferences, Manage; shared panel and setting-row helpers |
 | `app_status.py` | The status chip and main action of an app, from its install and release state |
 | `settings_page.py` | Settings page and its six sections (instant apply) |
 | `add_page.py` | Add app page: inspect a repository, choose build and icon, add |
 | `controls.py` | Switch and segmented controls |
-| `preferences.py` | Theme, accent and update-check choices, and migration of retired themes |
+| `preferences.py` | Theme, accent and update-check choices, migration of retired themes, pinned apps, custom order and seen update notices |
 | `catalog_preview.py` | The read-only preview shown before a catalog is imported |
 
 Visual values (colours, radii, sizes) are defined once, as theme tokens, in `theme.py`;

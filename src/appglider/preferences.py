@@ -1,4 +1,6 @@
-"""Appearance and update-check choices shared by the window and the Settings page."""
+"""Appearance, update-check and saved library settings."""
+
+import json
 
 from PySide6.QtCore import QSettings
 
@@ -29,6 +31,7 @@ CHECK_INTERVALS = (
     ("Only when I choose", 0),
 )
 DEFAULT_CHECK_HOURS = 6
+MAX_PINNED = 100
 
 
 def appearance_choice(settings: QSettings) -> tuple[str, str]:
@@ -51,3 +54,40 @@ def check_interval_hours(settings: QSettings) -> int:
     except ValueError:
         return DEFAULT_CHECK_HOURS
     return hours if hours in {value for _, value in CHECK_INTERVALS} else DEFAULT_CHECK_HOURS
+
+
+def pinned_apps(settings: QSettings) -> set[str]:
+    """Ids of the apps the user pinned to the top; anything unreadable counts as none."""
+    try:
+        data = json.loads(str(settings.value("library/pinned", "[]")))
+    except ValueError:
+        return set()
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        return set()
+    return {item for item in data if len(item) <= 256}
+
+
+def custom_order(settings: QSettings) -> list[str]:
+    """Ids in the order the user dragged them into; anything unreadable counts as none."""
+    try:
+        data = json.loads(str(settings.value("library/order", "[]")))
+    except ValueError:
+        return []
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        return []
+    return list(dict.fromkeys(item for item in data if len(item) <= 256))
+
+
+def notified_versions(settings: QSettings) -> dict[str, str]:
+    """Update versions the user was already told about, keyed by app id."""
+    try:
+        data = json.loads(str(settings.value("notifications/seen", "{}")))
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        key: value
+        for key, value in data.items()
+        if isinstance(key, str) and isinstance(value, str) and len(key) <= 256 and len(value) <= 128
+    }

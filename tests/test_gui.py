@@ -58,20 +58,22 @@ from appglider import APP_ICON, APP_UPDATE_ICON, APP_VERSION, github_status, rel
 from appglider.catalog import App, custom_app
 from appglider.jobs import TaskResult
 from appglider.library import Installed, Library
-from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
-from appglider.releases import Release
-from appglider.settings_page import SettingsPage
-from appglider.storage import atomic_json
-from appglider.window import (
-    ORDER_MIME,
-    LauncherWindow,
-    OrphansDialog,
+from appglider.preferences import (
     appearance_choice,
     check_interval_hours,
     custom_order,
-    fit_size,
     notified_versions,
     pinned_apps,
+)
+from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
+from appglider.releases import Release
+from appglider.rows import ORDER_MIME
+from appglider.settings_page import SettingsPage
+from appglider.storage import atomic_json
+from appglider.window import (
+    LauncherWindow,
+    OrphansDialog,
+    fit_size,
 )
 
 
