@@ -53,10 +53,18 @@ confirmations, file pickers and choices that block an action (such as choosing a
   in Updates; hidden apps keep their places. Pinned apps stay on top whatever the order.
 - **App page**: header (large icon, name, repository and description, status chips, Launch
   and the primary action), then two columns. Left: What's new (release notes of the
-  offered release) and Versions. Right: Preferences, then Manage (roll back, uninstall,
-  remove from library) styled as a danger area.
+  offered release) and Versions. Right: Preferences, then Manage, styled as a danger area:
+  Roll back, then Uninstall while the app is installed or Remove from library once it is
+  not, never both.
 - **Settings page**: a secondary list (General, Updates, Catalogs, Storage, GitHub, About)
   and panels of setting rows. Changes apply immediately; there is no Save or Cancel.
+  Storage also has a read-only Space used panel: the total, one bar split into the versions
+  in use and the copies kept for roll back, and every installed app largest first with its
+  own bar. It has no actions.
+
+Space bars have no track behind them, so no part reads as free space. The version in use
+is solid accent; the kept copy is accent stripes, so the two differ by pattern as well as
+shade.
 
 Minimum window size 860 × 560. Nothing may require horizontal scrolling at that size.
 
