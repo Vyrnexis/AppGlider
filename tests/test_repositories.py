@@ -918,7 +918,7 @@ class RepositoryGuiTests(unittest.TestCase):
         )
         self.window.open_app(CUSTOM.id)
         self.assertFalse(self.window.app_page.remove_button.isEnabled())
-        self.assertIn("Uninstall", self.window.app_page.remove_row.hint.text())
+        self.assertTrue(self.window.app_page.remove_row.isHidden())
         self.assertIn(CUSTOM, self.library.apps)
         self.window.app_page.back_button.click()
         release = custom_release("0.9.5")

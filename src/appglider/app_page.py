@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import QEvent, QObject, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QBoxLayout,
     QFileDialog,
     QFrame,
@@ -529,14 +530,17 @@ class AppPage(QScrollArea):
         self.rollback_row = SettingRow("Roll back", "Restore the kept copy", self.rollback_button)
         self.uninstall_row = SettingRow("Uninstall", "Your data is kept", self.uninstall_button)
         self.remove_row = SettingRow(
-            "Remove from library", "Uninstall first; no files are deleted", self.remove_button
+            "Remove from library", "No application files are deleted", self.remove_button
         )
-        for index, row in enumerate((self.rollback_row, self.uninstall_row, self.remove_row)):
-            if index:
-                divider = QFrame()
-                divider.setObjectName("rowDivider")
-                divider.setFixedHeight(1)
-                layout.addWidget(divider)
+        layout.addWidget(self.rollback_row)
+        # Each divider belongs to the row below it and is shown with that row.
+        self.manage_dividers: dict[SettingRow, QFrame] = {}
+        for row in (self.uninstall_row, self.remove_row):
+            divider = QFrame()
+            divider.setObjectName("rowDivider")
+            divider.setFixedHeight(1)
+            self.manage_dividers[row] = divider
+            layout.addWidget(divider)
             layout.addWidget(row)
         column.addWidget(frame)
 
@@ -561,6 +565,8 @@ class AppPage(QScrollArea):
         app = self.current_app()
         if app is None:
             return
+        # Read focus first: disabling or hiding the focused button moves it elsewhere.
+        focused = QApplication.focusWidget()
         installed = launcher.installed.get(app.id)
         release = launcher.releases.get(app.id)
         info = launcher.release_infos.get(app.id)
@@ -587,9 +593,16 @@ class AppPage(QScrollArea):
         self.rollback_button.setEnabled(bool(not busy and managed and previous))
         self.uninstall_button.setEnabled(bool(not busy and managed))
         self.remove_button.setEnabled(not busy and installed is None)
-        self.remove_row.hint.setText(
-            "No application files are deleted" if installed is None else "Uninstall it first"
-        )
+        for row, visible in (
+            (self.uninstall_row, installed is not None),
+            (self.remove_row, installed is None),
+        ):
+            row.setVisible(visible)
+            self.manage_dividers[row].setVisible(visible)
+        if focused is not None and self.isAncestorOf(focused) and not focused.isVisibleTo(self):
+            # Keep keyboard focus in the Manage panel when its button disappears.
+            shown = self.uninstall_button if installed is not None else self.remove_button
+            (shown if shown.isEnabled() else self.rollback_button).setFocus()
 
     def refresh_header(
         self, app: App, mode: str, state: str, text: str, tooltip: str, busy: bool

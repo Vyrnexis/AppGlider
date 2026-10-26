@@ -434,7 +434,7 @@ class AppPageTests(unittest.TestCase):
         window.open_app(APP.id)
         self.assertFalse(self.page.shortcut_button.isEnabled())
         self.assertFalse(self.page.rollback_button.isEnabled())
-        self.assertFalse(self.page.uninstall_button.isEnabled())
+        self.assertTrue(self.page.uninstall_row.isHidden())
         self.install("1.0.0")
         self.assertFalse(self.page.rollback_button.isEnabled())
         self.assertEqual(self.page.rollback_row.label.text(), "Roll back")
@@ -479,6 +479,45 @@ class AppPageTests(unittest.TestCase):
             self.page.remove_from_library()
         ask.assert_not_called()
         self.assertIn(APP.id, [app.id for app in self.library.apps])
+
+    def manage_dividers_shown(self) -> int:
+        return sum(not d.isHidden() for d in self.page.manage_dividers.values())
+
+    def test_manage_shows_only_the_action_that_applies(self) -> None:
+        page = self.page
+        self.window.open_app(APP.id)
+        self.assertTrue(page.remove_row.isVisibleTo(page))
+        self.assertTrue(page.remove_button.isEnabled())
+        self.assertFalse(page.uninstall_row.isVisibleTo(page))
+        self.assertEqual(self.manage_dividers_shown(), 1)
+        self.assertEqual(page.remove_row.hint.text(), "No application files are deleted")
+        self.install("1.0.0")
+        self.assertTrue(page.uninstall_row.isVisibleTo(page))
+        self.assertTrue(page.uninstall_button.isEnabled())
+        self.assertFalse(page.remove_row.isVisibleTo(page))
+        self.assertEqual(self.manage_dividers_shown(), 1)
+        self.assertTrue(page.rollback_row.isVisibleTo(page))
+
+    def test_manage_busy_state_disables_the_visible_button(self) -> None:
+        self.install("1.0.0")
+        self.window.open_app(APP.id)
+        with patch.object(self.window, "task", object()):
+            self.page.refresh()
+        self.assertTrue(self.page.uninstall_row.isVisibleTo(self.page))
+        self.assertFalse(self.page.uninstall_button.isEnabled())
+
+    def test_focus_moves_to_remove_when_the_focused_uninstall_button_disappears(self) -> None:
+        self.install("1.0.0")
+        self.window.open_app(APP.id)
+        self.window.activateWindow()
+        self.page.uninstall_button.setFocus()
+        self.qt.processEvents()
+        if QApplication.focusWidget() is not self.page.uninstall_button:
+            self.skipTest("The platform does not give the test window keyboard focus")
+        self.library.remove(APP)
+        self.window.scan_installed()
+        self.qt.processEvents()
+        self.assertIs(QApplication.focusWidget(), self.page.remove_button)
 
     # Versions and release notes
 
