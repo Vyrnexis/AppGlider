@@ -12,6 +12,7 @@ newer version is out. If you want the "how does it actually work" details, see t
 - [Adding apps](#adding-apps)
 - [Installing and launching](#installing-and-launching)
 - [Updates](#updates)
+- [Updating AppGlider](#updating-appglider)
 - [Stable versions and previews](#stable-versions-and-previews)
 - [The app's page](#the-apps-page)
 - [Choosing a build](#choosing-a-build)
@@ -177,6 +178,30 @@ token is needed.
 misbehaves, use **⋯ → Roll back to previous version**, or **Roll back** under **Manage** on the app's page, which also shows the size of the kept copy. A download that fails or is
 cancelled never replaces the version you already have.
 
+## Updating AppGlider
+
+AppGlider also looks for a newer version of itself. When one is out, a banner in your accent colour appears
+above the list on the Library and Updates pages: "**AppGlider 0.9.1** is available", with a
+**What's new ↗** link to that release on GitHub and a button. The button is **Update
+AppGlider** when AppGlider was started from its AppImage in a folder it can write to, and
+**Releases on GitHub ↗** otherwise (for example when you run it from source). For now both
+open the release page in your browser, where you can download the new AppImage; updating in
+place will come later. AppGlider itself is not a row in the list and is not counted in the
+Updates number or in **Update all**.
+
+It looks only for stable releases, and it does so by reading GitHub's ordinary release page,
+so it uses none of GitHub's request allowance. It checks shortly after AppGlider starts, on
+your schedule from **Settings → Updates → Check for updates**, when you press **Check for
+updates**, and when you press **Check now** under **Settings → About**, which also shows when
+it last looked ("Up to date · checked 14:05", "Version 0.9.1 is available" or "Couldn't
+check"). With **Only when I choose**, nothing is checked at startup or on a schedule. It
+works even when you have no apps installed. A failed automatic check is silent; a check you
+asked for says so. There is no setting to turn the check off.
+
+When an update is waiting, the tray icon gets the same badge as for app updates. If you turned
+on **Notify me about new updates**, a scheduled check also tells you once for each new
+AppGlider version.
+
 ## Stable versions and previews
 
 Projects often publish test versions ("beta", "preview") ahead of the real thing. By
@@ -291,7 +316,7 @@ page says "Changes save automatically".
 - **Catalogs**: import a catalog, add the example catalog, or export your own.
 - **Storage**: the folder new apps are installed into.
 - **GitHub**: how many requests GitHub reports as remaining (no requests are made).
-- **About**: the version and project links.
+- **About**: the version, **Check now** for a new AppGlider version, and project links.
 
 ![Settings, General section](previews/appglider-settings.png)
 

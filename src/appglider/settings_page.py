@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appglider import APP_NAME, APP_VERSION
+from appglider import APP_NAME, APP_VERSION, self_update
 from appglider.app_page import SettingRow, add_setting_rows, format_size, panel
 from appglider.catalog_preview import CatalogPreviewDialog
 from appglider.catalogfile import EXAMPLE_CATALOG, CatalogError, read, render
@@ -552,9 +552,15 @@ class SettingsPage(QWidget):
 
     def build_about(self, column: QVBoxLayout) -> None:
         frame, layout, _ = panel("About")
-        title = QLabel(f"{APP_NAME} {APP_VERSION}")
-        title.setObjectName("sectionTitle")
-        layout.addWidget(title)
+        self.self_check_button = QPushButton("Check now")
+        self.self_check_button.setAccessibleName("Check for a new AppGlider version")
+        self.self_check_button.clicked.connect(
+            lambda: self.launcher.start_self_check(explicit=True)
+        )
+        self.self_row = SettingRow(
+            f"{APP_NAME} {APP_VERSION}", "Not checked yet", self.self_check_button
+        )
+        layout.addWidget(self.self_row)
         text = QLabel("A home for your Linux AppImages.\nWritten in Python with Qt.")
         text.setWordWrap(True)
         layout.addWidget(text)
@@ -569,6 +575,14 @@ class SettingsPage(QWidget):
         buttons.addStretch()
         layout.addLayout(buttons)
         column.addWidget(frame)
+        self.update_self_update()
+
+    def update_self_update(self) -> None:
+        """Show what the last check of AppGlider itself found, and whether one is running."""
+        checking = self.launcher.self_task is not None
+        self.self_row.hint.setText(self.launcher.self_state.hint(self_update.running_image()))
+        self.self_check_button.setText("Checking…" if checking else "Check now")
+        self.self_check_button.setEnabled(not checking)
 
     # Sections and state
 

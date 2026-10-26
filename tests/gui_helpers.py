@@ -11,7 +11,7 @@ def close_window(window):
     window.close_after_task = True
     window.close_after_release = True
     window.checks.stop()
-    for task in (window.task, *window.checks.tasks.values()):
+    for task in (window.task, window.self_task, *window.checks.tasks.values()):
         if task is not None:
             task.cancel.set()
     with patch(
@@ -22,6 +22,7 @@ def close_window(window):
         QCoreApplication.processEvents()
         # Mocked workers never emit completion signals; real workers have stopped above.
         window.task = None
+        window.self_task = None
         window.checks.tasks.clear()
         window.close()
     window.deleteLater()

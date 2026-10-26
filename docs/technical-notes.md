@@ -7,6 +7,7 @@ who want to know exactly what AppGlider does with their system, and for contribu
 ## Contents
 
 - [How release checks work](#how-release-checks-work)
+- [AppGlider's own updates](#appgliders-own-updates)
 - [Release notes](#release-notes)
 - [GitHub's request allowance](#githubs-request-allowance)
 - [Stable and preview versions](#stable-and-preview-versions)
@@ -22,8 +23,8 @@ who want to know exactly what AppGlider does with their system, and for contribu
 
 - Startup, scheduled and **Check for updates** checks cover installed apps only. Checking
   an app you have not installed happens only when you inspect a repository or choose
-  **Check now** on its page. With no installed apps, startup makes no release
-  requests.
+  **Check now** on its page. With no installed apps, startup makes no app release
+  requests (AppGlider's own check, below, still runs).
 - Release information is read from GitHub's metadata. AppGlider never downloads an app
   just to look at it or to check for updates.
 - Results less than five minutes old are reused; older results are refreshed. **Check for
@@ -56,7 +57,25 @@ who want to know exactly what AppGlider does with their system, and for contribu
   downloads the file, and rejects it if the server's reported size differs from the
   published size. A failed or cancelled download leaves the installed version untouched.
 - AppGlider itself is updated by replacing its AppImage with a newer one and starting it;
-  it does not update itself.
+  it does not yet do this for you (see [AppGlider's own updates](#appgliders-own-updates)).
+
+## AppGlider's own updates
+
+AppGlider looks for a newer stable release of itself (`Vyrnexis/AppGlider`) with the same
+`HEAD` request to `releases/latest` that the cheap app checks use. There is no fallback to
+the API: if the redirect gives no clear answer the check is reported as failed (when the user
+asked for it) or ignored (in the background), so it never uses GitHub's allowance. The tag's
+version is compared with the running version using the usual version ordering, and a newer
+stable version is offered; previews and unreadable tags never are. The check runs on a
+separate background worker, not in the window's single task slot, so it never blocks an
+install, and only one runs at a time. It runs at startup, on the schedule, from the toolbar
+and tray **Check for updates**, and from **Settings → About → Check now**, even with no apps
+installed. With **Only when I choose** the startup and scheduled runs are skipped, leaving the
+toolbar and tray command and **Check now**. The result is held in memory only. A newer version shows the tray
+badge and, if notifications are on, one scheduled-check message per version, remembered under
+the reserved key `AppGlider:self` in `notifications/seen` (app identifiers never contain a
+colon). The running AppImage is recognised by `APPIMAGE` and `APPDIR` together with the Python
+prefix lying inside `APPDIR`; the same test builds the menu shortcut's command.
 
 ## Release notes
 

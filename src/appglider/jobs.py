@@ -45,3 +45,26 @@ class Task(QRunnable):
             self.signals.failed.emit(str(error))
         else:
             self.signals.finished.emit(result)
+
+
+class LookupSignals(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+
+class Lookup(QRunnable):
+    """A small background question with one answer, kept apart from the window's single Task."""
+
+    def __init__(self, operation: Callable[[Event], object]) -> None:
+        super().__init__()
+        self.operation = operation
+        self.cancel = Event()
+        self.signals = LookupSignals()
+
+    def run(self) -> None:
+        try:
+            answer = self.operation(self.cancel)
+        except Exception as error:
+            self.signals.failed.emit(str(error))
+        else:
+            self.signals.finished.emit(answer)

@@ -14,13 +14,14 @@ from appglider import APP_NAME, APP_TASKBAR_ICON, APP_VERSION
 from appglider.catalogfile import EXAMPLE_CATALOG
 from appglider.catalogfile import read as read_catalog
 from appglider.instance import SingleInstance
+from appglider.self_update import running_image
 from appglider.window import LauncherWindow
 
 
 def launcher_command() -> list[str]:
-    image, directory = os.environ.get("APPIMAGE"), os.environ.get("APPDIR")
-    if image and directory and Path(sys.prefix).resolve().is_relative_to(Path(directory).resolve()):
-        return [str(Path(image).absolute())]
+    image = running_image()
+    if image is not None:
+        return [str(image)]
     return [sys.executable, "-O", "-m", "appglider"]
 
 
@@ -110,7 +111,7 @@ def main() -> int:
 
         QTimer.singleShot(200, report)
     else:
-        QTimer.singleShot(0, window.refresh_releases)
+        QTimer.singleShot(0, window.startup_check)
     status = app.exec()
     instance.release()
     return status

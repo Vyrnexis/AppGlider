@@ -92,6 +92,9 @@ class LibraryTests(unittest.TestCase):
             str(Path(self.temp.name) / "settings.ini"), QSettings.Format.IniFormat
         )
         self.settings.setValue("appearance/theme", "Light")
+        check = patch("appglider.self_update.check", return_value=None)  # no network
+        check.start()
+        self.addCleanup(check.stop)
         library = stock(
             Library(
                 Path(self.temp.name) / "data",
@@ -171,7 +174,7 @@ class LibraryTests(unittest.TestCase):
             application.return_value.setApplicationDisplayName.assert_called_once_with("AppGlider")
             application.return_value.setDesktopFileName.assert_called_once_with("appglider")
             window.return_value.library.refresh_launcher_shortcut.assert_called_once()
-            timer.assert_called_once_with(0, window.return_value.refresh_releases)
+            timer.assert_called_once_with(0, window.return_value.startup_check)
 
     def test_close_hides_to_tray_and_activation_restores_window(self) -> None:
         with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
@@ -2204,7 +2207,9 @@ class LibraryTests(unittest.TestCase):
                 "https://github.com/Vyrnexis/AppGlider/issues",
             ],
         )
-        self.assertIn(APP_VERSION, page.findChild(QLabel, "sectionTitle").text())
+        self.assertIn(
+            f"AppGlider {APP_VERSION}", [label.text() for label in page.findChildren(QLabel)]
+        )
 
     def test_legacy_section_numbers_still_open_the_matching_section(self) -> None:
         for number, name in ((0, "General"), (3, "GitHub"), (4, "About")):

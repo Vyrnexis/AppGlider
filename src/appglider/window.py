@@ -2,6 +2,7 @@
 
 import html
 import json
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import datetime
@@ -17,9 +18,11 @@ from PySide6.QtCore import (
     Qt,
     QThreadPool,
     QTimer,
+    QUrl,
 )
 from PySide6.QtGui import (
     QCloseEvent,
+    QDesktopServices,
     QIcon,
     QKeySequence,
     QPalette,
@@ -57,12 +60,13 @@ from appglider import (
     APP_UPDATE_ICON,
     APP_VERSION,
     github_status,
+    self_update,
 )
 from appglider.add_page import AddPage
-from appglider.app_page import AppPage
+from appglider.app_page import AppPage, link_button
 from appglider.catalog import App
 from appglider.icons import icon_pixmap
-from appglider.jobs import Task, TaskResult
+from appglider.jobs import Lookup, Task, TaskResult
 from appglider.library import Installed, Library, Orphan
 from appglider.preferences import (
     ACCENTS,
@@ -218,6 +222,10 @@ class LauncherWindow(QMainWindow):
         self.working: dict[str, str] = {}
         self.close_after_task = False
         self.quitting = False
+        self.self_state = self_update.SelfUpdate()
+        self.self_task: Lookup | None = None
+        self.self_explicit = False
+        self.self_notify = False
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QIcon(str(APP_TASKBAR_ICON)))
         self.resize(fit_size(1040, 816, screen_area(None)))
@@ -398,12 +406,30 @@ class LauncherWindow(QMainWindow):
         self.check_button.setAccessibleName("Check for updates")
         self.check_button.setToolTip(CHECK_TOOLTIP)
         self.check_button.setIconSize(QSize(18, 18))
-        self.check_button.clicked.connect(lambda: self.refresh_releases(force=True))
+        self.check_button.clicked.connect(self.check_for_updates)
         toolbar.addWidget(self.check_button)
         layout.addLayout(toolbar)
 
     def build_banner(self, layout: QVBoxLayout) -> None:
-        """Updates banner above the list."""
+        """AppGlider's own update banner, then the updates banner, above the list."""
+        self.self_banner = QFrame()
+        self.self_banner.setObjectName("selfUpdateBanner")
+        self_layout = QHBoxLayout(self.self_banner)
+        self_layout.setContentsMargins(14, 10, 10, 10)
+        self_layout.setSpacing(8)
+        self.self_banner_label = QLabel()
+        self.self_banner_label.setTextFormat(Qt.TextFormat.RichText)
+        self.self_banner_label.setWordWrap(True)
+        self_layout.addWidget(self.self_banner_label, stretch=1)
+        self.self_notes_button = link_button("What's new ↗")
+        self.self_notes_button.clicked.connect(self.open_self_release)
+        self_layout.addWidget(self.self_notes_button)
+        # Not accent-filled: Update all just below stays the one primary action on the page.
+        self.self_update_button = QPushButton("Releases on GitHub ↗")
+        self.self_update_button.clicked.connect(self.update_self)
+        self_layout.addWidget(self.self_update_button)
+        self.self_banner.hide()
+        layout.addWidget(self.self_banner)
         self.banner = QFrame()
         self.banner.setObjectName("updatesBanner")
         banner_layout = QHBoxLayout(self.banner)
@@ -520,7 +546,7 @@ class LauncherWindow(QMainWindow):
         self.tray_menu = QMenu(self)
         self.tray_menu.addAction("Open AppGlider").triggered.connect(self.show_launcher)
         self.tray_check_action = self.tray_menu.addAction("Check for updates")
-        self.tray_check_action.triggered.connect(lambda: self.refresh_releases(force=True))
+        self.tray_check_action.triggered.connect(self.check_for_updates)
         self.tray_apps_menu = self.tray_menu.addMenu("Installed apps")
         self.tray_menu.addSeparator()
         self.tray_menu.addAction("Quit AppGlider").triggered.connect(self.quit_launcher)
@@ -590,6 +616,7 @@ class LauncherWindow(QMainWindow):
 
     def scheduled_check(self) -> None:
         """Check installed apps on the chosen schedule, without disturbing a running task."""
+        self.automatic_self_check(notify=True)
         if (
             self.task is None
             and not self.checks.busy
@@ -611,20 +638,29 @@ class LauncherWindow(QMainWindow):
             and self.has_update(app.id)
             and (release := self.releases.get(app.id)) is not None
         }
-        new = [
-            app for app in self.apps if waiting.get(app.id) not in (None, self.notified.get(app.id))
+        names = [
+            f"{app.name} {waiting[app.id]}"
+            for app in self.apps
+            if waiting.get(app.id) not in (None, self.notified.get(app.id))
         ]
+        own = self.self_state.version
+        if own and own != self.notified.get(self_update.NOTIFY_KEY):
+            names.insert(0, f"AppGlider {own}")
+        if own:
+            waiting[self_update.NOTIFY_KEY] = own
+        elif not self.self_state.checked_at and self_update.NOTIFY_KEY in self.notified:
+            # Not checked this session: keep what was announced rather than announce it twice.
+            waiting[self_update.NOTIFY_KEY] = self.notified[self_update.NOTIFY_KEY]
         self.notified = dict(waiting)
         self.settings.setValue("notifications/seen", json.dumps(self.notified))
         if (
-            not new
+            not names
             or not self.settings.value("notifications/updates", False, type=bool)
             or not QSystemTrayIcon.isSystemTrayAvailable()
             or not self.tray.isVisible()
             or (self.isVisible() and self.isActiveWindow())
         ):
             return
-        names = [f"{app.name} {waiting[app.id]}" for app in new]
         if len(names) == 1:
             text = f"{names[0]} is available."
         else:
@@ -849,9 +885,13 @@ class LauncherWindow(QMainWindow):
         )
         self.filter_installed.setText(f"Installed ({len(self.installed)})")
         updates_view = self.view == "updates"
-        self.tray.setToolTip(f"AppGlider · Updates: {update_count}")
-        if (update_count > 0) != self.tray_has_updates:
-            self.tray_has_updates = update_count > 0
+        own = self.self_state.version
+        self.tray.setToolTip(
+            f"AppGlider · Updates: {update_count}"
+            + (f" · AppGlider {own} available" if own else "")
+        )
+        if (update_count > 0 or bool(own)) != self.tray_has_updates:
+            self.tray_has_updates = update_count > 0 or bool(own)
             self.tray.setIcon(self.tray_icons[int(self.tray_has_updates)])
         self.tray_check_action.setEnabled(not self.checks.busy and bool(self.installed))
         tray_apps = [
@@ -926,6 +966,7 @@ class LauncherWindow(QMainWindow):
         )
         self.update_all_button.setEnabled(self.task is None)
         self.review_button.setVisible(not updates_view)
+        self.show_self_banner()
         self.banner.setVisible(update_count > 0)
         if update_count > 0:
             self.banner_label.setText(self.banner_text())
@@ -936,6 +977,8 @@ class LauncherWindow(QMainWindow):
             self.filter_installed,
             self.options_button,
             self.check_button,
+            self.self_notes_button,
+            self.self_update_button,
             self.update_all_button,
             self.review_button,
         ]
@@ -1330,6 +1373,93 @@ class LauncherWindow(QMainWindow):
                 ]
             )
 
+    def startup_check(self) -> None:
+        """The first check after the window opens; both parts follow the update schedule choice."""
+        self.refresh_releases()
+        self.automatic_self_check()
+
+    def check_for_updates(self) -> None:
+        """The toolbar and tray command: a full check of the apps and of AppGlider itself."""
+        self.start_self_check(explicit=True)
+        self.refresh_releases(force=True)
+
+    def automatic_self_check(self, *, notify: bool = False) -> None:
+        """Startup and scheduled checks of AppGlider itself; none when updates are manual."""
+        if check_interval_hours(self.settings):
+            self.start_self_check(notify=notify)
+
+    def start_self_check(self, *, explicit: bool = False, notify: bool = False) -> None:
+        """Ask GitHub's release page about AppGlider, apart from the window's task slot.
+
+        The answer needs no API allowance, so it also runs with no apps installed. A check
+        that is already running is not repeated, but a request for one stays on record.
+        """
+        if self.quitting or self.close_after_release:
+            return
+        self.self_explicit = self.self_explicit or explicit
+        self.self_notify = self.self_notify or notify
+        if self.self_task is None:
+            task = self.self_task = Lookup(self_update.check)
+            task.signals.finished.connect(self.self_check_done)
+            task.signals.failed.connect(self.self_check_failed)
+            QThreadPool.globalInstance().start(task)
+        self.settings_page.update_self_update()
+
+    def self_check_done(self, tag: object) -> None:
+        self.self_task = None
+        if self.quitting:
+            return
+        self.self_explicit = False
+        self.self_state = self_update.SelfUpdate(time.time(), tag if isinstance(tag, str) else "")
+        self.finish_self_check()
+
+    def self_check_failed(self, error: str) -> None:
+        self.self_task = None
+        if self.quitting:
+            return
+        explicit, self.self_explicit = self.self_explicit, False
+        if explicit:
+            # Background checks stay silent; only a check the user asked for reports failure.
+            self.self_state = replace(self.self_state, checked_at=time.time(), failed=True)
+            if self.task is None and not self.checks.busy:
+                self.footer.setText("Couldn't check for a new AppGlider version.")
+        self.finish_self_check()
+
+    def finish_self_check(self) -> None:
+        self.refresh()
+        self.settings_page.update_self_update()
+        self.notify_when_idle()
+
+    def notify_when_idle(self) -> None:
+        """Announce waiting updates once the checks a scheduled run started have all finished."""
+        if (self.notify_pending or self.self_notify) and self.self_task is None:
+            if not self.checks.busy:
+                self.notify_pending = self.self_notify = False
+                self.notify_updates()
+
+    def show_self_banner(self) -> None:
+        version = self.self_state.version
+        self.self_banner.setVisible(bool(version))
+        if not version:
+            return
+        image = self_update.running_image()
+        replaceable = image is not None and self_update.can_replace(image)
+        self.self_banner_label.setText(f"<b>AppGlider {html.escape(version)}</b> is available")
+        self.self_notes_button.setAccessibleName(f"What's new in AppGlider {version}")
+        self.self_update_button.setText(
+            "Update AppGlider" if replaceable else "Releases on GitHub ↗"
+        )
+        self.self_update_button.setAccessibleName(
+            "Update AppGlider" if replaceable else "AppGlider releases on GitHub"
+        )
+
+    def open_self_release(self) -> None:
+        QDesktopServices.openUrl(QUrl(self.self_state.url))
+
+    def update_self(self) -> None:
+        """Update AppGlider in place. For now this only opens the release page."""
+        self.open_self_release()
+
     def refresh_releases(self, *, force: bool = False) -> None:
         if self.checks.busy or self.close_after_release:
             return
@@ -1384,9 +1514,7 @@ class LauncherWindow(QMainWindow):
             self.close()
             return
         self.refresh()
-        if self.notify_pending:
-            self.notify_pending = False
-            self.notify_updates()
+        self.notify_when_idle()
         if self.task is None:
             self.footer.setText(
                 "Update check finished."
@@ -1528,6 +1656,8 @@ class LauncherWindow(QMainWindow):
             self.hide()
             event.ignore()
             return
+        if self.self_task is not None:
+            self.self_task.cancel.set()
         self.add_page.stop()
         self.tray.hide()
         super().closeEvent(event)

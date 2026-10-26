@@ -235,6 +235,11 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
                 border: 1px solid {tint(warn, 0.45)}; border-radius: 10px; }}
             QFrame#updatesBanner QLabel {{ color: {foreground}; }}
             QFrame#updatesBanner QPushButton {{ padding: 7px 14px; }}
+            QFrame#selfUpdateBanner {{ background: {tint(accent, 0.13)};
+                border: 1px solid {tint(accent, 0.45)}; border-radius: 10px; }}
+            QFrame#selfUpdateBanner QLabel {{ color: {foreground}; }}
+            QFrame#selfUpdateBanner QPushButton {{ padding: 7px 14px; }}
+            QFrame#selfUpdateBanner QPushButton#linkButton {{ padding: 7px 4px; }}
             QProgressBar {{ background: {background}; border: none; border-radius: 3px; }}
             QProgressBar::chunk {{ background: {accent}; border-radius: 3px; }}
             QPushButton#backLink {{ background: transparent; border: none; color: {accent};
