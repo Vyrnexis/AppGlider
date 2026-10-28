@@ -39,12 +39,12 @@ before GitHub can execute it.
 | --- | --- |
 | Pull request or ordinary push | Checks and tests |
 | Manual dispatch | Checks, tests and a test-build artifact |
-| Version tag such as `v0.9.2` | Checks, tests, build and a draft GitHub Release |
+| Version tag such as `v0.9.3` | Checks, tests, build and a draft GitHub Release |
 | Maintainer publishes the draft | AppImage and checksum become release downloads |
 
 To prepare a release:
 
-1. Set the version in `pyproject.toml`, for example `0.9.2`, add it to the `<releases>` list
+1. Set the version in `pyproject.toml`, for example `0.9.3`, add it to the `<releases>` list
    in `packaging/io.github.vyrnexis.AppGlider.appdata.xml`, and update any version numbers
    written in the docs. The interface and HTTP User-Agent read the installed package version.
    Reinstall an editable development checkout after a version change. Commit the changes.
@@ -52,8 +52,8 @@ To prepare a release:
 3. Create and push the matching tag:
 
    ```sh
-   git tag v0.9.2
-   git push origin v0.9.2
+   git tag v0.9.3
+   git push origin v0.9.3
    ```
 
 The tag must exactly match `v` plus the project version; a mismatch stops the build.
