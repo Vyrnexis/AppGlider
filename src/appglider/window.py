@@ -228,6 +228,8 @@ class LauncherWindow(QMainWindow):
         self.self_state = self_update.SelfUpdate()
         self.self_task: Lookup | None = None
         self.shortcut_task: Lookup | None = None
+        self.menu_task: Lookup | None = None
+        self.menu_app: App | None = None
         self.self_explicit = False
         self.self_notify = False
         self.self_ready = self_update.ready_update(self.settings)
@@ -1069,8 +1071,6 @@ class LauncherWindow(QMainWindow):
             # A keyboard user stays oriented; a mouse click leaves no focus ring behind.
             self.app_page.back_button.setFocus()
 
-    open_details = open_app
-
     def close_app(self) -> None:
         """Return to the list with the view, filter, search and scroll position as they were."""
         if self.pages.currentWidget() is not self.app_page:
@@ -1293,13 +1293,32 @@ class LauncherWindow(QMainWindow):
         self.start_task(f"Checking releases for {app.name}…", operation, page=page)
 
     def create_shortcut(self, app_id: str) -> None:
+        """Write the menu entry off the Qt thread: it may start the app's runtime to read it."""
         app = next(app for app in self.apps if app.id == app_id)
-        try:
-            self.library.create_shortcut(app)
-        except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot create shortcut", str(error))
-        else:
-            self.footer.setText(f"Created menu shortcut: {app.name} (AppGlider).")
+        if self.menu_task is not None:
+            return
+        self.menu_app = app
+        self.footer.setText(f"Creating menu shortcut for {app.name}…")
+        library = self.library
+        task = self.menu_task = Lookup(lambda cancel: library.create_shortcut(app))
+        task.signals.finished.connect(self.shortcut_created)
+        task.signals.failed.connect(self.shortcut_failed)
+        QThreadPool.globalInstance().start(task)
+
+    def shortcut_created(self, result: object) -> None:
+        self.menu_task = None
+        if not self.quitting and self.menu_app is not None:
+            self.footer.setText(f"Created menu shortcut: {self.menu_app.name} (AppGlider).")
+
+    def shortcut_failed(self, error: str) -> None:
+        self.menu_task = None
+        if not self.quitting:
+            QMessageBox.warning(self, "Cannot create shortcut", error)
+
+    def refresh_desktop_database(self) -> None:
+        """Let the desktop notice changed menu entries; the tool can take seconds."""
+        library = self.library
+        QThreadPool.globalInstance().start(Lookup(lambda cancel: library.update_desktop_database()))
 
     def task_progress(self, message: str, received: int, total: int) -> None:
         self.footer.setText(message)

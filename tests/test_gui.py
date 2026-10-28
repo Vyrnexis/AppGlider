@@ -1908,7 +1908,12 @@ class LibraryTests(unittest.TestCase):
         shortcut.unlink()
         with patch("appglider.window.QMessageBox.warning") as warning:
             card.shortcut_requested.emit(APP.id)
+            deadline = time.monotonic() + 5
+            while self.window.menu_task is not None and time.monotonic() < deadline:
+                QTest.qWait(10)
+            self.assertIsNone(self.window.menu_task)
             warning.assert_not_called()
+        self.assertIn("Created menu shortcut", self.window.footer.text())
         self.assertTrue(shortcut.is_file())
         self.assertIn("Name=PhotoCraft (AppGlider)", shortcut.read_text())
 
@@ -2161,6 +2166,11 @@ class LibraryTests(unittest.TestCase):
             f"In use {format_space(expected_in_use)}, "
             f"kept for roll back {format_space(expected_kept)}",
         )
+
+        # An unchanged measurement keeps the rows; a changed one rebuilds them.
+        same = page.space_list.findChildren(SpaceBar)
+        page.update_space_used()
+        self.assertEqual(page.space_list.findChildren(SpaceBar), same)
 
         # Per-app list order: largest total first
         # app_single (500 KB) > app_rolled (200 KB in use + 100 KB kept = 300 KB)

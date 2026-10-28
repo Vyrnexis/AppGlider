@@ -180,11 +180,6 @@ def eligible(old: Path, image: Path) -> bool:
     return True
 
 
-def removable(old: Path, image: Path) -> bool:
-    """Whether a replaced file may be deleted now by the AppGlider running from ``image``."""
-    return eligible(old, image) and not library.running(old)
-
-
 def cleanup(settings: QSettings) -> None:
     """Remove the file the last update replaced, and drop the records once they are used up.
 

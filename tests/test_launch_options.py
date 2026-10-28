@@ -161,6 +161,13 @@ class LaunchOptionsTests(LibraryCase):
         self.library.remove_repository(APP.id)
         self.assertEqual(json.loads(self.path.read_text()), {})
 
+    def test_the_desktop_database_refresh_can_be_left_to_the_caller(self) -> None:
+        with patch.object(self.library, "update_desktop_database") as refresh:
+            self.library.set_launch_options(APP.id, LaunchOptions(("--a",), ()), False)
+            refresh.assert_not_called()
+            self.library.set_launch_options(APP.id, LaunchOptions(("--b",), ()))
+            refresh.assert_called_once()
+
     def test_options_are_not_part_of_a_catalog_export(self) -> None:
         before = self.library.export_entries()
         self.library.set_launch_options(
@@ -196,6 +203,25 @@ class MenuMetadataTests(LibraryCase):
         text = self.shortcut.read_text()
         self.assertIn("Categories=Utility;\n", text)
         self.assertIn(f'Exec="{installed.path}" %F\n', text)
+
+    def test_failed_activation_keeps_the_cache_of_the_active_version(self) -> None:
+        installed = self.install("1.0.0")
+        with patch("appglider.library.extract_desktop_groups", return_value=GROUPS):
+            self.library.collect_desktop_metadata(APP, installed.path, installed.path)
+        cache = self.library.data_dir / "desktop" / f"{APP.id}.json"
+        before = cache.read_text()
+        other = {"Desktop Entry": {"Categories": "Game;"}}
+        data = appimage_bytes(b"1.1.0")
+        with (
+            patch("appglider.releases.request", return_value=io.BytesIO(data)),
+            patch("appglider.library.extract_desktop_groups", return_value=other),
+            patch.object(self.library, "_save", side_effect=OSError("disk full")),
+        ):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                self.library.install(APP, release_for("1.1.0", data), Event(), ignore_progress)
+        self.assertEqual(cache.read_text(), before)
+        self.library.create_shortcut(APP)
+        self.assertIn("Categories=Office;", self.shortcut.read_text())
 
     def test_rollback_reads_the_previous_version(self) -> None:
         self.install("1.0.0")

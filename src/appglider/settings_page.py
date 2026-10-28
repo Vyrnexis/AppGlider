@@ -428,6 +428,7 @@ class SettingsPage(QWidget):
         space_layout.addWidget(hint)
 
         column.addWidget(space_frame)
+        self.space_shown: tuple[str, tuple[tuple[str, str, int, int, int], ...]] | None = None
         self.update_space_used()
 
     def update_space_used(self) -> None:
@@ -454,6 +455,10 @@ class SettingsPage(QWidget):
             name = app_names.get(app_id, app_id)
             apps_data.append((app_id, name, in_use, kept, total))
 
+        shown = (free_part, tuple(apps_data))
+        if shown == self.space_shown:
+            return  # nothing changed since the rows were built
+        self.space_shown = shown
         if not apps_data:
             self.space_total_label.setText(format_space(0))
             self.space_free_label.setText(f"by 0 apps{free_part}")
@@ -595,8 +600,6 @@ class SettingsPage(QWidget):
         if name not in SECTIONS:
             raise ValueError(f"Unknown settings section: {name}")
         self.sections[SECTIONS.index(name)].setChecked(True)
-        if name == "Storage":
-            self.update_space_used()
 
     def focus_section(self) -> None:
         """Put the keyboard on the chosen section, so focus does not sit on another one."""

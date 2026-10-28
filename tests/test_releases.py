@@ -168,6 +168,43 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(releases.read_metadata(url), first)
             self.assertEqual(seen[-1], "")
 
+    def test_the_saved_etags_are_read_again_only_when_the_file_changes(self):
+        url = "https://api.github.com/repos/owner/app/releases/latest"
+        body = b'{"tag_name": "v1"}'
+
+        def fake_request(target, *, method="GET", etag=""):
+            if etag:
+                raise HTTPError(target, 304, "Not Modified", Message(), io.BytesIO())
+            response = Response(target, {"ETag": '"abc"'})
+            response.write(body)
+            response.seek(0)
+            return response
+
+        etags = self.cache / "etags.json"
+        with (
+            patch.object(releases, "request", fake_request),
+            patch.object(releases, "_ETAG_FILE", etags),
+            patch.object(releases, "_ETAG_CACHE", None),
+        ):
+            releases.read_metadata(url)  # remembered
+            with patch.object(Path, "read_text", side_effect=AssertionError("re-read")):
+                self.assertEqual(releases.read_metadata(url), body)
+                self.assertEqual(releases.read_metadata(url), body)
+            etags.write_text("{broken")  # another process changed it
+            self.assertEqual(releases.read_metadata(url), body)  # fetched again, not stale
+            self.assertEqual(json.loads(etags.read_text())[url]["etag"], '"abc"')
+
+    def test_other_http_errors_become_plain_errors_and_are_closed(self):
+        url = "https://api.github.com/repos/owner/app/releases/latest"
+        error = HTTPError(url, 409, "Conflict", Message(), io.BytesIO())
+        with (
+            patch.object(releases, "request", side_effect=error),
+            patch.object(releases, "_ETAG_FILE", self.cache / "etags.json"),
+            self.assertRaisesRegex(ValueError, "HTTP 409"),
+        ):
+            releases.read_metadata(url)
+        self.assertTrue(error.fp is None or error.fp.closed)
+
     def test_etag_cache_is_bounded_and_skips_other_hosts(self):
         with patch.object(releases, "_ETAG_FILE", self.cache / "etags.json"):
             for number in range(releases.ETAG_ENTRIES + 5):

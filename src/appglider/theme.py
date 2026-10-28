@@ -62,6 +62,11 @@ def glyph_path(name: str, colour: str, points: list[QPointF]) -> str:
     return path.as_posix()
 
 
+def css_path(path: str) -> str:
+    """Escape a file path for a quoted stylesheet url(); an unquoted odd path voids the sheet."""
+    return path.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def chevron_path(colour: str) -> str:
     return glyph_path("chevron", colour, [QPointF(7, 9.5), QPointF(12, 14.5), QPointF(17, 9.5)])
 
@@ -350,7 +355,7 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
                 border: 1px solid {border}; border-radius: 7px; padding: 9px; }}
             QComboBox {{ min-height: 20px; }}
             QComboBox::drop-down {{ border: none; width: 28px; }}
-            QComboBox::down-arrow {{ image: url({chevron_path(foreground)});
+            QComboBox::down-arrow {{ image: url("{css_path(chevron_path(foreground))}");
                 width: 20px; height: 20px; }}
             QComboBox QAbstractItemView {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; padding: 4px; outline: 0;

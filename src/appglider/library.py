@@ -343,8 +343,14 @@ class Library:
         if saved or path.exists():
             atomic_json(path, options_json(saved))
 
-    def set_launch_options(self, app_id: str, options: LaunchOptions) -> None:
-        """Save the options and, when the app has a menu entry of ours, rewrite it to match."""
+    def set_launch_options(
+        self, app_id: str, options: LaunchOptions, refresh_database: bool = True
+    ) -> None:
+        """Save the options and, when the app has a menu entry of ours, rewrite it to match.
+
+        The desktop database refresh runs a program; the Qt thread passes False and runs
+        `update_desktop_database` elsewhere.
+        """
         with self._lock():
             app = next((app for app in self.apps if app.id == app_id), None)
             if app is None:
@@ -366,7 +372,8 @@ class Library:
                         f"The options were saved, but the menu shortcut could not be updated: "
                         f"{error}"
                     ) from error
-        self.update_desktop_database()
+        if refresh_database:
+            self.update_desktop_database()
 
     def icon_path(self, app: App) -> Path:
         path = self.data_dir / "icons" / f"{app.id}.png"
@@ -627,14 +634,13 @@ class Library:
         environment = {**clean_environment(), **dict(options.environment)}
         log = self.data_dir / "logs" / f"{app.id}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
+        self.reap_processes()
+        if self.processes.get(app.id) is not None:
+            raise ValueError(f"{app.name} is already running from this launcher.")
         with contextlib.suppress(OSError):
             if log.stat().st_size > MAX_LOG_BYTES:
                 os.replace(log, log.with_name(log.name + ".1"))
         with log.open("ab") as output:
-            self.reap_processes()
-            previous = self.processes.get(app.id)
-            if previous is not None:
-                raise ValueError(f"{app.name} is already running from this launcher.")
             process = subprocess.Popen(
                 [str(installed.path), *options.arguments],
                 cwd=installed.path.parent,
@@ -775,11 +781,14 @@ class Library:
             check_cancel(cancel)
             # Reading the menu metadata runs the AppImage's own runtime, so it happens here,
             # on the verified file, rather than while the library lock is held.
-            self.collect_desktop_metadata(
+            # It is only saved once the install is active, so a failed one leaves the
+            # details of the version that stays.
+            metadata = self.read_desktop_metadata(
                 app, stage if stage is not None else plan.destination, plan.destination
             )
             with self._lock():
                 installed = self._activate_install(app, release, plan, stage)
+                self.save_desktop_metadata(app, metadata)
                 old = plan.old
                 if old and old.previous and old.previous != installed.path:
                     with contextlib.suppress(OSError, ValueError):
@@ -792,8 +801,6 @@ class Library:
                     ) from error
             self.update_desktop_database()
         except BaseException:
-            if stage is not None:
-                stage.unlink(missing_ok=True)
             if plan.made_root and not plan.exists:
                 self._remove_empty_root(plan.root)
             raise
@@ -854,12 +861,13 @@ class Library:
         return installed
 
     def rollback(self, app: App) -> None:
+        metadata = None
         with contextlib.suppress(OSError, ValueError):
             kept = self.records().get(app.id)
             if kept and kept.managed and kept.previous:
                 self._owned(app, kept.previous)
                 check_appimage(kept.previous)
-                self.collect_desktop_metadata(app, kept.previous, kept.previous)
+                metadata = self.read_desktop_metadata(app, kept.previous, kept.previous)
         with self._lock():
             records = self.records()
             old = records.get(app.id)
@@ -877,6 +885,7 @@ class Library:
                 old.prerelease,
             )
             self._save(records)
+            self.save_desktop_metadata(app, metadata)
             self._shortcut(app, old.previous)
         self.update_desktop_database()
 
@@ -1177,19 +1186,33 @@ class Library:
         info = path.stat()
         return {"path": str(path), "size": info.st_size, "mtime_ns": info.st_mtime_ns}
 
-    def collect_desktop_metadata(self, app: App, source: Path, installed: Path) -> None:
-        """Read the menu details inside a verified AppImage and keep them for its shortcut.
+    def read_desktop_metadata(
+        self, app: App, source: Path, installed: Path
+    ) -> tuple[dict[str, object], Groups | None] | None:
+        """Read the menu details inside a verified AppImage, without saving them.
 
         `source` is the file to read; `installed` is where it is, or is about to be, kept,
         which is what the saved details are tied to along with its size and modification
-        time. Nothing here raises: without details the shortcut is the plain one.
+        time. Returns None when the saved details already match or cannot be read, and
+        otherwise what `save_desktop_metadata` keeps. This runs the AppImage's own runtime.
         """
         try:
             stamp = {**self._stamp(source), "path": str(installed)}
             cached = self._cached_groups(app)
             if cached is not None and cached[0] == stamp:
-                return
-            groups = extract_desktop_groups(source, app, clean_environment())
+                return None
+            return stamp, extract_desktop_groups(source, app, clean_environment())
+        except (OSError, ValueError):
+            return None
+
+    def save_desktop_metadata(
+        self, app: App, read: tuple[dict[str, object], Groups | None] | None
+    ) -> None:
+        """Keep what `read_desktop_metadata` returned; without details the shortcut is plain."""
+        if read is None:
+            return
+        stamp, groups = read
+        try:
             path = self._metadata_path(app)
             if groups is None:
                 path.unlink(missing_ok=True)
@@ -1197,6 +1220,10 @@ class Library:
                 atomic_json(path, {**stamp, "groups": groups})
         except (OSError, ValueError):
             pass
+
+    def collect_desktop_metadata(self, app: App, source: Path, installed: Path) -> None:
+        """Read and keep the menu details of a file that is already the active one."""
+        self.save_desktop_metadata(app, self.read_desktop_metadata(app, source, installed))
 
     def _cached_groups(self, app: App) -> tuple[dict[str, object], Groups] | None:
         try:
@@ -1264,8 +1291,11 @@ def shortcut_text(
 ) -> str:
     """The menu entry for an installed app, using the app's own details when it gave any."""
     metadata = metadata or DesktopMetadata()
-    environment = ["env", *(f"{name}={value}" for name, value in options.environment)]
-    prefix = environment if options.environment else []
+    prefix = (
+        ["env", *(f"{name}={value}" for name, value in options.environment)]
+        if options.environment
+        else []
+    )
     code = "%U" if metadata.urls else "%F"
     lines = [
         "[Desktop Entry]",

@@ -494,6 +494,18 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(log.stat().st_size, 0)
         self.assertEqual(log.with_name(log.name + ".1").stat().st_size, 6 * 1024 * 1024)
 
+    def test_launching_a_running_app_leaves_its_oversized_log_alone(self) -> None:
+        installed = self.install("1.0.0")
+        log = self.library.data_dir / "logs" / f"{APP.id}.log"
+        with patch("appglider.library.subprocess.Popen") as spawn:
+            spawn.return_value.poll.return_value = None
+            self.library.launch(APP, installed)
+            log.write_bytes(b"x" * (6 * 1024 * 1024))
+            with self.assertRaisesRegex(ValueError, "already running"):
+                self.library.launch(APP, installed)
+        self.assertEqual(log.stat().st_size, 6 * 1024 * 1024)
+        self.assertFalse(log.with_name(log.name + ".1").exists())
+
     def test_other_changes_succeed_while_a_download_is_in_progress(self) -> None:
         data = appimage_bytes(b"slow")
         release = release_for("1.0.0", data)

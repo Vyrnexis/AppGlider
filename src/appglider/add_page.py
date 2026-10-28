@@ -370,9 +370,9 @@ class AddPage(QScrollArea):
             self.invalidate_preview()
             self.set_busy(False)
             return
-        self.set_busy(False)
         target = self.inspection_app
         if result.build_choices and target:
+            self.set_busy(False)
             error = result.build_choices[target.id]
             self.show_build_choices(error.choices)
             self.status.setText(
@@ -383,6 +383,7 @@ class AddPage(QScrollArea):
             return
         self.release = result.releases.get(target.id) if target else None
         if self.release is None:
+            self.set_busy(False)
             self.status.setText(result.message)
             return
         if target is not None:

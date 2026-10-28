@@ -7,14 +7,14 @@ import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from threading import Event
+from threading import Event, get_ident
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from catalog_fixture import APPS, stock
 from gui_helpers import close_window
-from PySide6.QtCore import QSettings, Qt, QUrl
+from PySide6.QtCore import QSettings, Qt, QThreadPool, QUrl
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QBoxLayout, QMessageBox
 from test_builds import BAMBU, bambu_metadata, chosen_bambu
@@ -244,6 +244,35 @@ class AppPageTests(unittest.TestCase):
         self.assertTrue(window.cards[APP.id].pinned)
         self.page.pin_switch.click()
         self.assertNotIn(APP.id, window.pinned)
+
+    def test_saving_launch_options_leaves_the_desktop_database_to_a_worker(self) -> None:
+        self.install("1.0.0")
+        self.window.open_app(APP.id)
+        self.page.arguments_edit.setText("--x")
+        threads: list[int] = []
+        with patch.object(
+            self.library,
+            "update_desktop_database",
+            side_effect=lambda: threads.append(get_ident()),
+        ):
+            self.page.arguments_edit.editingFinished.emit()
+            QThreadPool.globalInstance().waitForDone(5000)
+        self.assertEqual(self.library.launch_options(APP.id).arguments, ("--x",))
+        self.assertEqual(len(threads), 1)
+        self.assertNotEqual(threads[0], get_ident())
+
+    def test_a_failed_shortcut_repair_is_reported_after_the_worker_ends(self) -> None:
+        self.install("1.0.0")
+        with (
+            patch.object(self.library, "create_shortcut", side_effect=ValueError("no good")),
+            patch("appglider.window.QMessageBox.warning") as warning,
+        ):
+            self.window.create_shortcut(APP.id)
+            deadline = time.monotonic() + 5
+            while self.window.menu_task is not None and time.monotonic() < deadline:
+                QTest.qWait(10)
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[2], "no good")
 
     def test_launch_options_save_when_editing_finishes_and_refuse_bad_input(self) -> None:
         self.install("1.0.0")

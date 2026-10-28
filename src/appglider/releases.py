@@ -34,6 +34,7 @@ LISTING_PAGE_SIZE = 20
 ETAG_BODY_LIMIT = 512 * 1024
 _ETAG_LOCK = Lock()
 _ETAG_FILE: Path | None = None
+_ETAG_CACHE: tuple[Path, tuple[int, int, int] | None, dict[str, Any], dict[str, int]] | None = None
 
 MAX_METADATA = 4 * 1024 * 1024
 MAX_NOTES = 20_000
@@ -371,7 +372,8 @@ def feed_tags(app: App, cache_dir: Path, cancel: Event) -> list[str] | None:
         if path.stat().st_size <= MAX_METADATA:
             data = json.loads(path.read_text())
             if (
-                isinstance(data.get("etag"), str)
+                isinstance(data, dict)
+                and isinstance(data.get("etag"), str)
                 and isinstance(data.get("tags"), list)
                 and all(isinstance(tag, str) for tag in data["tags"])
             ):
@@ -416,39 +418,67 @@ def latest_tag(repo: str, cancel: Event) -> str | None:
     return tag if release_version(tag) is not None else None
 
 
-def _etag_entries() -> dict[str, Any]:
+def _entry_size(url: str, value: Any) -> int:
+    return len(json.dumps(url)) + len(json.dumps(value)) + 4
+
+
+def _etag_entries() -> tuple[dict[str, Any], dict[str, int]]:
+    """The saved API bodies and their serialised sizes; call with `_ETAG_LOCK` held.
+
+    The parsed file is kept and read again only when the file itself has changed.
+    """
+    global _ETAG_CACHE
     if _ETAG_FILE is None:
-        return {}
+        return {}, {}
+    stamp = file_stamp(_ETAG_FILE)
+    cached = _ETAG_CACHE
+    if cached is not None and cached[0] == _ETAG_FILE and cached[1] == stamp:
+        return cached[2], cached[3]
+    _ETAG_CACHE = None
     try:
         if _ETAG_FILE.stat().st_size > MAX_METADATA:
-            return {}
+            return {}, {}
         data = json.loads(_ETAG_FILE.read_text())
     except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        return {}, {}
+    if not isinstance(data, dict):
+        return {}, {}
+    sizes = {url: _entry_size(url, value) for url, value in data.items()}
+    _ETAG_CACHE = (_ETAG_FILE, stamp, data, sizes)
+    return data, sizes
 
 
 def _remember_etag(url: str, etag: str | None, body: bytes) -> None:
     """Keep API bodies by ETag so a later 304 (free of rate limit) can reuse them."""
+    global _ETAG_CACHE
     if _ETAG_FILE is None:
         return
     with _ETAG_LOCK:
-        entries = _etag_entries()
+        entries, sizes = _etag_entries()
         entries.pop(url, None)
+        sizes.pop(url, None)
         if etag and len(etag) <= 256 and len(body) <= ETAG_BODY_LIMIT:
             with contextlib.suppress(UnicodeDecodeError):
                 entries[url] = {"etag": etag, "body": body.decode()}
-        while len(entries) > ETAG_ENTRIES or len(json.dumps(entries)) > MAX_METADATA:
-            del entries[next(iter(entries))]
-        with contextlib.suppress(OSError):
+                sizes[url] = _entry_size(url, entries[url])
+        total = sum(sizes.values())
+        while len(entries) > ETAG_ENTRIES or total > MAX_METADATA:
+            oldest = next(iter(entries))
+            del entries[oldest]
+            total -= sizes.pop(oldest)
+        try:
             atomic_json(_ETAG_FILE, entries)
+        except OSError:
+            _ETAG_CACHE = None
+        else:
+            _ETAG_CACHE = (_ETAG_FILE, file_stamp(_ETAG_FILE), entries, sizes)
 
 
 def read_metadata(url: str) -> bytes:
     stored: Any = None
     if urlsplit(url).netloc == "api.github.com":
         with _ETAG_LOCK:
-            stored = _etag_entries().get(url)
+            stored = _etag_entries()[0].get(url)
         if not (
             isinstance(stored, dict)
             and isinstance(stored.get("etag"), str)
@@ -463,7 +493,9 @@ def read_metadata(url: str) -> bytes:
         if error.code == 304 and stored:
             error.close()
             return str(stored["body"]).encode()
-        raise
+        code = error.code
+        error.close()
+        raise ValueError(f"GitHub answered HTTP {code}.") from error
     except (OSError, HTTPException) as error:
         raise ValueError(UNREACHABLE) from error
     if len(data) > MAX_METADATA:

@@ -264,7 +264,6 @@ class AppPage(QScrollArea):
         self.icon_key: tuple[Path, object] | None = None
         self.build_result: dict[str, Any] = {}
         self.build_target: App | None = None
-        self.icon_options: tuple[IconCandidate, ...] = ()
         self.mode = "install"
         self.message = ""
         self.release_url = ""
@@ -892,7 +891,6 @@ class AppPage(QScrollArea):
     def toggle_pin(self) -> None:
         if self.app_id:
             self.launcher.toggle_pin(self.app_id)
-        self.refresh()
 
     def create_shortcut(self) -> None:
         if self.app_id:
@@ -909,7 +907,8 @@ class AppPage(QScrollArea):
                 parse_environment(self.environment_edit.text()),
             )
             if options != library.launch_options(app.id):
-                library.set_launch_options(app.id, options)
+                library.set_launch_options(app.id, options, refresh_database=False)
+                self.launcher.refresh_desktop_database()
                 self.launcher.footer.setText(f"Saved launch options for {app.name}.")
         except (OSError, ValueError) as error:
             self.launch_error.setText(str(error))
@@ -1088,7 +1087,6 @@ class AppPage(QScrollArea):
         return error.choices[labels.index(text)][0]
 
     def pick_icon(self, icons: tuple[IconCandidate, ...]) -> None:
-        self.icon_options = icons
         index = 0
         if len(icons) > 1:
             names = [Path(icon.name).name for icon in icons]

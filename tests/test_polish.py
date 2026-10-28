@@ -5,12 +5,13 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from catalog_fixture import stock
 from gui_helpers import close_window
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, Qt, QtMsgType, qInstallMessageHandler
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from appglider.library import Library
+from appglider.theme import THEMES, stylesheet
 from appglider.window import LauncherWindow
 
 
@@ -180,6 +182,32 @@ class PolishTests(unittest.TestCase):
         self.assertNotIn("Application preferences", texts)
         window.refresh()
         self.assertEqual(window.tray.toolTip(), "AppGlider · Updates: 0")
+
+
+class StylesheetPathTests(unittest.TestCase):
+    def test_cache_path_with_space_and_apostrophe_keeps_the_stylesheet(self) -> None:
+        qt = QApplication.instance() or QApplication([])
+        messages: list[str] = []
+
+        def handler(kind: QtMsgType, context: object, message: str) -> None:
+            messages.append(message)
+
+        with tempfile.TemporaryDirectory() as temp:
+            cache = str(Path(temp) / "o'brien home" / "cache")
+            previous_sheet = qt.styleSheet()
+            self.addCleanup(qt.setStyleSheet, previous_sheet)
+            with patch("appglider.theme.QStandardPaths.writableLocation", return_value=cache):
+                sheet = stylesheet(THEMES["Light"], "#2f6fed", False)
+            previous = qInstallMessageHandler(handler)
+            try:
+                qt.setStyleSheet(sheet)
+                # Qt parses the sheet when the first widget is polished.
+                combo = QComboBox()
+                combo.ensurePolished()
+                combo.deleteLater()
+            finally:
+                qInstallMessageHandler(previous)
+        self.assertEqual([m for m in messages if "Could not parse" in m], [])
 
 
 if __name__ == "__main__":

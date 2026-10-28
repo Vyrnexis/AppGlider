@@ -391,6 +391,10 @@ class FeedTests(unittest.TestCase):
         request.assert_called_once_with("owner/repo", "")  # a bad file is never trusted
         (self.cache / f"{self.app.id}-feed.json").write_text('{"etag": 5, "tags": "x"}')
         self.assertEqual(self.tags((200, b"<feed/>", "e"))[0], [])
+        (self.cache / f"{self.app.id}-feed.json").write_text("[]")
+        tags, request = self.tags((200, b"<feed/>", "e"))
+        self.assertEqual(tags, [])
+        request.assert_called_once_with("owner/repo", "")
 
     def test_cancellation_is_honoured_before_any_request(self):
         cancel = Event()
