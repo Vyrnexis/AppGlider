@@ -1,621 +1,223 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en-GB">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AppGlider — Linux AppImage Manager & Launcher</title>
-  <meta name="description" content="AppGlider is an open-source Linux AppImage manager and launcher with SHA-256 validation, automatic desktop integration, and atomic rollback safety.">
-  <link rel="icon" type="image/svg+xml" href="assets/appglider-icon.svg">
-  <style>
-    :root {
-      --bg: #0e1116;
-      --card: #151921;
-      --card-hover: #1b202a;
-      --border: #232936;
-      --border-light: #323b4d;
-      --text: #f0f3f6;
-      --text-muted: #8c96a5;
-      --text-dim: #5c6575;
-      --accent: #58a6ff;
-      --accent-subtle: rgba(88, 166, 255, 0.1);
-      --green: #3fb950;
-      --green-subtle: rgba(63, 185, 80, 0.12);
-      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ubuntu", "Cantarell", sans-serif;
-      --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background-color: var(--bg);
-      color: var(--text);
-      font-family: var(--font-sans);
-      line-height: 1.55;
-      -webkit-font-smoothing: antialiased;
-    }
-
-    .container {
-      max-width: 1080px;
-      margin: 0 auto;
-      padding: 0 24px;
-    }
-
-    /* Navigation */
-    nav {
-      border-bottom: 1px solid var(--border);
-      padding: 16px 0;
-    }
-    .nav-inner {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      text-decoration: none;
-      color: #fff;
-      font-weight: 700;
-      font-size: 18px;
-      letter-spacing: -0.2px;
-    }
-    .brand img {
-      width: 28px;
-      height: 28px;
-      border-radius: 6px;
-    }
-    .nav-links {
-      display: flex;
-      gap: 22px;
-      list-style: none;
-      font-size: 14px;
-    }
-    .nav-links a { color: var(--text-muted); text-decoration: none; }
-    .nav-links a:hover { color: #fff; }
-    .nav-right {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-    }
-
-    /* Buttons */
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 600;
-      font-size: 13.5px;
-      padding: 9px 16px;
-      border-radius: 6px;
-      text-decoration: none;
-      transition: all 0.15s ease;
-      cursor: pointer;
-    }
-    .btn-green {
-      background-color: #238636;
-      color: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-    }
-    .btn-green:hover { background-color: #2ea043; }
-    .btn-secondary {
-      background-color: var(--card);
-      color: var(--text);
-      border: 1px solid var(--border);
-    }
-    .btn-secondary:hover {
-      background-color: var(--card-hover);
-      border-color: var(--border-light);
-    }
-
-    /* Hero Section */
-    .hero {
-      padding: 64px 0 54px;
-      display: grid;
-      grid-template-columns: 1fr 1.15fr;
-      gap: 48px;
-      align-items: center;
-    }
-    .status-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: var(--accent);
-      background-color: var(--accent-subtle);
-      border: 1px solid rgba(88, 166, 255, 0.25);
-      padding: 3px 10px;
-      border-radius: 4px;
-      margin-bottom: 18px;
-    }
-    .status-pill .dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background-color: var(--green);
-    }
-    h1 {
-      font-size: 38px;
-      font-weight: 800;
-      letter-spacing: -0.7px;
-      line-height: 1.18;
-      margin-bottom: 16px;
-      color: #fff;
-    }
-    p.lead {
-      font-size: 16px;
-      color: var(--text-muted);
-      line-height: 1.6;
-      margin-bottom: 26px;
-    }
-    .hero-ctas {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .hero-btn-row {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-    }
-
-    /* CLI Quick Box */
-    .cli-box {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: #090b0e;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 8px 12px;
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-top: 4px;
-    }
-    .cli-box code {
-      color: #c9d1d9;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      margin-right: 10px;
-    }
-    .cli-copy-btn {
-      background: #21262d;
-      border: 1px solid #30363d;
-      color: var(--text);
-      padding: 3px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      cursor: pointer;
-      font-family: var(--font-sans);
-    }
-    .cli-copy-btn:hover { background: #30363d; }
-
-    /* Linux Window Frame */
-    .linux-window {
-      background: #141820;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55);
-    }
-    .window-header {
-      background: #0b0e13;
-      border-bottom: 1px solid var(--border);
-      height: 36px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 12px;
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-    .window-title { font-weight: 500; font-size: 12px; }
-    .window-actions { display: flex; gap: 10px; }
-    .window-btn { color: var(--text-dim); font-size: 12px; cursor: default; }
-
-    .window-tabs {
-      display: flex;
-      gap: 4px;
-      padding: 6px 10px;
-      background: #0f1218;
-      border-bottom: 1px solid var(--border);
-    }
-    .window-tab {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      font-size: 12px;
-      font-weight: 500;
-      padding: 4px 10px;
-      border-radius: 4px;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .window-tab:hover { color: #fff; background: var(--card); }
-    .window-tab.active { color: #fff; background: var(--card); font-weight: 600; }
-    .linux-window img {
-      width: 100%;
-      height: auto;
-      display: block;
-    }
-
-    /* Core Technical Pillars */
-    .section {
-      border-top: 1px solid var(--border);
-      padding: 56px 0;
-    }
-    .section-title {
-      font-size: 20px;
-      font-weight: 700;
-      color: #fff;
-      margin-bottom: 8px;
-    }
-    .section-subtitle {
-      color: var(--text-muted);
-      font-size: 14px;
-      margin-bottom: 28px;
-    }
-
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 18px;
-    }
-    .feature-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 20px;
-    }
-    .feature-card h3 {
-      font-size: 14.5px;
-      font-weight: 600;
-      color: #fff;
-      margin-bottom: 8px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .feature-card p {
-      font-size: 13px;
-      color: var(--text-muted);
-      line-height: 1.55;
-    }
-
-    /* Tables */
-    .tech-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      overflow: hidden;
-      margin-bottom: 20px;
-    }
-    .tech-table th, .tech-table td {
-      padding: 10px 16px;
-      text-align: left;
-      border-bottom: 1px solid var(--border);
-    }
-    .tech-table th {
-      background: #10141a;
-      font-weight: 600;
-      font-size: 11.5px;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      letter-spacing: 0.5px;
-    }
-    /* Subtle highlight on AppGlider column */
-    .tech-table th.col-highlight {
-      background: #131924;
-      color: var(--accent);
-      border-left: 1px solid rgba(88, 166, 255, 0.2);
-      border-right: 1px solid rgba(88, 166, 255, 0.2);
-    }
-    .tech-table td.col-highlight {
-      background: rgba(88, 166, 255, 0.025);
-      border-left: 1px solid rgba(88, 166, 255, 0.15);
-      border-right: 1px solid rgba(88, 166, 255, 0.15);
-    }
-    .tech-table code {
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: var(--accent);
-    }
-
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 36px 0;
-      font-size: 13px;
-      color: var(--text-dim);
-    }
-    .footer-inner {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    @media (max-width: 860px) {
-      .hero { grid-template-columns: 1fr; }
-      .features-grid { grid-template-columns: 1fr; }
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AppGlider: AppImage manager and updater for Linux</title>
+<meta name="description" content="AppGlider is a free AppImage manager for Linux. Install and update AppImages from GitHub releases, verify every download and roll back in one click.">
+<link rel="canonical" href="https://appglider.org/">
+<meta name="theme-color" content="#eef0f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15181e" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/assets/appglider-taskbar-icon.svg" type="image/svg+xml">
+<link rel="icon" href="/assets/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/assets/appglider-taskbar-256.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="AppGlider">
+<meta property="og:title" content="AppGlider: AppImage manager and updater for Linux">
+<meta property="og:description" content="Install AppImages from GitHub releases, check each download before it runs, keep your menu tidy and roll back when an update misbehaves.">
+<meta property="og:url" content="https://appglider.org/">
+<meta property="og:image" content="https://appglider.org/assets/appglider-social.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AppGlider, an AppImage manager and updater for Linux, showing its Library page.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AppGlider: AppImage manager and updater for Linux">
+<meta name="twitter:description" content="Install AppImages from GitHub releases, check each download before it runs, keep your menu tidy and roll back when an update misbehaves.">
+<meta name="twitter:image" content="https://appglider.org/assets/appglider-social.png">
+<meta name="twitter:image:alt" content="AppGlider, an AppImage manager and updater for Linux, showing its Library page.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "AppGlider",
+  "description": "A free AppImage manager and updater for Linux that installs AppImages from GitHub releases, verifies each download and lets you roll back.",
+  "url": "https://appglider.org/",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Linux (x86_64)",
+  "downloadUrl": "https://github.com/Vyrnexis/AppGlider/releases/latest",
+  "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "image": "https://appglider.org/assets/appglider-social.png",
+  "screenshot": "https://appglider.org/assets/appglider-library.png",
+  "codeRepository": "https://github.com/Vyrnexis/AppGlider",
+  "author": { "@type": "Person", "name": "Vyrnexis", "url": "https://github.com/Vyrnexis" }
+}
+</script>
+<link rel="stylesheet" href="/styles.css">
+<script src="/site.js" defer></script>
 </head>
-<body>
+<body data-version="0.9.2">
+<a class="skip" href="#main">Skip to content</a>
 
-  <nav>
-    <div class="container nav-inner">
-      <a href="#" class="brand">
-        <img src="assets/appglider.png" alt="AppGlider icon">
-        <span>AppGlider</span>
-      </a>
-      <ul class="nav-links">
-        <li><a href="#comparison">Why AppGlider</a></li>
-        <li><a href="#architecture">Architecture</a></li>
-        <li><a href="#integrity">Release Checksums</a></li>
-        <li><a href="https://github.com/Vyrnexis/AppGlider" target="_blank">Source Code ↗</a></li>
-      </ul>
-      <div class="nav-right">
-        <a href="https://github.com/Vyrnexis/AppGlider/releases/latest" class="btn btn-green" style="padding: 6px 14px; font-size: 12.5px;">
-          Download v0.9.2
-        </a>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/" aria-label="AppGlider home">
+      <img src="/assets/appglider-taskbar-icon.svg" width="32" height="32" alt="">
+      <span>AppGlider</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="#questions">Questions</a>
+      <a href="https://github.com/Vyrnexis/AppGlider/blob/main/docs/usage.md">Docs</a>
+      <a href="https://github.com/Vyrnexis/AppGlider">GitHub</a>
+    </nav>
+    <a class="btn btn-primary btn-small" href="https://github.com/Vyrnexis/AppGlider/releases/latest" data-download>Download</a>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero wrap" aria-labelledby="hero-title">
+    <div class="hero-text">
+      <h1 id="hero-title">Install and update AppImages straight from GitHub.</h1>
+      <p class="lead">AppGlider is a free AppImage manager for Linux. It installs AppImages from GitHub releases, checks each download before it runs, keeps your menu tidy and lets you roll back.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="https://github.com/Vyrnexis/AppGlider/releases/latest" data-download data-download-long>Download for Linux</a>
+        <a class="btn btn-secondary" href="https://github.com/Vyrnexis/AppGlider">View source</a>
+      </div>
+      <p class="small muted">x86_64 AppImage · GPL-3.0-or-later</p>
+    </div>
+
+    <div class="shots">
+      <div class="window">
+        <div class="window-bar" aria-hidden="true"><span>AppGlider</span></div>
+        <div class="tabs" role="tablist" aria-label="Screenshots">
+          <button type="button" role="tab" id="tab-library" aria-controls="panel-library" aria-selected="true">Library</button>
+          <button type="button" role="tab" id="tab-updates" aria-controls="panel-updates" aria-selected="false" tabindex="-1">Updates</button>
+          <button type="button" role="tab" id="tab-app" aria-controls="panel-app" aria-selected="false" tabindex="-1">App page</button>
+          <button type="button" role="tab" id="tab-storage" aria-controls="panel-storage" aria-selected="false" tabindex="-1">Storage</button>
+          <button type="button" role="tab" id="tab-add" aria-controls="panel-add" aria-selected="false" tabindex="-1">Add app</button>
+        </div>
+        <div class="panels">
+          <div role="tabpanel" id="panel-library" aria-labelledby="tab-library">
+            <img src="/assets/appglider-library.png" width="1040" height="720" alt="The Library page lists installed apps as rows. Each row has a version, one status chip and one button. Two rows show updates waiting.">
+          </div>
+          <div role="tabpanel" id="panel-updates" aria-labelledby="tab-updates" hidden>
+            <img src="/assets/appglider-updates.png" width="1040" height="720" loading="lazy" alt="The Updates page shows only the apps with a newer version, with an Update all button in a banner above them.">
+          </div>
+          <div role="tabpanel" id="panel-app" aria-labelledby="tab-app" hidden>
+            <img src="/assets/appglider-app-page.png" width="1040" height="1110" loading="lazy" alt="An app's page with release notes and versions on the left, and preferences and a Manage section with Roll back and Uninstall on the right.">
+          </div>
+          <div role="tabpanel" id="panel-storage" aria-labelledby="tab-storage" hidden>
+            <img src="/assets/appglider-storage.png" width="1040" height="720" loading="lazy" alt="Settings, Storage section. A bar splits disk space between versions in use and copies kept for roll back, with each app listed below.">
+          </div>
+          <div role="tabpanel" id="panel-add" aria-labelledby="tab-add" hidden>
+            <img src="/assets/appglider-add-app.png" width="1040" height="980" loading="lazy" alt="The Add app page, after inspecting a GitHub repository, showing the release and build that AppGlider found.">
+          </div>
+        </div>
       </div>
     </div>
-  </nav>
+  </section>
 
-  <main class="container">
-    <!-- Hero with Side-by-Side Layout -->
-    <section class="hero">
-      <div class="hero-left">
-        <div class="status-pill">
-          <span class="dot"></span>
-          AppGlider 0.9.2 · Stable Linux x86_64
-        </div>
-        <h1>AppImages, properly managed.</h1>
-        <p class="lead">
-          AppGlider gives Linux AppImages the missing half: verified updates, desktop menu integration, zero-daemon background checks, and instant rollback safety from one calm window.
-        </p>
+  <section id="features" class="section wrap" aria-labelledby="features-title">
+    <h2 id="features-title">What it does</h2>
+    <ul class="cards">
+      <li class="card">
+        <svg class="icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><path d="M12 3 5 6v5.5c0 4.2 2.9 7.6 7 9 4.1-1.4 7-4.8 7-9V6l-7-3Z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg>
+        <h3>Checked before it runs</h3>
+        <p>AppGlider needs a published SHA-256 checksum. Before an install is used, it checks the download against it, along with the file size, the AppImage header and the CPU type. A failed or cancelled download leaves the current version alone.</p>
+      </li>
+      <li class="card">
+        <svg class="icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+        <h3>Roll back in one click</h3>
+        <p>It keeps the previous version of each app. If an update misbehaves, roll back from the app's page or its menu. The Storage page shows how much space those kept copies use.</p>
+      </li>
+      <li class="card">
+        <svg class="icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v9M7.5 12h9"/></svg>
+        <h3>Any GitHub repository</h3>
+        <p>Paste a public repository address to add it. Choose stable releases or previews for each app, and pick a build when a release has several. Share your list as a plain-text catalog.</p>
+      </li>
+      <li class="card">
+        <svg class="icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><path d="M14 17h6.5M17.25 13.75v6.5"/></svg>
+        <h3>Menu entries that fit</h3>
+        <p>Each entry uses the app's own category, file types and window class. You can set launch arguments and environment variables for each app.</p>
+      </li>
+      <li class="card">
+        <svg class="icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><path d="M4 18a8 8 0 1 1 16 0"/><path d="m12 18 4-5"/><path d="M6 18h.01M18 18h.01M12 7v.01"/></svg>
+        <h3>Easy on GitHub's limits</h3>
+        <p>Routine checks of stable apps read GitHub's latest-release redirect instead of the API. The API is used when a new version appears, or when you add, inspect or install an app. No account or token is needed.</p>
+      </li>
+      <li class="card">
+        <svg class="icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M5 20h14"/></svg>
+        <h3>Keeps itself up to date</h3>
+        <p>AppGlider offers its own updates too. It can sit in the system tray, check on a schedule you choose and, if you turn it on, send a desktop notification when updates are found.</p>
+      </li>
+    </ul>
+  </section>
 
-        <div class="hero-ctas">
-          <div class="hero-btn-row">
-            <a href="https://github.com/Vyrnexis/AppGlider/releases/latest" class="btn btn-green">
-              ↓ Download AppGlider 0.9.2 (.AppImage)
-            </a>
-            <a href="https://github.com/Vyrnexis/AppGlider" class="btn btn-secondary" target="_blank">
-              GitHub Repository
-            </a>
-          </div>
+  <section id="install" class="section wrap" aria-labelledby="install-title">
+    <h2 id="install-title">Install</h2>
+    <ol class="steps">
+      <li>
+        <h3>Download</h3>
+        <p>Get the <code>AppGlider-…-x86_64.AppImage</code> file from the <a href="https://github.com/Vyrnexis/AppGlider/releases/latest" data-release-page>latest release</a>. Keep it somewhere permanent, such as <code>~/Applications</code>.</p>
+      </li>
+      <li>
+        <h3>Make it runnable</h3>
+        <div class="code"><pre><code id="code-chmod">chmod +x AppGlider-*-x86_64.AppImage</code></pre><button class="copy" type="button" data-copy="code-chmod" aria-label="Copy the chmod command" hidden>Copy</button></div>
+      </li>
+      <li>
+        <h3>Run it</h3>
+        <div class="code"><pre><code id="code-run">./AppGlider-*-x86_64.AppImage</code></pre><button class="copy" type="button" data-copy="code-run" aria-label="Copy the run command" hidden>Copy</button></div>
+        <p>It adds itself to your application menu.</p>
+      </li>
+    </ol>
+    <p><strong>You need</strong> a 64-bit (x86_64) Linux desktop about as new as Ubuntu 22.04 (glibc 2.35 or newer). Everything else is included.</p>
+    <p>If it will not start and the message mentions FUSE, see <a href="https://github.com/Vyrnexis/AppGlider/blob/main/docs/usage.md#if-something-goes-wrong">if something goes wrong</a> in the guide.</p>
+    <p>On Nix, run:</p>
+    <div class="code"><pre><code id="code-nix">nix run github:Vyrnexis/AppGlider</code></pre><button class="copy" type="button" data-copy="code-nix" aria-label="Copy the Nix command" hidden>Copy</button></div>
+    <p class="small muted">The flake is contributed by the community and is not tested on aarch64-linux.</p>
+  </section>
 
-          <div class="cli-box">
-            <code>wget https://github.com/Vyrnexis/AppGlider/releases/download/v0.9.2/AppGlider-0.9.2-x86_64.AppImage && chmod +x AppGlider-*.AppImage</code>
-            <button class="cli-copy-btn" onclick="copyCli()">Copy</button>
-          </div>
-        </div>
-      </div>
+  <section id="verify" class="section wrap" aria-labelledby="verify-title">
+    <h2 id="verify-title">Check your download</h2>
+    <p>Each release has a <a href="https://github.com/Vyrnexis/AppGlider/releases/latest" data-sums>SHA256SUMS.txt</a> file. Download it into the same folder as the AppImage, then run:</p>
+    <div class="code"><pre><code id="code-sums">sha256sum -c --ignore-missing SHA256SUMS.txt</code></pre><button class="copy" type="button" data-copy="code-sums" aria-label="Copy the checksum command" hidden>Copy</button></div>
+    <p>It should print <code>OK</code> next to the AppImage's name.</p>
+    <p class="small muted" data-version-line></p>
+  </section>
 
-      <!-- Real AppGlider Qt UI Window Frame with Tab Switcher -->
-      <div class="hero-right">
-        <div class="linux-window">
-          <div class="window-header">
-            <span>AppGlider</span>
-            <span class="window-title" id="windowTitle">Library</span>
-            <div class="window-actions">
-              <span class="window-btn">─</span>
-              <span class="window-btn">□</span>
-              <span class="window-btn">✕</span>
-            </div>
-          </div>
-          <div class="window-tabs">
-            <button class="window-tab active" onclick="setTab('library', 'Library', this)">Library</button>
-            <button class="window-tab" onclick="setTab('updates', 'Updates Waiting', this)">Updates</button>
-            <button class="window-tab" onclick="setTab('app-page', 'App Details', this)">App Details</button>
-            <button class="window-tab" onclick="setTab('storage', 'Storage Breakdown', this)">Storage</button>
-            <button class="window-tab" onclick="setTab('add-app', 'Add App', this)">Add App</button>
-          </div>
-          <img id="screenshotImg" src="assets/appglider-library.png" alt="AppGlider UI">
-        </div>
-      </div>
-    </section>
-
-    <!-- Technical Pillars -->
-    <section class="section" id="capabilities">
-      <h2 class="section-title">Engineered for Desktop Stability</h2>
-      <p class="section-subtitle">No background daemons, zero root requirements, and no orphaned files.</p>
-
-      <div class="features-grid">
-        <div class="feature-card">
-          <h3>🛡️ Cryptographic Verification</h3>
-          <p>Every binary is matched against developer SHA-256 checksums and verified for valid Linux ELF/CPU headers before activation.</p>
-        </div>
-
-        <div class="feature-card">
-          <h3>⏪ Atomic Rollback Protection</h3>
-          <p>The previous functioning version is preserved. If an upstream release has bugs, roll back with one click.</p>
-        </div>
-
-        <div class="feature-card">
-          <h3>📋 Standard XDG Integration</h3>
-          <p>Generates native <code>.desktop</code> shortcuts with icons, categories, and custom launch options (arguments & environment variables).</p>
-        </div>
-
-        <div class="feature-card">
-          <h3>⚡ Rate-Limit Friendly Checks</h3>
-          <p>Background update checks for stable apps query GitHub release redirects without consuming API quota, preserving your rate limits.</p>
-        </div>
-
-        <div class="feature-card">
-          <h3>📦 Curated + Any GitHub Repo</h3>
-          <p>Ships pre-configured with the ArtCraft creative suite and SolidCraft, or paste any public GitHub repository to track updates.</p>
-        </div>
-
-        <div class="feature-card">
-          <h3>🔒 100% User Space</h3>
-          <p>Isolated in <code>~/.local/share/appglider/</code>. Never asks for <code>sudo</code> and never touches unrelated system packages.</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- How AppGlider Compares -->
-    <section class="section" id="comparison">
-      <h2 class="section-title">How AppGlider Compares</h2>
-      <p class="section-subtitle">A direct, factual comparison with traditional AppImage tools like Gear Lever and AppImageLauncher.</p>
-
-      <table class="tech-table">
-        <thead>
-          <tr>
-            <th>Capability & Guarantee</th>
-            <th class="col-highlight">AppGlider</th>
-            <th>Gear Lever</th>
-            <th>AppImageLauncher</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><strong>Runtime Format</strong></td>
-            <td class="col-highlight"><strong>Native AppImage</strong><br><span style="color: var(--text-muted); font-size: 11.5px;">Portable, self-contained, 0 dependencies</span></td>
-            <td>Flatpak<br><span style="color: var(--text-muted); font-size: 11.5px;">Requires 1–2 GB GNOME Flatpak runtime</span></td>
-            <td>System package (.deb / .rpm)<br><span style="color: var(--text-muted); font-size: 11.5px;">Requires distribution package manager</span></td>
-          </tr>
-          <tr>
-            <td><strong>Privilege & System Impact</strong></td>
-            <td class="col-highlight"><strong>100% User-Space</strong><br><span style="color: var(--text-muted); font-size: 11.5px;">No root, no daemons, no system hooks</span></td>
-            <td>User-Space via Flatpak<br><span style="color: var(--text-muted); font-size: 11.5px;">Requires Flatpak portal permissions to escape sandbox</span></td>
-            <td><strong>Root (sudo) Required</strong><br><span style="color: var(--text-muted); font-size: 11.5px;">Installs kernel binfmt_misc hooks & systemd service</span></td>
-          </tr>
-          <tr>
-            <td><strong>Integrity: SHA-256 Checksum</strong></td>
-            <td class="col-highlight"><strong style="color: var(--green);">Mandatory & Automatic</strong><br><span style="color: var(--text-muted); font-size: 11.5px;">Verifies developer's published hash before activation</span></td>
-            <td>No validation<br><span style="color: var(--text-muted); font-size: 11.5px;">Installs files without published hash check</span></td>
-            <td>No validation<br><span style="color: var(--text-muted); font-size: 11.5px;">Executes raw downloads blind</span></td>
-          </tr>
-          <tr>
-            <td><strong>Binary Sanity: ELF & CPU Headers</strong></td>
-            <td class="col-highlight"><strong style="color: var(--green);">Verified</strong><br><span style="color: var(--text-muted); font-size: 11.5px;">Rejects truncated, corrupt, or wrong-architecture files</span></td>
-            <td>No header inspection</td>
-            <td>No header inspection</td>
-          </tr>
-          <tr>
-            <td><strong>Update Rollback Safety</strong></td>
-            <td class="col-highlight"><strong style="color: var(--green);">1-Click Instant Rollback</strong><br><span style="color: var(--text-muted); font-size: 11.5px;">Prior working build is preserved atomically</span></td>
-            <td>File keep/replace only<br><span style="color: var(--text-muted); font-size: 11.5px;">No atomic rollback of shortcut & metadata</span></td>
-            <td>No rollback<br><span style="color: var(--text-muted); font-size: 11.5px;">Leaves old manual copies orphaned</span></td>
-          </tr>
-          <tr>
-            <td><strong>Workflow & Discovery</strong></td>
-            <td class="col-highlight"><strong>Full Hub & Catalog</strong><br><span style="color: var(--text-muted); font-size: 11.5px;">Curated suite (ArtCraft, SolidCraft) + any GitHub repo</span></td>
-            <td>File Integrator<br><span style="color: var(--text-muted); font-size: 11.5px;">Manual file picking + URL pattern rules</span></td>
-            <td>Passive Hook<br><span style="color: var(--text-muted); font-size: 11.5px;">Only intercepts already-downloaded files</span></td>
-          </tr>
-          <tr>
-            <td><strong>Release Channels</strong></td>
-            <td class="col-highlight"><strong>Stable vs. Preview & Holds</strong><br><span style="color: var(--text-muted); font-size: 11.5px;">Toggle channels per app; hold at specific version</span></td>
-            <td>Stable vs. Pre-release<br><span style="color: var(--text-muted); font-size: 11.5px;">via latest, latest-pre, or latest-all rules</span></td>
-            <td>None</td>
-          </tr>
-          <tr>
-            <td><strong>Update Efficiency</strong></td>
-            <td class="col-highlight"><strong>Zero GitHub API Quota Used</strong><br><span style="color: var(--text-muted); font-size: 11.5px;">Uses lightweight redirect inspection for stable apps</span></td>
-            <td>Standard web/API queries</td>
-            <td>N/A (Relies on embedded zsync)</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <!-- System Architecture & Operation -->
-    <section class="section" id="architecture">
-      <h2 class="section-title">Technical Architecture & Guarantees</h2>
-      <p class="section-subtitle">How AppGlider operates under the hood on your Linux desktop.</p>
-
-      <table class="tech-table">
-        <thead>
-          <tr>
-            <th>Property</th>
-            <th>Behavior</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><strong>Runtime & UI</strong></td>
-            <td>Python 3.11+ with PySide6 (Qt). Fully native desktop performance.</td>
-          </tr>
-          <tr>
-            <td><strong>Filesystem Footprint</strong></td>
-            <td>Completely confined to <code>~/.local/share/appglider/</code> (applications, icons, rollbacks).</td>
-          </tr>
-          <tr>
-            <td><strong>Privilege Level</strong></td>
-            <td>Strictly unprivileged user space. Zero <code>sudo</code> or root execution.</td>
-          </tr>
-          <tr>
-            <td><strong>Menu Integration</strong></td>
-            <td>Writes standard desktop entries to <code>~/.local/share/applications/</code>.</td>
-          </tr>
-          <tr>
-            <td><strong>Update Detection</strong></td>
-            <td>HEAD requests against <code>/releases/latest</code> redirect. 0 GitHub API rate quota consumed.</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <!-- Release Integrity & Checksums -->
-    <section class="section" id="integrity">
-      <h2 class="section-title">Current Release Integrity (v0.9.2)</h2>
-      <p class="section-subtitle">Cryptographic digests for verifying your download.</p>
-
-      <table class="tech-table">
-        <thead>
-          <tr>
-            <th>Asset</th>
-            <th>Architecture</th>
-            <th>Published SHA-256 Digest</th>
-            <th>Download</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><strong>AppGlider-0.9.2-x86_64.AppImage</strong></td>
-            <td>Linux x86_64</td>
-            <td><code>9e41fc769ff15b49386fc776c5b9c1b7e452a8d11c0f4d38...</code></td>
-            <td><a href="https://github.com/Vyrnexis/AppGlider/releases/latest" style="color: var(--accent); font-weight: 600;">Download ↗</a></td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-  </main>
-
-  <footer>
-    <div class="container footer-inner">
-      <div>AppGlider Project · Free Software licensed under GPL-3.0</div>
-      <div>Hosted on <strong>appglider.org</strong> · <a href="mailto:contact@appglider.org" style="color: var(--text-muted); text-decoration: none;">contact@appglider.org</a></div>
+  <section id="questions" class="section wrap" aria-labelledby="questions-title">
+    <h2 id="questions-title">Questions</h2>
+    <div class="faq">
+      <details>
+        <summary>How is it different from Gear Lever or AppImageLauncher?</summary>
+        <p>Both put AppImages in your menu and keep them updated. Gear Lever, a Flatpak, is a good choice if you already have AppImage files, and it supports more sources, including GitLab, Codeberg, Forgejo, FTP and direct links.</p>
+        <p>AppImageLauncher adds AppImages to your menu when you first open them, and updates the ones that carry their own update information.</p>
+        <p>AppGlider starts from the GitHub repository instead. It requires a published checksum, keeps a version to roll back to and is an AppImage itself.</p>
+      </details>
+      <details>
+        <summary>Where does it keep files?</summary>
+        <p>Apps go in a folder you choose under Settings, then Storage. The default is <code>~/.local/share/appglider/apps</code>. Its library, caches and logs are in <code>~/.local/share/appglider</code>, and its settings are in <code>~/.config/AppGlider</code>.</p>
+        <p>Menu entries are in <code>~/.local/share/applications</code>. If you turn on Start with my desktop, one login entry is added in <code>~/.config/autostart</code>.</p>
+      </details>
+      <details>
+        <summary>Does it need root?</summary>
+        <p>No. Everything is installed in your home folder.</p>
+      </details>
+      <details>
+        <summary>How do I uninstall an app, or AppGlider?</summary>
+        <p>For an app, open its menu on the row and choose Uninstall. This removes the app and its menu entries. Your documents and the app's own settings stay.</p>
+        <p>AppGlider has no uninstaller of its own. Uninstall your apps first and turn off <strong>Start with my desktop</strong> in Settings. Then quit AppGlider and delete its AppImage and its menu entry, <code>~/.local/share/applications/appglider.desktop</code>. To remove its data too, delete <code>~/.local/share/appglider</code> and <code>~/.config/AppGlider</code>.</p>
+      </details>
+      <details>
+        <summary>Is it free?</summary>
+        <p>Yes. AppGlider is free software under the GPL-3.0-or-later licence, and the source is on <a href="https://github.com/Vyrnexis/AppGlider">GitHub</a>.</p>
+      </details>
     </div>
-  </footer>
+  </section>
+</main>
 
-  <script>
-    const images = {
-      'library': 'assets/appglider-library.png',
-      'updates': 'assets/appglider-updates.png',
-      'app-page': 'assets/appglider-app-page.png',
-      'storage': 'assets/appglider-storage.png',
-      'add-app': 'assets/appglider-add-app.png'
-    };
-
-    function setTab(key, title, btn) {
-      document.getElementById('screenshotImg').src = images[key];
-      document.getElementById('windowTitle').textContent = title;
-      document.querySelectorAll('.window-tab').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    }
-
-    function copyCli() {
-      navigator.clipboard.writeText('wget https://github.com/Vyrnexis/AppGlider/releases/download/v0.9.2/AppGlider-0.9.2-x86_64.AppImage && chmod +x AppGlider-*.AppImage');
-      event.target.textContent = 'Copied!';
-      setTimeout(() => event.target.textContent = 'Copy', 2000);
-    }
-  </script>
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>© 2026 Vyrnexis · <a href="https://github.com/Vyrnexis/AppGlider/blob/main/LICENSE">GPL-3.0-or-later</a></p>
+    <p class="footer-links">
+      <a href="https://github.com/Vyrnexis/AppGlider">Source</a>
+      <a href="https://github.com/Vyrnexis/AppGlider/blob/main/docs/usage.md">User guide</a>
+      <a href="mailto:contact@appglider.org">contact@appglider.org</a>
+    </p>
+  </div>
+</footer>
 </body>
 </html>

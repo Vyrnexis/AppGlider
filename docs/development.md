@@ -172,6 +172,7 @@ Each topic has one home; link to it from elsewhere instead of repeating it.
 | `docs/design.md` | Interface layout, tokens and wording rules |
 | `docs/branding.md` | Icons and brand colours |
 | `docs/roadmap.md` | Shipped work and unapproved ideas |
+| `site/` | The website, appglider.org |
 
 The README and the user guide are for everyday users, who are not expected to be technical:
 plain language, no jargon, and what to try when something goes wrong. Update
@@ -179,4 +180,24 @@ plain language, no jargon, and what to try when something goes wrong. Update
 in `docs/previews/` after visible interface changes or a version change (the version shows in
 the sidebar). Take them in the Dark theme from a disposable library, with the window at
 1040×720; the app page (1040×1110) and the Add app page (1040×980) are taller so the whole
-form shows. Use neutral paths such as `/home/you/Applications`, never your own.
+form shows. Use neutral paths such as `/home/you/Applications`, never your own. The website
+keeps its own copies in `site/assets/`, so refresh those at the same time.
+
+## Website
+
+`site/` is the website at [appglider.org](https://appglider.org/). Cloudflare Pages
+publishes that folder from `main` on every push; there is no build step. It is plain HTML,
+`styles.css` and `site.js`, with no external fonts, scripts or tracking. `_headers` sets a
+strict Content Security Policy, so keep scripts and styles in their files: no inline
+`style` attributes or event handlers. The only outside request is `site.js` asking GitHub's
+API for the latest release.
+
+- **Version:** `data-version` on `<body>` is the only hard-coded version, a fallback until
+  `site.js` reads the latest release; update it when you release. Download buttons always
+  fall back to the latest-release page, never a guessed file name.
+- **Screenshots:** `site/assets/appglider-*.png` are copies of `docs/previews/`. The share
+  image `appglider-social.png` (1200×630) shows the Library screenshot, so redraw it when
+  that changes.
+- **Search engines:** keep the title, description, structured data (`application/ld+json`)
+  and `sitemap.xml` accurate. Update `<lastmod>` in the sitemap when the page changes.
+- **Preview locally:** `python3 -m http.server --bind 127.0.0.1 --directory site`.
