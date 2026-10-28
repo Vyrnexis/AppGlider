@@ -82,7 +82,7 @@
           meta = {
             description = pyproject.project.description;
             homepage = "https://github.com/Vyrnexis/AppGlider";
-            license = pkgs.lib.licenses.mit;
+            license = pkgs.lib.licenses.gpl3Plus;
             mainProgram = "appglider";
             platforms = pkgs.lib.platforms.linux;
           };

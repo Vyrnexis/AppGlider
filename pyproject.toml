@@ -7,7 +7,7 @@ name = "appglider"
 version = "0.9.2"
 description = "A Linux AppImage installer, updater and launcher"
 readme = "README.md"
-license = "MIT"
+license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = ["PySide6-Essentials>=6.8,<7"]

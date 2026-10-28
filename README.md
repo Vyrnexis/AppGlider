@@ -102,7 +102,7 @@ AppImage, [GitHub Actions](docs/builds.md) covers automated builds and releases,
 
 ## Licence and credits
 
-AppGlider's own code is licensed under [MIT](LICENSE).
+AppGlider's own code is licensed under [GPL-3.0-or-later](LICENSE).
 
 The interface is original to this project. Application icons belong to their projects; see
 [ATTRIBUTION.md](ATTRIBUTION.md) for their sources and licences. The libraries bundled in
