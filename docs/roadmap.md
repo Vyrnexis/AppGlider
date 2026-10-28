@@ -3,30 +3,41 @@
 Ideas for where AppGlider could go next. There are no promised dates or order, and plans
 change after discussion. Something being listed here is not a promise that it will be built.
 
-## Planned
+## Ideas
+
+None of these are approved or scheduled.
 
 - **Install queue:** line up several installs or updates, with clear progress and a way to
   cancel.
-
-## Under discussion
-
 - **Hiding apps:** hiding an app without removing it would need more work and only makes
   sense if people ask for it. Removing an app from the list and adding it again with a
   catalog already covers most of it.
 
 ## Done
 
-- **AppGlider updating itself:** AppGlider checks for new versions of itself, shows a banner
+Roughly newest first. Where shown, the version is the release that first included the work.
+
+- **Better icon search (0.9.2):** SVG icons with a standard `<!DOCTYPE svg>` line are accepted,
+  and logos of preview builds and artwork that is far from square are ranked after the real
+  icon.
+- **Launch options (0.9.1):** **Arguments** and **Environment** fields in an app's
+  Preferences, applied to **Launch**, the tray and the menu entry, kept out of exported
+  catalogs.
+- **Menu entries from the app's own details (0.9.1):** the entry uses the category, file
+  types, keywords, description, window class and actions in the `.desktop` file inside the
+  AppImage. It is read once, after the download is verified, and entries made by older
+  versions are refreshed at startup.
+- **AppGlider updating itself (0.9.0):** AppGlider checks for new versions of itself, shows a banner
   with what changed and offers **Update AppGlider**. It downloads and checks the new file,
   points the menu entry at it and offers **Restart now**. The replaced file is removed for
   you. **Settings → About** has **Check now**.
-- **Space used:** a read-only panel in Settings → Storage shows how much space your apps use,
+- **Space used (0.9.0):** a read-only panel in Settings → Storage shows how much space your apps use,
   split into the versions in use and the copies kept for roll back (striped), with every
   installed app listed largest first. It has no delete buttons: each app keeps only one
   earlier version and updating replaces it, so the space cannot keep growing.
-- **A tidier Manage area:** an app page shows Uninstall while the app is installed and
+- **A tidier Manage area (0.9.0):** an app page shows Uninstall while the app is installed and
   Remove from library once it is not, instead of both with one greyed out.
-- **Update information for other tools:** the AppImage carries update information and each
+- **Update information for other tools (0.9.0):** the AppImage carries update information and each
   release includes a `.zsync` file, so tools such as AppImageUpdate can update it.
 - **A new interface:** a sidebar (Library, Updates, Add app, Settings) with a status block,
   apps as rows with status chips, an updates banner with **Update all**, and a page for each

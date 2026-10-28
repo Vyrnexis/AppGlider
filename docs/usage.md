@@ -18,6 +18,7 @@ newer version is out. If you want the "how does it actually work" details, see t
 - [Choosing a build](#choosing-a-build)
 - [Holding a version](#holding-a-version)
 - [Icons](#icons)
+- [Launch options](#launch-options)
 - [Catalogs: sharing a list of apps](#catalogs-sharing-a-list-of-apps)
 - [Settings](#settings)
 - [The tray icon](#the-tray-icon)
@@ -90,7 +91,7 @@ stay on top. The tray menu's list of installed apps follows the same order.
 ## Keyboard
 
 Everything can be done from the keyboard. **Tab** moves through the sidebar, the toolbar,
-the banner and then the rows; the focused control has a blue (accent-coloured) outline.
+the banner and then the rows; the focused control has an outline in the accent colour.
 **Enter** or **Space** on an app's name opens its page, **Ctrl+F** jumps to the search box
 from any page, and **Esc** goes back from an app's page or the Add app page.
 
@@ -167,12 +168,12 @@ and it needs a system tray; whether and how your desktop shows the message is up
 desktop.
 
 GitHub lets programs make about 60 anonymous requests an hour. AppGlider is careful with
-them: to find out whether an app you have installed has a newer version, it first looks at
-the app's ordinary GitHub release page (or, for apps with previews turned on, its public
-release feed), which does not use up that allowance. It only uses the allowance when a new
-version has really appeared, or when you install, add or inspect an app. AppGlider skips scheduled checks when GitHub says few requests are left. The status block
-at the bottom of the sidebar shows how many remain. No GitHub account or
-token is needed.
+them: to find out whether an installed app has a newer version, it first looks at the app's
+ordinary GitHub release page, which does not use up that allowance, and only uses the allowance
+when a new version has really appeared or when you install, add or inspect an app. Scheduled
+checks are skipped when GitHub says few requests are left. The status block at the bottom of
+the sidebar shows how many remain. No GitHub account or token is needed. The details are in
+the [technical notes](technical-notes.md#how-release-checks-work).
 
 **Roll back.** AppGlider normally keeps the previous version of each app. If a new version
 misbehaves, use **⋯ → Roll back to previous version**, or **Roll back** under **Manage** on the app's page, which also shows the size of the kept copy. A download that fails or is
@@ -181,7 +182,7 @@ cancelled never replaces the version you already have.
 ## Updating AppGlider
 
 AppGlider also looks for a newer version of itself. When one is out, a banner in your accent
-colour appears above the list on the Library and Updates pages: "**AppGlider 0.9.1** is
+colour appears above the list on the Library and Updates pages: "**AppGlider 0.9.3** is
 available", with a **What's new ↗** link to that release on GitHub and a button. AppGlider
 itself is not a row in the list and is not counted in the Updates number or in **Update
 all**.
@@ -190,17 +191,14 @@ all**.
 a folder AppGlider can write to. Pressing it:
 
 1. Downloads the new AppImage into the same folder as the one you are running, named like
-   `AppGlider-0.9.1-x86_64.AppImage`. The footer shows the progress and **Cancel** stops it.
-   It uses the same checks as installing an app: a published SHA-256 checksum, the published
-   size, and a look at the file's own header (a type 2 AppImage for your CPU) before it is
-   used. The file only gets its final name once all of that passed, so a failed or cancelled
-   download leaves nothing behind, the footer says what went wrong and the banner stays so
-   you can try again. A file of that name from an earlier manual download is replaced only
-   after the new one is verified.
+   `AppGlider-0.9.3-x86_64.AppImage`. The footer shows the progress and **Cancel** stops it.
+   The file is checked like an app you install (published checksum, size and the file's own
+   header) and only gets its final name once it passes, so a failed or cancelled download
+   leaves nothing behind. The banner stays so you can try again.
 2. Points AppGlider's menu entry at the new file, and the login entry too if you turned on
    **Start with my desktop**. Your running AppGlider and its file are not touched.
-3. Changes the banner to "**AppGlider 0.9.1** is ready. It starts the next time you open
-   AppGlider." with a **Restart now** button. **Settings → About** says "Version 0.9.1 is
+3. Changes the banner to "**AppGlider 0.9.3** is ready. It starts the next time you open
+   AppGlider." with a **Restart now** button. **Settings → About** says "Version 0.9.3 is
    ready · restart to use it".
 
 **Restart now** opens the new AppGlider and closes this one. It is greyed out while an
@@ -212,23 +210,23 @@ second download.
 The old file is removed for you. The first time the new version starts, it deletes the file it
 replaced, but only when that file is in the same folder, is named like `AppGlider-….AppImage`,
 is a real AppImage (not a link) and is not running. Any other AppGlider files in that folder,
-such as older versions you downloaded yourself, are never touched. After **Restart now** the
-old version may take a moment to close, so the new one tries again a few seconds later; if the
-old file is still running then, it is removed on a later start.
+such as older versions you downloaded yourself, are never touched. If the old version is still
+closing, it is removed on a later start. The exact rules are in the
+[technical notes](technical-notes.md#appgliders-own-updates).
 
 When AppGlider was not started from an AppImage (for example when you run it from source), or
 its folder cannot be written, the button is **Releases on GitHub ↗** and opens the release
 page in your browser, where you can download the new AppImage yourself.
 
-It looks only for stable releases, and it does so by reading GitHub's ordinary release page,
-so the check uses none of GitHub's request allowance (pressing **Update AppGlider** does a
-normal release check first, like installing an app, which uses a couple of requests). It checks shortly after AppGlider
-starts, on your schedule from **Settings → Updates → Check for updates**, when you press
-**Check for updates**, and when you press **Check now** under **Settings → About**, which also
-shows when it last looked ("Up to date · checked 14:05", "Version 0.9.1 is available" or
-"Couldn't check"). With **Only when I choose**, nothing is checked at startup or on a
-schedule. It works even when you have no apps installed. A failed automatic check is silent; a
-check you asked for says so. There is no setting to turn the check off.
+It looks only for stable releases, and checking uses none of GitHub's request allowance
+(pressing **Update AppGlider** does a normal release check first, like installing an app,
+which uses a couple of requests). It checks shortly after AppGlider starts, on your schedule
+from **Settings → Updates → Check for updates**, when you press **Check for updates**, and
+when you press **Check now** under **Settings → About**, which also shows when it last looked
+("Up to date · checked 14:05", "Version 0.9.3 is available" or "Couldn't check"). With **Only
+when I choose**, nothing is checked at startup or on a schedule. It works even when you have
+no apps installed. A failed automatic check is silent; a check you asked for says so. There is
+no setting to turn the check off.
 
 When an update is waiting, the tray icon gets the same badge as for app updates. If you turned
 on **Notify me about new updates**, a scheduled check also tells you once for each new
@@ -302,6 +300,22 @@ online**, **Choose file…** or **Use the default icon**. Icons are saved on you
 If there is no icon, AppGlider's own is used. Apps from the example catalog come with their
 icons.
 
+## Launch options
+
+On an app's page, **Arguments** and **Environment** change how AppGlider starts that app. Both
+are optional and saved when you press Enter or leave the field.
+
+- **Arguments** is one line, read like a shell would: `--profile "work files" --safe-mode`.
+- **Environment** is a list of `NAME=value` pairs separated by spaces. Quote a value that
+  contains spaces: `GTK_THEME=Adwaita:dark LANG="de_DE.UTF-8"`. A name uses letters, digits
+  and underscores and does not start with a digit.
+
+They apply when you press **Launch** and in the app's menu entry (the menu entry runs the
+app through `env` when there are variables). The app's extra menu actions get the variables
+but not the arguments. Text that cannot be read is not saved; the page says why. The options
+stay when you uninstall the app and are never part of an exported catalog, because a variable
+can hold a password or token. They are kept in `launch-options.json` in the data folder.
+
 ## Catalogs: sharing a list of apps
 
 A catalog is a plain text file that lists apps. Open **Settings → Catalogs**, then use **Import
@@ -341,7 +355,7 @@ Open **Settings** (bottom of the sidebar). It is a page in the main window with 
 sections on the left. Everything saves as you change it, so there is no Save or Cancel; the
 page says "Changes save automatically".
 
-- **General**: **Theme** (System, Light or Dark), **Accent** (Blue, Green, Amber or Teal) and
+- **General**: **Theme** (System, Light or Dark), **Accent** (Blue, Green, Amber or Teal),
   whether closing the window keeps AppGlider running in the tray, and whether AppGlider
   starts with your desktop.
 - **Updates**: how often to check for updates, and whether to **Notify me about new
@@ -374,8 +388,8 @@ the documents or settings the apps keep for themselves.
 ## The tray icon
 
 If your desktop has a system tray, AppGlider sits in it. Click the icon to bring back the
-window. Right-click for **Open AppGlider**, **Check for updates**, your installed apps and
-**Quit AppGlider**.
+window. Right-click for **Open AppGlider**, **Check for updates**, an **Installed apps** submenu
+that launches an app, and **Quit AppGlider**.
 
 Closing the window hides it to the tray and downloads carry on in the background. If you
 would rather closing quit the program, turn off **Keep running in the tray** in **Settings → General**. Without a
@@ -415,22 +429,6 @@ Some apps add their own menu entry the first time you run them, without "(AppGli
 name. That is the app's doing, not AppGlider's, so such an app can appear twice in your
 menu. They both start the same program. When you uninstall the app through AppGlider, its
 own entry is removed too, so no dead entry is left behind.
-
-## Launch options
-
-On an app's page, **Arguments** and **Environment** change how AppGlider starts that app. Both
-are optional and saved when you press Enter or leave the field.
-
-- **Arguments** is one line, read like a shell would: `--profile "work files" --safe-mode`.
-- **Environment** is a list of `NAME=value` pairs separated by spaces. Quote a value that
-  contains spaces: `GTK_THEME=Adwaita:dark LANG="de_DE.UTF-8"`. A name uses letters, digits
-  and underscores and does not start with a digit.
-
-They apply when you press **Launch** and in the app's menu entry (the menu entry runs the
-app through `env` when there are variables). The app's extra menu actions get the variables
-but not the arguments. Text that cannot be read is not saved; the page says why. The options
-stay when you uninstall the app and are never part of an exported catalog, because a variable
-can hold a password or token. They are kept in `launch-options.json` in the data folder.
 
 ## Uninstalling
 

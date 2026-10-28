@@ -19,9 +19,8 @@ On pushes, pull requests and manual dispatch, the workflow:
 Version-tag pushes and manual dispatch also install the packaging dependencies, build
 the trimmed AppImage with bundled Python and Qt, and open it with a disposable first-run
 home to check startup, certificates and its shortcut. They upload the AppImage, its
-`.zsync` file and `SHA256SUMS.txt` as a workflow artifact. The build embeds update
-information (`gh-releases-zsync|Vyrnexis|AppGlider|latest|...`) so AppImageUpdate and
-similar tools can update the image; in CI the build fails if no `.zsync` file is made.
+`.zsync` file and `SHA256SUMS.txt` as a workflow artifact. In CI the build fails if no
+`.zsync` file is made (see [Build the AppImage](development.md#build-the-appimage)).
 Ordinary branch pushes and pull requests skip packaging, so pushing a commit and its tag
 builds the AppImage only once.
 
@@ -40,12 +39,12 @@ before GitHub can execute it.
 | --- | --- |
 | Pull request or ordinary push | Checks and tests |
 | Manual dispatch | Checks, tests and a test-build artifact |
-| Version tag such as `v0.2.3` | Checks, tests, build and a draft GitHub Release |
+| Version tag such as `v0.9.2` | Checks, tests, build and a draft GitHub Release |
 | Maintainer publishes the draft | AppImage and checksum become release downloads |
 
 To prepare a release:
 
-1. Set the version in `pyproject.toml`, for example `0.2.3`, add it to the `<releases>` list
+1. Set the version in `pyproject.toml`, for example `0.9.2`, add it to the `<releases>` list
    in `packaging/io.github.vyrnexis.AppGlider.appdata.xml`, and update any version numbers
    written in the docs. The interface and HTTP User-Agent read the installed package version.
    Reinstall an editable development checkout after a version change. Commit the changes.
@@ -53,8 +52,8 @@ To prepare a release:
 3. Create and push the matching tag:
 
    ```sh
-   git tag v0.2.3
-   git push origin v0.2.3
+   git tag v0.9.2
+   git push origin v0.9.2
    ```
 
 The tag must exactly match `v` plus the project version; a mismatch stops the build.

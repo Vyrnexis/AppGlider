@@ -7,8 +7,8 @@ src/appglider/   Application code, icons and asset licences
 tests/           Automated application tests
 packaging/       AppImage scripts, entry point and dependency locks
 .github/         GitHub Actions workflow
-docs/            User guide, technical notes, roadmap, development and build docs,
-                 example catalogs and branding sources
+docs/            User guide, technical notes, design brief, roadmap, development and
+                 build docs, screenshots, example catalogs and branding sources
 ```
 
 Local generated directories are ignored by Git:
@@ -33,26 +33,41 @@ python3 -m venv .venv
 
 ## Source layout
 
-The interface is one main window with a sidebar and stacked pages, all in `src/appglider/`:
+The interface is one main window with a sidebar and stacked pages. Code lives in
+`src/appglider/`, grouped by what it touches:
 
 | Module | Responsibility |
 | --- | --- |
-| `window.py` | Main window: sidebar, Library and Updates pages, banners, tray |
-| `self_update.py` | Check for, download and install new AppGlider versions; remove the replaced image |
-| `rows.py` | Library row widgets, status chips and drag reordering |
-| `theme.py` | Colour tokens, palette, stylesheet and the painted sidebar icons |
-| `app_page.py` | App page: release notes, versions, preferences, Manage; shared panel and setting-row helpers |
-| `app_status.py` | The status chip and main action of an app, from its install and release state |
-| `settings_page.py` | Settings page and its six sections (instant apply), including Space used |
-| `add_page.py` | Add app page: inspect a repository, choose build and icon, add |
-| `controls.py` | Switch and segmented controls |
-| `preferences.py` | Theme, accent and update-check choices, migration of retired themes, pinned apps, custom order and seen update notices |
-| `catalog_preview.py` | The read-only preview shown before a catalog is imported |
+| `app.py`, `__init__.py`, `__main__.py` | Entry point, launcher command, package version |
+| `instance.py` | Single-instance lock and the local socket that wakes the running window |
+| `core/catalog.py`, `core/catalogfile.py` | Built-in and custom repositories, release and build preferences; catalog files |
+| `core/preferences.py`, `core/storage.py` | Theme, accent, check interval, pinned apps and order; atomic persistence |
+| `github/versions.py` | Tag parsing (`release_version()`), version ordering (`version_key()`), cancellation |
+| `github/http.py` | Restricted GitHub requests, rate limits and the ETag cache |
+| `github/assets.py` | Release data, AppImage and CPU selection, build choice, checksums, the REST API |
+| `github/pages.py` | Release discovery from public pages when the allowance is used up |
+| `github/download.py` | Release cache and verified, cancellable downloads |
+| `github/release_info.py`, `github/status.py` | Stable and preview metadata; GitHub status for display, with no requests |
+| `github/icons.py` | Bounded icon discovery and image normalisation |
+| `install/library.py` | Managed installs, ownership, rollback, launching and uninstall |
+| `install/appimage.py` | AppImage header checks and the clean launch environment |
+| `install/shortcuts.py`, `install/desktopentry.py` | Menu entries, the login entry and the app's own `.desktop` details |
+| `install/launch_options.py` | Per-app arguments and environment variables |
+| `install/self_update.py` | Check for, download and install new AppGlider versions; remove the replaced image |
+| `ui/window.py` | Main window: sidebar, banners, footer, tasks, theme selection |
+| `ui/tray.py` | Tray icon, its menu and update notifications |
+| `ui/jobs.py`, `ui/release_checks.py` | Cancellable workers and Qt result signals; the background release-check queue |
+| `ui/rows.py`, `ui/app_status.py` | Library row widgets, drag reordering; the status chip logic shared with the App page |
+| `ui/theme.py`, `ui/controls.py` | Colour tokens, palette, stylesheet and painted icons; switch, segmented and space-bar controls |
+| `ui/pages/app_page.py` | App page: release notes, versions, preferences (including launch options), Manage |
+| `ui/pages/settings_page.py` | Settings page and its six sections (instant apply), including Space used |
+| `ui/pages/add_page.py`, `ui/pages/catalog_preview.py` | Add app page; the read-only preview shown before a catalog is imported |
 
-Visual values (colours, radii, sizes) are defined once, as theme tokens, in `theme.py`;
+Visual values (colours, radii, sizes) are defined once, as theme tokens, in `ui/theme.py`;
 [the design brief](design.md) describes them and the rules for new screens. Sidebar and
-check-button icons are drawn with `QPainter` in the current theme's colours, so the
-AppImage needs no SVG support.
+check-button icons are drawn with `QPainter` in the current theme's colours, so they need
+no image files. App icons in SVG form are turned into PNG through Qt's SVG image plugin,
+which the AppImage build keeps.
 
 ## Checks
 
@@ -63,14 +78,17 @@ AppImage needs no SVG support.
 .venv/bin/python -m unittest discover -s tests -q
 ```
 
-Run the tests with `QT_QPA_PLATFORM=offscreen` set if you have no display. GUI tests use
+Set `QT_QPA_PLATFORM=offscreen` to run the tests without a display. Do not use `-O` for
+tests or the smoke test: assertions are part of the checks. GUI tests use
 Qt's offscreen platform, disposable settings and controlled downloads, so they never touch
 your real AppGlider library or install real apps. `tests/catalog_fixture.py` provides the
 example catalog's apps to tests that need a library with apps in it.
 
 ## Build the AppImage
 
-Build on Linux x86_64 with Python 3.11 or newer, `binutils`, `tar` and `zstd` installed.
+Build on Linux x86_64 with Python 3.11 or newer, `binutils`, `tar` and `zstd` installed
+(plus `zsync`, for the `.zsync` file). The script ignores `APPDIR`, `APPIMAGE`, `ARGV0` and `OWD`, so it also works from a
+terminal that was itself started inside an AppImage.
 
 ```sh
 python3 -m venv build/packaging-env
@@ -79,19 +97,21 @@ build/packaging-env/bin/python packaging/build_appimage.py
 ```
 
 Output goes to `dist/`: `AppGlider-<version>-x86_64.AppImage` and `SHA256SUMS.txt`.
-The build embeds update information and checks it with `--appimage-updateinformation`.
-It also writes `AppGlider-<version>-x86_64.AppImage.zsync`; if appimagetool cannot, a
-local build skips that file and CI stops.
+The build embeds update information (`gh-releases-zsync|Vyrnexis|AppGlider|latest|…`),
+checks it with `--appimage-updateinformation`, and writes
+`AppGlider-<version>-x86_64.AppImage.zsync` so AppImageUpdate and similar tools can update the
+image. If appimagetool cannot write that file, a local build skips it and CI stops.
 The version comes from `pyproject.toml`.
 
 Test the package without FUSE, using a disposable first-run home:
 
 ```sh
-python3 packaging/smoke_test.py dist/AppGlider-<version>-x86_64.AppImage
+python3 packaging/smoke_test.py dist/AppGlider-0.9.2-x86_64.AppImage
 ```
 
 The smoke test runs twice: once as an empty first run, and once with two sample repositories
-so the app rows are exercised too. Verify the checksum from inside `dist/` with
+so the app rows are exercised too. Use the exact filename of your build (the version comes
+from `pyproject.toml`). Verify the checksum from inside `dist/` with
 `sha256sum -c SHA256SUMS.txt`.
 Before a release, also exercise the tray, folder picker, themes and launching on real
 X11/Wayland desktops. The headless check does not qualify those interactions.
@@ -109,9 +129,9 @@ Update its retained binding list if the application starts importing another Qt 
 Runtime licence texts and source/replacement instructions are bundled with the application;
 keep [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) current when dependencies change.
 
-`packaging/io.github.vyrnexis.AppGlider.appdata.xml` is the AppStream metadata that software
-catalogs such as [appimage.github.io](https://appimage.github.io/) read. It replaces the
-Python runtime's own metadata. Add each new version at the top of its `<releases>` list; the
+`packaging/io.github.vyrnexis.AppGlider.appdata.xml` is the AppStream metadata (description,
+release list and screenshot URLs) that software catalogs and AppStream tools read. It replaces
+the Python runtime's own metadata. Its screenshots point at files in `docs/previews/`. Add each new version at the top of its `<releases>` list; the
 build stops if the newest entry does not match the project version. Check it with
 `appstreamcli validate packaging/io.github.vyrnexis.AppGlider.appdata.xml`.
 
@@ -140,10 +160,23 @@ See [GitHub Actions](builds.md) for the automated build process, and the
 
 ## Documentation
 
-- `README.md` and `docs/usage.md` are for everyday users, who are not expected to be
-  technical: plain language, no jargon, and what to try when something goes wrong.
-- `docs/technical-notes.md` holds the detail (release matching, request budgets, files,
-  recovery). Put new technical explanations there and link to them from the guide.
-- Update `docs/usage.md` whenever a button, menu item or setting changes, and re-take the
-  screenshots in `docs/previews/` (taken in the Dark theme from a disposable library, with the
-  window at about 1040×720; the Add app page is taller so the whole form shows) after visible interface changes.
+Each topic has one home; link to it from elsewhere instead of repeating it.
+
+| Document | Holds |
+| --- | --- |
+| `README.md` | What AppGlider is, features, install, first steps and links; short |
+| `docs/usage.md` | Everyday behaviour, buttons and settings, in plain language, plus what to try when something goes wrong |
+| `docs/technical-notes.md` | How it works: release matching, request budgets, files, identifiers, recovery |
+| `docs/development.md` | Contributor setup, source layout, checks and local builds (this page) |
+| `docs/builds.md` | GitHub Actions and the release process |
+| `docs/design.md` | Interface layout, tokens and wording rules |
+| `docs/branding.md` | Icons and brand colours |
+| `docs/roadmap.md` | Shipped work and unapproved ideas |
+
+The README and the user guide are for everyday users, who are not expected to be technical:
+plain language, no jargon, and what to try when something goes wrong. Update
+`docs/usage.md` whenever a button, menu item or setting changes, and re-take the screenshots
+in `docs/previews/` after visible interface changes or a version change (the version shows in
+the sidebar). Take them in the Dark theme from a disposable library, with the window at
+1040×720; the app page (1040×1110) and the Add app page (1040×980) are taller so the whole
+form shows. Use neutral paths such as `/home/you/Applications`, never your own.

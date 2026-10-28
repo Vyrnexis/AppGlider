@@ -30,9 +30,10 @@ made up.*
 - Can hold an app at its current version so it is never offered an update.
 - Adds a menu entry for each app it installs, in the category and with the file types the
   app asks for, and can pass each app arguments and environment variables you choose.
-- Can sit in your system tray and start quietly there when you log in.
-- Keeps your apps in your own order (drag the rows, or sort A–Z) and lets you pin favourites to the top.
-- Can show a desktop notification when new updates are found (off unless you turn it on).
+- Can sit in your system tray, start quietly there when you log in and, if you turn it on,
+  show a desktop notification when updates are found.
+- Keeps your apps in your own order (drag the rows, or sort A–Z) and lets you pin favourites
+  to the top.
 - Shares lists of apps as plain text files you can read, edit and import
   (see [catalogs](docs/usage.md#catalogs-sharing-a-list-of-apps)).
 - Looks for new versions of AppGlider itself and, when you agree, downloads and checks the
@@ -56,13 +57,13 @@ already taken. Version 0.4.0 and later start with a fresh library and settings.
 
 Keep the file somewhere permanent, such as `~/Applications`. AppGlider adds a menu entry
 that points at it. If you move the file, start it once from its new place and the entry is
-repaired. When a new version of AppGlider is out, it offers to download it next to the old
-file and removes the old file after you switch.
+repaired. AppGlider updates itself by downloading the new file next to the old one (see
+[Updating AppGlider](docs/usage.md#updating-appglider)).
 
 **What you need:** a 64-bit (x86_64) Linux desktop that is about as new as Ubuntu 22.04 or
 newer (technically, glibc 2.35 or newer). That covers current Ubuntu, Linux Mint, Fedora,
 Debian 12 and Arch. It includes everything else it needs. If it will not start and the
-message mentions FUSE, add `--appimage-extract-and-run` after the file name.
+message mentions FUSE, see [if something goes wrong](docs/usage.md#if-something-goes-wrong).
 
 **Nix:** the repository has a flake (community-contributed, not tested on aarch64-linux).
 Run `nix run github:Vyrnexis/AppGlider`, or add `packages.default` or `overlays.default`
@@ -95,15 +96,9 @@ with an AppImage and a checksum.
 ## For developers
 
 AppGlider is written in Python with PySide6 and needs Python 3.11 or newer.
-
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python -O -m appglider
-```
-
-See [development and packaging](docs/development.md) for the checks and building the
-AppImage, and [GitHub Actions](docs/builds.md) for automated builds and releases.
+[Development and packaging](docs/development.md) covers setup, checks and building the
+AppImage, [GitHub Actions](docs/builds.md) covers automated builds and releases, and the
+[design brief](docs/design.md) covers the interface.
 
 ## Licence and credits
 

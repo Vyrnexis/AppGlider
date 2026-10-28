@@ -7,16 +7,19 @@ who want to know exactly what AppGlider does with their system, and for contribu
 ## Contents
 
 - [How release checks work](#how-release-checks-work)
-- [AppGlider's own updates](#appgliders-own-updates)
-- [Release notes](#release-notes)
 - [GitHub's request allowance](#githubs-request-allowance)
 - [Stable and preview versions](#stable-and-preview-versions)
 - [Which file is downloaded](#which-file-is-downloaded)
 - [Checksums](#checksums)
+- [Release notes](#release-notes)
+- [Update notifications](#update-notifications)
+- [AppGlider's own updates](#appgliders-own-updates)
 - [Icons](#icons)
 - [Catalog files](#catalog-files)
 - [Files AppGlider keeps](#files-appglider-keeps)
 - [Menu entries](#menu-entries)
+- [Tray and single instance](#tray-and-single-instance)
+- [Names and identifiers](#names-and-identifiers)
 - [Library recovery](#library-recovery)
 
 ## How release checks work
@@ -59,80 +62,6 @@ who want to know exactly what AppGlider does with their system, and for contribu
 - AppGlider itself is updated by downloading a newer AppImage next to the running one
   (see [AppGlider's own updates](#appgliders-own-updates)).
 
-## AppGlider's own updates
-
-AppGlider looks for a newer stable release of itself (`Vyrnexis/AppGlider`) with the same
-`HEAD` request to `releases/latest` that the cheap app checks use. There is no fallback to
-the API: if the redirect gives no clear answer the check is reported as failed (when the user
-asked for it) or ignored (in the background), so it never uses GitHub's allowance. The tag's
-version is compared with the running version using the usual version ordering, and a newer
-stable version is offered; previews and unreadable tags never are. The check runs on a
-separate background worker, not in the window's single task slot, so it never blocks an
-install, and only one runs at a time. It runs at startup, on the schedule, from the toolbar
-and tray **Check for updates**, and from **Settings → About → Check now**, even with no apps
-installed. With **Only when I choose** the startup and scheduled runs are skipped, leaving the
-toolbar and tray command and **Check now**. The result is held in memory only. A newer version shows the tray
-badge and, if notifications are on, one scheduled-check message per version, remembered under
-the reserved key `AppGlider:self` in `notifications/seen` (app identifiers never contain a
-colon). The running AppImage is recognised by `APPIMAGE` and `APPDIR` together with the Python
-prefix lying inside `APPDIR`; the same test builds the menu shortcut's command.
-
-**Updating in place.** The **Update AppGlider** button works only when the running AppImage is
-recognised (as above) and is a regular file in a folder the user can write. Otherwise it opens
-the release page. The update runs in the window's single task slot, so it never overlaps an
-app install, and its banner button is disabled while any task runs.
-
-- The release comes from the same full check app installs use (`latest_release` for
-  `Vyrnexis/AppGlider`, stable only, so unlike the quick check it can use the API allowance). It must be the version the quick check found, stable and
-  still newer than the running version; otherwise nothing is downloaded and the footer says
-  so. The file must have a published SHA-256 (GitHub's asset digest or `SHA256SUMS.txt`), and
-  the download is bounded and verified by `releases.download` (size and SHA-256), then by
-  `library.check_appimage` (ELF, AppImage type 2 and the CPU), with the same free-space check
-  as installs (download size plus 64 MiB).
-- The download goes to a hidden `.AppGlider-update-*` file in the running image's folder,
-  is made executable and is renamed onto `AppGlider-<version>-x86_64.AppImage` (the asset's
-  own name when it matches `AppGlider-*.AppImage`, ignoring case) only after verification. A
-  failure or cancel deletes the temporary file. An existing file of that name is replaced
-  only at that last step; a symbolic link, a folder or the running image itself is refused.
-  The running image is never written to.
-- Afterwards the menu entry (`library.create_launcher_shortcut`) and, only if it already
-  exists and carries our marker, the login entry (`library.enable_autostart`) are pointed at
-  the new file, with the usual rules: only entries marked `X-AppGlider=true`, never a symbolic
-  link. A refusal is reported in the footer and does not undo the update.
-- Settings keys: `selfupdate/ready` (the new file), `selfupdate/replaced` (the file it
-  replaced, for removal) and `selfupdate/version` (the new file's version, so the "ready"
-  banner can come back). On startup a still-valid `ready` file that is newer than the running
-  version shows the ready banner instead of "available"; if it vanished or is no longer a
-  valid newer AppImage the keys are cleared.
-- **Restart now** starts the new file with the flag `--after-update` the way apps are
-  launched: `subprocess.Popen` in a new session with no inherited file descriptors (an
-  inherited handle on this image's FUSE mount would keep the old file in use), in an
-  environment cleaned of the running image's `APPIMAGE`, `APPDIR`, library and certificate
-  variables (the same cleaning used to launch apps), then quits through the normal
-  quit path. It refuses while a task or release check is running, and stays open with an error
-  if the new file cannot start.
-- `--after-update` makes the new instance retry the single-instance lock quietly (every 150 ms
-  for up to 15 s) while the old window finishes quitting, instead of waking it and exiting.
-  If the lock never frees it behaves like any second start.
-- **Cleanup.** After taking the lock (never in `--smoke-test`) the new instance reads
-  `selfupdate/replaced` and deletes that file only when it runs from an AppImage, the path is
-  not the running image, it is in the running image's folder, it is a regular file and not a
-  symbolic link, its name matches `AppGlider-*.AppImage` (ignoring case), it passes
-  `library.check_appimage` and `library.running` finds no process using it. `ready` and
-  `version` are cleared once the running image is the `ready` file. `replaced` is kept only
-  while that file passes every other rule and is still running (the old version closing after
-  a restart); an instance started with `--after-update` tries again after 10 seconds, and later
-  starts try again too. A `ready` file that vanished clears everything without deleting
-  anything. Nothing else is deleted.
-
-## Release notes
-
-The app page shows the description GitHub holds for the offered release. It is read from
-the metadata of the check that found the release (the API or the public release page), so
-showing it costs no extra request, and it is kept bounded in length. The text is rendered
-as Markdown, read-only: images and local files are never loaded and only web links open.
-A project that published no description shows a link to its releases instead.
-
 ## GitHub's request allowance
 
 AppGlider needs no GitHub account or token. It uses GitHub's public API, which allows
@@ -156,15 +85,6 @@ AppGlider needs no GitHub account or token. It uses GitHub's public API, which a
   can also be affected by other programs on your network. After a request window expires the
   count becomes unknown until the next response; AppGlider does not assume the full
   allowance is available. Retry times survive restarts.
-
-## Update notifications
-
-The optional notification is sent through the system tray's message support, only after a
-scheduled check (never at startup or for **Check for updates**), only if the tray is available
-and visible, and not while the AppGlider window is shown and active. AppGlider remembers the
-version it announced for each app, so an update is announced once; when the update is
-installed or goes away, the memory is cleared. Updates that are already waiting when the
-option is switched on are not announced, only new ones.
 
 ## Stable and preview versions
 
@@ -219,14 +139,97 @@ GitHub's own asset digest when available, otherwise a matching entry in the rele
 the asset links and filename-labelled digests from GitHub's public release listing. If
 GitHub changes that page or no checksum can be found, AppGlider stops and explains why.
 
+## Release notes
+
+The app page shows the description GitHub holds for the offered release. It is read from
+the metadata of the check that found the release (the API or the public release page), so
+showing it costs no extra request, and it is kept bounded in length. The text is rendered
+as Markdown, read-only: images and local files are never loaded and only web links open.
+A project that published no description shows a link to its releases instead.
+
+## Update notifications
+
+The optional notification is sent through the system tray's message support, only after a
+scheduled check (never at startup or for **Check for updates**), only if the tray is available
+and visible, and not while the AppGlider window is shown and active. AppGlider remembers the
+version it announced for each app, so an update is announced once; when the update is
+installed or goes away, the memory is cleared. Updates that are already waiting when the
+option is switched on are not announced, only new ones.
+
+## AppGlider's own updates
+
+AppGlider looks for a newer stable release of itself (`Vyrnexis/AppGlider`) with the same
+`HEAD` request to `releases/latest` that the cheap app checks use. There is no fallback to
+the API: if the redirect gives no clear answer the check is reported as failed (when the user
+asked for it) or ignored (in the background), so it never uses GitHub's allowance. The tag's
+version is compared with the running version using the usual version ordering, and a newer
+stable version is offered; previews and unreadable tags never are. The check runs on a
+separate background worker, not in the window's single task slot, so it never blocks an
+install, and only one runs at a time. It runs at startup, on the schedule, from the toolbar
+and tray **Check for updates**, and from **Settings → About → Check now**, even with no apps
+installed. With **Only when I choose** the startup and scheduled runs are skipped, leaving the
+toolbar and tray command and **Check now**. The result is held in memory only. A newer version shows the tray
+badge and, if notifications are on, one scheduled-check message per version, remembered under
+the reserved key `AppGlider:self` in `notifications/seen` (app identifiers never contain a
+colon). The running AppImage is recognised by `APPIMAGE` and `APPDIR` together with the Python
+prefix lying inside `APPDIR`; the same test builds the menu shortcut's command.
+
+**Updating in place.** The **Update AppGlider** button works only when the running AppImage is
+recognised (as above) and is a regular file in a folder the user can write. Otherwise it opens
+the release page. The update runs in the window's single task slot, so it never overlaps an
+app install, and its banner button is disabled while any task runs.
+
+- The release comes from the same full check app installs use (`latest_release` in `github/download.py` for
+  `Vyrnexis/AppGlider`, stable only, so unlike the quick check it can use the API allowance). It must be the version the quick check found, stable and
+  still newer than the running version; otherwise nothing is downloaded and the footer says
+  so. The file must have a published SHA-256 (GitHub's asset digest or `SHA256SUMS.txt`), and
+  the download is bounded and verified by `download` in `github/download.py` (size and SHA-256), then by
+  `check_appimage` in `install/appimage.py` (ELF, AppImage type 2 and the CPU), with the same free-space check
+  as installs (download size plus 64 MiB).
+- The download goes to a hidden `.AppGlider-update-*` file in the running image's folder,
+  is made executable and is renamed onto `AppGlider-<version>-x86_64.AppImage` (the asset's
+  own name when it matches `AppGlider-*.AppImage`, ignoring case) only after verification. A
+  failure or cancel deletes the temporary file. An existing file of that name is replaced
+  only at that last step; a symbolic link, a folder or the running image itself is refused.
+  The running image is never written to.
+- Afterwards the menu entry (`create_launcher_shortcut` in `install/shortcuts.py`) and, only if it already
+  exists and carries our marker, the login entry (`enable_autostart`, same file) are pointed at
+  the new file, with the usual rules: only entries marked `X-AppGlider=true`, never a symbolic
+  link. A refusal is reported in the footer and does not undo the update.
+- Settings keys: `selfupdate/ready` (the new file), `selfupdate/replaced` (the file it
+  replaced, for removal) and `selfupdate/version` (the new file's version, so the "ready"
+  banner can come back). On startup a still-valid `ready` file that is newer than the running
+  version shows the ready banner instead of "available"; if it vanished or is no longer a
+  valid newer AppImage the keys are cleared.
+- **Restart now** starts the new file with the flag `--after-update` the way apps are
+  launched: `subprocess.Popen` in a new session with no inherited file descriptors (an
+  inherited handle on this image's FUSE mount would keep the old file in use), in an
+  environment cleaned of the running image's `APPIMAGE`, `APPDIR`, library and certificate
+  variables (the same cleaning used to launch apps), then quits through the normal
+  quit path. It refuses while a task or release check is running, and stays open with an error
+  if the new file cannot start.
+- `--after-update` makes the new instance retry the single-instance lock quietly (every 150 ms
+  for up to 15 s) while the old window finishes quitting, instead of waking it and exiting.
+  If the lock never frees it behaves like any second start.
+- **Cleanup.** After taking the lock (never in `--smoke-test`) the new instance reads
+  `selfupdate/replaced` and deletes that file only when it runs from an AppImage, the path is
+  not the running image, it is in the running image's folder, it is a regular file and not a
+  symbolic link, its name matches `AppGlider-*.AppImage` (ignoring case), it passes
+  `check_appimage` and `running` (in `install/library.py`) finds no process using it. `ready` and
+  `version` are cleared once the running image is the `ready` file. `replaced` is kept only
+  while that file passes every other rule and is still running (the old version closing after
+  a restart); an instance started with `--after-update` tries again after 10 seconds, and later
+  starts try again too. A `ready` file that vanished clears everything without deleting
+  anything. Nothing else is deleted.
+
 ## Icons
 
 - While adding a repository, AppGlider looks for likely icon files in it and previews the
   candidates. You can also choose a local PNG or a self-contained SVG. Selected icons are
   saved locally and keep working offline.
 - Images are limited to 2 MiB and 4096 pixels per side and are converted to a PNG of at
-  most 512 pixels per side. SVGs that reference external resources or declare a document
-  type are rejected.
+  most 512 pixels per side. SVGs that reference external resources, or declare anything
+  beyond a standard `<!DOCTYPE svg …>` line, are rejected; that standard line is accepted.
 - Only a bounded set of likely repository files is examined, so some projects need a manual
   choice. A missing icon or a quota error never stops a valid repository from being added.
   Icons inside the AppImage itself are not extracted.
@@ -257,7 +260,9 @@ GitHub changes that page or no checksum can be found, AppGlider stops and explai
 - Candidates are ranked: the icon named in the project's `.desktop` file first (including
   names like `com.example.app`), then files named after the project, then PNGs under
   `linux` or `hicolor`, then larger sizes before smaller (read from folders like `512x512`
-  or names like `icon_192px`). Up to four are offered.
+  or names like `icon_192px`). Candidates that look like a preview or nightly build (a path word such as `insiders`, `nightly`,
+  `beta` or `preview`) come after the real icon, and so does artwork that is far from square
+  (page corners, wide logos). Up to four are offered.
 - Repositories that were renamed or moved are followed: redirects are accepted only to
   GitHub's own hosts, and the new name is used for the remaining pages. A file list too
   large for the API (some big projects) simply uses the web walk instead.
@@ -266,15 +271,9 @@ GitHub changes that page or no checksum can be found, AppGlider stops and explai
 ## Catalog files
 
 A catalog is TOML with `format = 1`, an optional `name` and one `[[app]]` table per
-repository:
-
-| Key | Required | Meaning |
-| --- | --- | --- |
-| `repo` | yes | `owner/repository` or `https://github.com/owner/repository` |
-| `name` | no | Display name; defaults to the repository name |
-| `description` | no | Plain text, up to 200 characters |
-| `stable_only` | no | Default `true`; `false` includes previews |
-| `build` | no | Exact AppImage filename to prefer |
+repository (`repo`, and optionally `name`, `description`, `stable_only` and `build`). The
+[user guide](usage.md#catalogs-sharing-a-list-of-apps) shows the whole format. `stable_only`
+defaults to `true`, and `build` is the exact AppImage filename to prefer.
 
 - Each entry goes through the same checks as adding a repository by hand (GitHub only, no
   query strings or odd characters). Bad entries are listed and skipped; keys AppGlider does
@@ -283,7 +282,7 @@ repository:
   than 100 apps imports nothing. The library holds at most 100 repositories in total.
 - Import never changes an app you already have, makes no network requests and installs
   nothing. Names and descriptions are shown as plain text, never as formatted text.
-- The example catalog is also bundled in the package (`assets/catalogs/artcraft.toml`) and a
+- The example catalog is also bundled in the package (`src/appglider/assets/catalogs/artcraft.toml`) and a
   test keeps it identical to `docs/catalogs/artcraft.toml`; the release workflow attaches
   that file to every release.
 - The 14 apps in the example catalog keep the identifiers they always had (for example
@@ -294,7 +293,7 @@ repository:
 
 | What | Where |
 | --- | --- |
-| Library, repository list, release cache, icons, locks | `~/.local/share/appglider/` (follows `XDG_DATA_HOME`) |
+| Library, repository list, release cache (`release-cache/`, including `etags.json`), icons, locks (`library.lock`, `appglider.lock`) | `~/.local/share/appglider/` (follows `XDG_DATA_HOME`) |
 | Installed apps | `~/.local/share/appglider/apps/` unless you chose another folder |
 | Settings | `~/.config/AppGlider/AppGlider.conf` (follows `XDG_CONFIG_HOME`) |
 | Menu entries | `~/.local/share/applications/appglider*.desktop` |
@@ -306,7 +305,6 @@ Each install folder holds a small `.appglider` marker. That marker is how AppGli
 which files it owns; it never touches AppImages, documents or settings it did not install.
 Library and settings changes are written atomically, so a crash cannot leave a half-written
 file. A corrupt file is preserved and reported, never overwritten with an empty library.
-Only one AppGlider runs per data folder; starting it again raises the running window.
 
 Choices such as the theme and accent (`appearance/theme`, `appearance/accent`), update schedule, your own order (`library/order`, a JSON list of app identifiers; apps not in it follow, A–Z by name) and pinned apps
 (`library/pinned`, a JSON list of app identifiers), the notification choice
@@ -324,7 +322,7 @@ either way `library/sort` is then removed.
 - AppGlider writes `appglider.desktop` for itself and `appglider-<app>.desktop` for each
   managed app, marked `X-AppGlider=true` so it only ever edits its own.
 - An app's entry takes its descriptive keys from the `.desktop` file inside the AppImage
-  (`desktopentry.py`): Categories, MimeType, Keywords, Comment, StartupWMClass, StartupNotify,
+  (`install/desktopentry.py`): Categories, MimeType, Keywords, Comment, StartupWMClass, StartupNotify,
   Terminal and the `[Desktop Action]` groups. Nothing else is copied; Name, Exec, Icon and the
   `X-AppGlider` markers are AppGlider's. Without usable details the entry has `Categories=Utility;`.
 - The file is read by running the AppImage's own type 2 runtime as
@@ -353,6 +351,32 @@ either way `library/sort` is then removed.
   `ai.storyteller.solidcraft.desktop`. AppGlider does not create or edit these. When you
   uninstall the app, any entry in your applications folder whose command is one of the
   removed AppImages is deleted; entries for other programs are untouched.
+
+## Tray and single instance
+
+- Clicking the tray icon restores the window. Its menu has **Open AppGlider**, **Check for
+  updates**, an **Installed apps** submenu that launches managed apps, and **Quit AppGlider**.
+- Closing the window hides it only while a tray is available (and **Keep running in the tray**
+  is on); otherwise the normal close applies. Downloads continue while hidden, and Quit waits
+  for a confirmed cancellation to finish before exiting. Tray messages are limited to update
+  alerts.
+- Only one AppGlider runs per data folder. `appglider.lock` in the data folder is the guard;
+  starting again wakes the running window through a socket in `$XDG_RUNTIME_DIR`.
+- Qt's tray support follows the
+  [QSystemTrayIcon documentation](https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QSystemTrayIcon.html).
+
+## Names and identifiers
+
+- Display name and Qt organisation/application IDs: `AppGlider`. Python module and command:
+  `appglider`.
+- Installation ownership marker: `.appglider` in each install folder, whose first line is
+  `AppGlider`.
+- Managed-app menu entries: `appglider-<id>.desktop`, marked `X-AppGlider=true`. Launcher entry
+  and Qt desktop-file ID: `appglider.desktop` / `appglider`.
+- Optional login entry: `$XDG_CONFIG_HOME/autostart/appglider.desktop` (default
+  `~/.config/autostart`), marked `X-AppGlider=true`, running the launcher command with
+  `--tray`. Its existence is the setting; a symbolic link or unmarked file is never touched.
+- Paths are listed under [Files AppGlider keeps](#files-appglider-keeps).
 
 ## Library recovery
 
