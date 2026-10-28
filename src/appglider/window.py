@@ -227,6 +227,7 @@ class LauncherWindow(QMainWindow):
         self.quitting = False
         self.self_state = self_update.SelfUpdate()
         self.self_task: Lookup | None = None
+        self.shortcut_task: Lookup | None = None
         self.self_explicit = False
         self.self_notify = False
         self.self_ready = self_update.ready_update(self.settings)
@@ -1411,6 +1412,19 @@ class LauncherWindow(QMainWindow):
             QThreadPool.globalInstance().start(task)
         self.settings_page.update_self_update()
 
+    def refresh_shortcuts(self) -> None:
+        """Once at startup, give older menu entries their app's own details, off the Qt thread."""
+        if self.quitting or self.shortcut_task is not None:
+            return
+        library = self.library
+        task = self.shortcut_task = Lookup(library.refresh_shortcuts)
+        task.signals.finished.connect(self.shortcuts_refreshed)
+        task.signals.failed.connect(self.shortcuts_refreshed)
+        QThreadPool.globalInstance().start(task)
+
+    def shortcuts_refreshed(self, result: object) -> None:
+        self.shortcut_task = None
+
     def self_check_done(self, tag: object) -> None:
         self.self_task = None
         if self.quitting:
@@ -1749,6 +1763,8 @@ class LauncherWindow(QMainWindow):
             return
         if self.self_task is not None:
             self.self_task.cancel.set()
+        if self.shortcut_task is not None:
+            self.shortcut_task.cancel.set()
         self.add_page.stop()
         self.tray.hide()
         super().closeEvent(event)

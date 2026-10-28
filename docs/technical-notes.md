@@ -298,6 +298,7 @@ repository:
 | Installed apps | `~/.local/share/appglider/apps/` unless you chose another folder |
 | Settings | `~/.config/AppGlider/AppGlider.conf` (follows `XDG_CONFIG_HOME`) |
 | Menu entries | `~/.local/share/applications/appglider*.desktop` |
+| Menu details read from each app (`desktop/<app>.json`), per-app launch options (`launch-options.json`) | `~/.local/share/appglider/` |
 | Login entry (only if you turn on Start with my desktop) | `~/.config/autostart/appglider.desktop` (follows `XDG_CONFIG_HOME`) |
 | Logs of apps that failed to start | `~/.local/share/appglider/logs/` |
 
@@ -322,6 +323,29 @@ either way `library/sort` is then removed.
 
 - AppGlider writes `appglider.desktop` for itself and `appglider-<app>.desktop` for each
   managed app, marked `X-AppGlider=true` so it only ever edits its own.
+- An app's entry takes its descriptive keys from the `.desktop` file inside the AppImage
+  (`desktopentry.py`): Categories, MimeType, Keywords, Comment, StartupWMClass, StartupNotify,
+  Terminal and the `[Desktop Action]` groups. Nothing else is copied; Name, Exec, Icon and the
+  `X-AppGlider` markers are AppGlider's. Without usable details the entry has `Categories=Utility;`.
+- The file is read by running the AppImage's own type 2 runtime as
+  `--appimage-extract '*.desktop'` (and once more for the target of a symbolic link, which must
+  stay inside the extracted tree) in a temporary directory, with the clean environment, no
+  input or output, its own session and a 20 second limit. It runs only on a file that passed
+  the checksum and header checks and is owned by AppGlider, and never while the library lock
+  is held: install reads the verified download before taking the lock, and roll back reads the
+  kept copy first. The sanitised result is cached in `desktop/<app>.json`, tied to the file's
+  path, size and modification time, and checked again when used. Writing an entry only uses the
+  cache.
+- Entries carry `X-AppGlider-Metadata=1`. At startup, one background pass rewrites owned
+  entries of installed apps that lack it, never creating a missing entry, then
+  `update-desktop-database` runs once on the folder if it is installed.
+- Launch options (`launch-options.json`, app id to `args` and `env`) are separate from the
+  catalog and its export. Launching adds the arguments after the AppImage path and merges the
+  variables over the clean environment. The entry's `Exec` becomes
+  `"env" "NAME=value" "/path/app.AppImage" "arg" %F` (`%U` if the app's own entry took URLs),
+  each word quoted as the desktop entry specification requires; without variables there is no
+  `env`. Actions get the variables but not the arguments. Saving the options rewrites an
+  existing owned entry.
 - Its own entry is rewritten only when it is missing, when its target no longer exists, or
   when a newer packaged AppImage takes over. A development run never repoints a working
   entry. The entry's icon copy is refreshed whenever a new release ships a different icon.

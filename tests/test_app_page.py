@@ -245,6 +245,57 @@ class AppPageTests(unittest.TestCase):
         self.page.pin_switch.click()
         self.assertNotIn(APP.id, window.pinned)
 
+    def test_launch_options_save_when_editing_finishes_and_refuse_bad_input(self) -> None:
+        self.install("1.0.0")
+        self.window.open_app(APP.id)
+        page = self.page
+        shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
+        self.assertEqual(page.arguments_edit.text(), "")
+        self.assertFalse(page.launch_error.isVisible())
+
+        page.arguments_edit.setText('--profile "a b"')
+        page.environment_edit.setText("MY_VAR=1")
+        page.arguments_edit.editingFinished.emit()
+        options = self.library.launch_options(APP.id)
+        self.assertEqual(options.arguments, ("--profile", "a b"))
+        self.assertEqual(options.environment, (("MY_VAR", "1"),))
+        self.assertIn("MY_VAR=1", shortcut.read_text())
+        self.assertFalse(page.launch_error.isVisible())
+
+        page.environment_edit.setText("1BAD=x")
+        page.environment_edit.editingFinished.emit()
+        self.assertTrue(page.launch_error.isVisible())
+        self.assertIn("1BAD", page.launch_error.text())
+        self.assertEqual(self.library.launch_options(APP.id), options)
+        page.refresh()  # a refresh keeps what the user typed while it is refused
+        self.assertEqual(page.environment_edit.text(), "1BAD=x")
+
+        page.arguments_edit.setText('--oops "')
+        page.arguments_edit.editingFinished.emit()
+        self.assertIn("could not be read", page.launch_error.text())
+        self.assertEqual(self.library.launch_options(APP.id), options)
+
+        page.arguments_edit.setText("")
+        page.environment_edit.setText("")
+        page.arguments_edit.editingFinished.emit()
+        self.assertFalse(page.launch_error.isVisible())
+        self.assertFalse(self.library.launch_options(APP.id))
+        self.assertNotIn("MY_VAR", shortcut.read_text())
+
+        self.window.close_app()
+        self.window.open_app(APP.id)  # reopening shows the saved state again
+        self.assertEqual(page.environment_edit.text(), "")
+
+    def test_the_startup_refresh_of_menu_entries_runs_once_in_the_background(self) -> None:
+        with patch.object(self.library, "refresh_shortcuts", return_value=0) as refresh:
+            self.window.refresh_shortcuts()
+            self.window.refresh_shortcuts()  # already running or done: one worker at most
+            deadline = time.monotonic() + 5
+            while self.window.shortcut_task is not None and time.monotonic() < deadline:
+                QTest.qWait(10)
+        self.assertIsNone(self.window.shortcut_task)
+        refresh.assert_called_once()
+
     def test_build_choice_saves_through_the_library_and_keeps_caches_apart(self) -> None:
         self.library.add_repository(replace(chosen_bambu(), include_prereleases=True))
         self.window.scan_installed()

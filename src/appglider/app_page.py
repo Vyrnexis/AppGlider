@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -39,6 +40,13 @@ from appglider.icons import (
     normalise_icon,
 )
 from appglider.jobs import TaskResult
+from appglider.launch_options import (
+    LaunchOptions,
+    format_arguments,
+    format_environment,
+    parse_arguments,
+    parse_environment,
+)
 from appglider.library import PreviousCopy, previous_copy
 from appglider.release_info import ReleaseInfo, ReleaseOption, remember_release
 from appglider.releases import (
@@ -261,6 +269,7 @@ class AppPage(QScrollArea):
         self.message = ""
         self.release_url = ""
         self.shown_notes: str | None = None
+        self.options_app: str | None = None
         self.setObjectName("appPage")
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -488,6 +497,14 @@ class AppPage(QScrollArea):
         self.shortcut_button = QPushButton("Repair")
         self.shortcut_button.setAccessibleName("Repair menu shortcut")
         self.shortcut_button.clicked.connect(self.create_shortcut)
+        self.arguments_edit = QLineEdit()
+        self.arguments_edit.setAccessibleName("Launch arguments")
+        self.arguments_edit.setPlaceholderText("--flag value")
+        self.arguments_edit.editingFinished.connect(self.save_launch_options)
+        self.environment_edit = QLineEdit()
+        self.environment_edit.setAccessibleName("Launch environment")
+        self.environment_edit.setPlaceholderText("NAME=value OTHER=value")
+        self.environment_edit.editingFinished.connect(self.save_launch_options)
         self.channel_row = SettingRow(
             "Release channel", "Previews may be less reliable", self.channel
         )
@@ -500,6 +517,15 @@ class AppPage(QScrollArea):
         self.shortcut_row = SettingRow(
             "Menu shortcut", "In your applications menu", self.shortcut_button
         )
+        self.arguments_row = SettingRow(
+            "Arguments", "Used by Launch and the menu shortcut", self.arguments_edit, below=True
+        )
+        self.environment_row = SettingRow(
+            "Environment",
+            "Variables for the app, separated by spaces",
+            self.environment_edit,
+            below=True,
+        )
         add_setting_rows(
             layout,
             (
@@ -509,8 +535,17 @@ class AppPage(QScrollArea):
                 self.build_row,
                 self.icon_row,
                 self.shortcut_row,
+                self.arguments_row,
+                self.environment_row,
             ),
         )
+        self.launch_error = QLabel()
+        self.launch_error.setObjectName("settingError")
+        self.launch_error.setTextFormat(Qt.TextFormat.PlainText)
+        self.launch_error.setWordWrap(True)
+        self.launch_error.setAccessibleName("Launch options problem")
+        self.launch_error.hide()
+        layout.addWidget(self.launch_error)
         self.hold_hint = self.hold_row.hint
         self.build_hint = self.build_row.hint
         self.icon_hint = self.icon_row.hint
@@ -555,6 +590,8 @@ class AppPage(QScrollArea):
         self.icon_key = None
         self.message = ""
         self.shown_notes = None
+        self.options_app = None
+        self.launch_error.hide()
         self.back_button.setText(f"‹ {back_label}")
         self.back_button.setAccessibleName(f"Back to {back_label}")
         self.verticalScrollBar().setValue(0)
@@ -792,6 +829,22 @@ class AppPage(QScrollArea):
         self.build_button.setEnabled(not busy)
         self.icon_button.setEnabled(not busy)
         self.shortcut_button.setEnabled(bool(not busy and installed and installed.managed))
+        self.refresh_launch_options(app)
+
+    def refresh_launch_options(self, app: App) -> None:
+        """Show the saved options, leaving text alone while it is being edited or refused."""
+        editing = self.arguments_edit.hasFocus() or self.environment_edit.hasFocus()
+        if self.options_app == app.id and (editing or self.launch_error.isVisible()):
+            return
+        try:
+            options = self.launcher.library.launch_options(app.id)
+        except ValueError as error:
+            options = LaunchOptions()
+            self.launch_error.setText(str(error))
+            self.launch_error.show()
+        self.options_app = app.id
+        self.arguments_edit.setText(format_arguments(options))
+        self.environment_edit.setText(format_environment(options))
 
     def hold_text(self, app: App, installed: Any) -> str:
         """Say what is held, or what holding does."""
@@ -844,6 +897,25 @@ class AppPage(QScrollArea):
     def create_shortcut(self) -> None:
         if self.app_id:
             self.launcher.create_shortcut(self.app_id)
+
+    def save_launch_options(self) -> None:
+        app = self.current_app()
+        if app is None or self.options_app != app.id:
+            return
+        library = self.launcher.library
+        try:
+            options = LaunchOptions(
+                parse_arguments(self.arguments_edit.text()),
+                parse_environment(self.environment_edit.text()),
+            )
+            if options != library.launch_options(app.id):
+                library.set_launch_options(app.id, options)
+                self.launcher.footer.setText(f"Saved launch options for {app.name}.")
+        except (OSError, ValueError) as error:
+            self.launch_error.setText(str(error))
+            self.launch_error.show()
+            return
+        self.launch_error.hide()
 
     def rollback(self) -> None:
         if self.app_id:

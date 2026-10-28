@@ -130,6 +130,7 @@ def main() -> int:
         QTimer.singleShot(200, report)
     else:
         QTimer.singleShot(0, window.startup_check)
+        QTimer.singleShot(0, window.refresh_shortcuts)
     status = app.exec()
     instance.release()
     return status

@@ -260,7 +260,8 @@ buttons **Launch** and the main action (Install, Update, Choose build or Cancel)
   size), the latest stable and preview versions, and when they were last checked
   (**Check now** looks again).
 - **Preferences**: **Release channel**, **Hold at this version**, **Pin to top**, **Build**,
-  **Icon** and **Menu shortcut** (**Repair**). Changes apply immediately.
+  **Icon**, **Menu shortcut** (**Repair**), and the launch options **Arguments** and
+  **Environment** (see [Launch options](#launch-options)). Changes apply immediately.
 - **Manage** (in red): **Roll back** when there is a kept copy, then **Uninstall…** while the
   app is installed or **Remove…** from the library once it is not. Each asks before it does
   anything. Uninstalling keeps your documents and the app's own settings. Removing an app
@@ -401,10 +402,35 @@ AppGlider adds an entry to your application menu for itself and for every app it
 named like **PhotoCraft (AppGlider)**. If one goes missing, use **⋯ → Create/repair menu
 shortcut** (or **Repair** on its page).
 
+Each entry uses what the app says about itself in the `.desktop` file inside its AppImage:
+its menu category, short description, the file types it opens, search keywords, window class
+and any extra actions it lists (such as "New window"). AppGlider reads that file once, when it
+installs or restores a version, by asking the AppImage to extract only that file. If an app
+has none, or it cannot be read, the entry is plain and goes under **Utility**. The name, the
+command and the icon are always AppGlider's own, and an entry that was made by an older
+AppGlider is brought up to date the next time AppGlider starts. Entries you or another
+program made are never changed.
+
 Some apps add their own menu entry the first time you run them, without "(AppGlider)" in the
 name. That is the app's doing, not AppGlider's, so such an app can appear twice in your
 menu. They both start the same program. When you uninstall the app through AppGlider, its
 own entry is removed too, so no dead entry is left behind.
+
+## Launch options
+
+On an app's page, **Arguments** and **Environment** change how AppGlider starts that app. Both
+are optional and saved when you press Enter or leave the field.
+
+- **Arguments** is one line, read like a shell would: `--profile "work files" --safe-mode`.
+- **Environment** is a list of `NAME=value` pairs separated by spaces. Quote a value that
+  contains spaces: `GTK_THEME=Adwaita:dark LANG="de_DE.UTF-8"`. A name uses letters, digits
+  and underscores and does not start with a digit.
+
+They apply when you press **Launch** and in the app's menu entry (the menu entry runs the
+app through `env` when there are variables). The app's extra menu actions get the variables
+but not the arguments. Text that cannot be read is not saved; the page says why. The options
+stay when you uninstall the app and are never part of an exported catalog, because a variable
+can hold a password or token. They are kept in `launch-options.json` in the data folder.
 
 ## Uninstalling
 

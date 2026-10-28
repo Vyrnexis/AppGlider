@@ -174,7 +174,13 @@ class LibraryTests(unittest.TestCase):
             application.return_value.setApplicationDisplayName.assert_called_once_with("AppGlider")
             application.return_value.setDesktopFileName.assert_called_once_with("appglider")
             window.return_value.library.refresh_launcher_shortcut.assert_called_once()
-            timer.assert_called_once_with(0, window.return_value.startup_check)
+            self.assertEqual(
+                [call.args for call in timer.call_args_list],
+                [
+                    (0, window.return_value.startup_check),
+                    (0, window.return_value.refresh_shortcuts),
+                ],
+            )
 
     def test_close_hides_to_tray_and_activation_restores_window(self) -> None:
         with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):

@@ -29,7 +29,15 @@ from appglider.catalog import (
     valid_build_variant,
 )
 from appglider.catalogfile import CatalogEntry, entry_for
+from appglider.desktopentry import (
+    DesktopMetadata,
+    Groups,
+    extract_desktop_groups,
+    metadata_from_groups,
+    valid_groups,
+)
 from appglider.icons import MAX_ICON_BYTES, normalise_icon
+from appglider.launch_options import LaunchOptions, load_launch_options, options_json
 from appglider.releases import (
     VERSION,
     Progress,
@@ -48,6 +56,8 @@ STALE_STAGE_SECONDS = 24 * 60 * 60
 LOCK_WAIT_SECONDS = 3.0
 MAX_APPS = 100
 AUTOSTART_FLAG = "--tray"
+METADATA_MARKER = "X-AppGlider-Metadata=1"
+DATABASE_SECONDS = 10
 
 
 def desktop_exec(arguments: list[str]) -> str:
@@ -318,6 +328,46 @@ class Library:
                 raise ValueError("Only applications installed by AppGlider can be held.")
             self._save_update_hold(app_id, held)
 
+    def launch_options(self, app_id: str) -> LaunchOptions:
+        return load_launch_options(self.data_dir / "launch-options.json").get(
+            app_id, LaunchOptions()
+        )
+
+    def _save_launch_options(self, app_id: str, options: LaunchOptions) -> None:
+        path = self.data_dir / "launch-options.json"
+        saved = load_launch_options(path)
+        if options:
+            saved[app_id] = options
+        else:
+            saved.pop(app_id, None)
+        if saved or path.exists():
+            atomic_json(path, options_json(saved))
+
+    def set_launch_options(self, app_id: str, options: LaunchOptions) -> None:
+        """Save the options and, when the app has a menu entry of ours, rewrite it to match."""
+        with self._lock():
+            app = next((app for app in self.apps if app.id == app_id), None)
+            if app is None:
+                raise ValueError("This application is not in the catalog.")
+            self._save_launch_options(app_id, options)
+            installed = self.records().get(app_id)
+            shortcut = self.desktop_dir / f"appglider-{app_id}.desktop"
+            if (
+                installed is not None
+                and installed.managed
+                and installed.path.is_file()
+                and self._owned_shortcut(shortcut)
+            ):
+                try:
+                    self._owned(app, installed.path)
+                    self._shortcut(app, installed.path)
+                except (OSError, ValueError) as error:
+                    raise ValueError(
+                        f"The options were saved, but the menu shortcut could not be updated: "
+                        f"{error}"
+                    ) from error
+        self.update_desktop_database()
+
     def icon_path(self, app: App) -> Path:
         path = self.data_dir / "icons" / f"{app.id}.png"
         if not path.parent.is_symlink() and not path.is_symlink():
@@ -413,6 +463,8 @@ class Library:
                 self._save_build_variant(app_id, "")
             with contextlib.suppress(OSError):
                 self._save_update_hold(app_id, False)
+            with contextlib.suppress(OSError, ValueError):
+                self._save_launch_options(app_id, LaunchOptions())
             with contextlib.suppress(OSError):
                 icon = self.data_dir / "icons" / f"{app_id}.png"
                 if not icon.parent.is_symlink():
@@ -571,7 +623,8 @@ class Library:
             raise ValueError("Make this AppImage executable in file properties, then try again.")
         if nixos_cannot_start():
             raise ValueError(NIXOS_APPIMAGE_HELP)
-        environment = clean_environment()
+        options = self.launch_options(app.id)
+        environment = {**clean_environment(), **dict(options.environment)}
         log = self.data_dir / "logs" / f"{app.id}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         with contextlib.suppress(OSError):
@@ -583,7 +636,7 @@ class Library:
             if previous is not None:
                 raise ValueError(f"{app.name} is already running from this launcher.")
             process = subprocess.Popen(
-                [str(installed.path)],
+                [str(installed.path), *options.arguments],
                 cwd=installed.path.parent,
                 env=environment,
                 stdin=subprocess.DEVNULL,
@@ -720,6 +773,11 @@ class Library:
                 check_appimage(stage)
                 stage.chmod(0o755)
             check_cancel(cancel)
+            # Reading the menu metadata runs the AppImage's own runtime, so it happens here,
+            # on the verified file, rather than while the library lock is held.
+            self.collect_desktop_metadata(
+                app, stage if stage is not None else plan.destination, plan.destination
+            )
             with self._lock():
                 installed = self._activate_install(app, release, plan, stage)
                 old = plan.old
@@ -732,6 +790,7 @@ class Library:
                     raise ValueError(
                         f"{app.name} was installed, but its shortcut could not be saved: {error}"
                     ) from error
+            self.update_desktop_database()
         except BaseException:
             if stage is not None:
                 stage.unlink(missing_ok=True)
@@ -795,6 +854,12 @@ class Library:
         return installed
 
     def rollback(self, app: App) -> None:
+        with contextlib.suppress(OSError, ValueError):
+            kept = self.records().get(app.id)
+            if kept and kept.managed and kept.previous:
+                self._owned(app, kept.previous)
+                check_appimage(kept.previous)
+                self.collect_desktop_metadata(app, kept.previous, kept.previous)
         with self._lock():
             records = self.records()
             old = records.get(app.id)
@@ -813,6 +878,7 @@ class Library:
             )
             self._save(records)
             self._shortcut(app, old.previous)
+        self.update_desktop_database()
 
     def remove(self, app: App) -> None:
         with self._lock():
@@ -871,6 +937,8 @@ class Library:
                 self._save_update_hold(app.id, False)
             except (OSError, ValueError) as error:
                 errors.append(str(error))
+            with contextlib.suppress(OSError):
+                self._metadata_path(app).unlink(missing_ok=True)
             shortcut = self.desktop_dir / f"appglider-{app.id}.desktop"
             try:
                 if (
@@ -911,12 +979,57 @@ class Library:
         return errors
 
     def create_shortcut(self, app: App) -> None:
+        with contextlib.suppress(OSError, ValueError):
+            current = self.records().get(app.id)
+            if current and current.managed and current.path.is_file():
+                self._owned(app, current.path)
+                check_appimage(current.path)
+                self.collect_desktop_metadata(app, current.path, current.path)
         with self._lock():
             installed = self.records().get(app.id)
             if not installed or not installed.managed or not installed.path.is_file():
                 raise ValueError("Install this app with AppGlider first.")
             self._owned(app, installed.path)
             self._shortcut(app, installed.path)
+        self.update_desktop_database()
+
+    def refresh_shortcuts(self, cancel: Event | None = None) -> int:
+        """Give menu entries written before app metadata was read their app's own details.
+
+        Only entries AppGlider wrote for apps it manages are touched, and none is created.
+        Run it away from the Qt thread: it starts each app's runtime to read the entry.
+        """
+        changed = 0
+        for app in self.apps:
+            if cancel is not None and cancel.is_set():
+                break
+            shortcut = self.desktop_dir / f"appglider-{app.id}.desktop"
+            try:
+                installed = self.records().get(app.id)
+                if (
+                    installed is None
+                    or not installed.managed
+                    or not installed.path.is_file()
+                    or not self._owned_shortcut(shortcut)
+                    or METADATA_MARKER in shortcut.read_text().splitlines()
+                ):
+                    continue
+                self._owned(app, installed.path)
+                check_appimage(installed.path)
+                self.collect_desktop_metadata(app, installed.path, installed.path)
+                with self._lock():
+                    current = self.records().get(app.id)
+                    if current is None or current.path != installed.path:
+                        continue
+                    if METADATA_MARKER in shortcut.read_text().splitlines():
+                        continue
+                    self._shortcut(app, installed.path)
+                changed += 1
+            except (OSError, ValueError, UnicodeDecodeError):
+                continue
+        if changed:
+            self.update_desktop_database()
+        return changed
 
     def refresh_launcher_shortcut(self, arguments: list[str], packaged: bool) -> Path:
         """Write the menu entry unless that would needlessly repoint a working one.
@@ -1045,6 +1158,82 @@ class Library:
         )
         return shortcut
 
+    def _owned_shortcut(self, shortcut: Path) -> bool:
+        """Whether this is a regular menu entry that AppGlider wrote."""
+        try:
+            return (
+                not shortcut.is_symlink()
+                and shortcut.is_file()
+                and "X-AppGlider=true" in shortcut.read_text().splitlines()
+            )
+        except (OSError, UnicodeDecodeError):
+            return False
+
+    def _metadata_path(self, app: App) -> Path:
+        return self.data_dir / "desktop" / f"{app.id}.json"
+
+    @staticmethod
+    def _stamp(path: Path) -> dict[str, object]:
+        info = path.stat()
+        return {"path": str(path), "size": info.st_size, "mtime_ns": info.st_mtime_ns}
+
+    def collect_desktop_metadata(self, app: App, source: Path, installed: Path) -> None:
+        """Read the menu details inside a verified AppImage and keep them for its shortcut.
+
+        `source` is the file to read; `installed` is where it is, or is about to be, kept,
+        which is what the saved details are tied to along with its size and modification
+        time. Nothing here raises: without details the shortcut is the plain one.
+        """
+        try:
+            stamp = {**self._stamp(source), "path": str(installed)}
+            cached = self._cached_groups(app)
+            if cached is not None and cached[0] == stamp:
+                return
+            groups = extract_desktop_groups(source, app, clean_environment())
+            path = self._metadata_path(app)
+            if groups is None:
+                path.unlink(missing_ok=True)
+            elif not path.parent.is_symlink():
+                atomic_json(path, {**stamp, "groups": groups})
+        except (OSError, ValueError):
+            pass
+
+    def _cached_groups(self, app: App) -> tuple[dict[str, object], Groups] | None:
+        try:
+            path = self._metadata_path(app)
+            if path.parent.is_symlink() or path.is_symlink() or path.stat().st_size > 256 * 1024:
+                return None
+            data = json.loads(path.read_text())
+            groups = valid_groups(data["groups"])
+            stamp = {key: data[key] for key in ("path", "size", "mtime_ns")}
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        return (stamp, groups) if groups is not None else None
+
+    def _desktop_metadata(self, app: App, path: Path) -> DesktopMetadata | None:
+        cached = self._cached_groups(app)
+        try:
+            if cached is None or cached[0] != self._stamp(path):
+                return None
+        except OSError:
+            return None
+        return metadata_from_groups(cached[1])
+
+    def update_desktop_database(self) -> None:
+        """Ask the desktop to notice file types in the entries; a missing tool is fine."""
+        tool = shutil.which("update-desktop-database")
+        if tool is None:
+            return
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(
+                [tool, str(self.desktop_dir)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=DATABASE_SECONDS,
+                check=False,
+            )
+
     def _shortcut(self, app: App, path: Path) -> None:
         self.desktop_dir.mkdir(parents=True, exist_ok=True)
         shortcut = self.desktop_dir / f"appglider-{app.id}.desktop"
@@ -1058,12 +1247,50 @@ class Library:
         source = self.icon_path(app)
         if source.resolve() != icon.resolve():
             atomic_bytes(icon, source.read_bytes())
-        command = desktop_exec([str(path)])
-        atomic_bytes(
-            shortcut,
-            (
-                f"[Desktop Entry]\nType=Application\nName={app.name} (AppGlider)\n"
-                f"Exec={command} %F\nIcon={icon}\nTerminal=false\n"
-                "Categories=Graphics;\nX-AppGlider=true\n"
-            ).encode(),
-        )
+        try:
+            options = self.launch_options(app.id)
+        except ValueError:
+            options = LaunchOptions()  # launching reports the unreadable file
+        text = shortcut_text(app, path, icon, self._desktop_metadata(app, path), options)
+        atomic_bytes(shortcut, text.encode())
+
+
+def shortcut_text(
+    app: App,
+    path: Path,
+    icon: Path,
+    metadata: DesktopMetadata | None,
+    options: LaunchOptions,
+) -> str:
+    """The menu entry for an installed app, using the app's own details when it gave any."""
+    metadata = metadata or DesktopMetadata()
+    environment = ["env", *(f"{name}={value}" for name, value in options.environment)]
+    prefix = environment if options.environment else []
+    code = "%U" if metadata.urls else "%F"
+    lines = [
+        "[Desktop Entry]",
+        "Type=Application",
+        f"Name={app.name} (AppGlider)",
+    ]
+    if metadata.comment:
+        lines.append(f"Comment={metadata.comment}")
+    lines += [
+        f"Exec={desktop_exec([*prefix, str(path), *options.arguments])} {code}",
+        f"Icon={icon}",
+        f"Terminal={'true' if metadata.terminal else 'false'}",
+        f"Categories={''.join(f'{item};' for item in metadata.categories) or 'Utility;'}",
+    ]
+    for key, values in (("MimeType", metadata.mime_types), ("Keywords", metadata.keywords)):
+        if values:
+            lines.append(f"{key}={''.join(f'{item};' for item in values)}")
+    if metadata.wm_class:
+        lines.append(f"StartupWMClass={metadata.wm_class}")
+    if metadata.startup_notify is not None:
+        lines.append(f"StartupNotify={'true' if metadata.startup_notify else 'false'}")
+    if metadata.actions:
+        lines.append(f"Actions={''.join(f'{action.id};' for action in metadata.actions)}")
+    lines += ["X-AppGlider=true", METADATA_MARKER]
+    for action in metadata.actions:
+        command = desktop_exec([*prefix, str(path), *action.arguments])
+        lines += ["", f"[Desktop Action {action.id}]", f"Name={action.name}", f"Exec={command}"]
+    return "\n".join(lines) + "\n"
