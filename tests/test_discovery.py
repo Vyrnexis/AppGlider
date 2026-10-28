@@ -14,9 +14,9 @@ from catalog_fixture import APPS
 from test_library import APP, appimage_bytes, release_for
 from test_releases import Response, public_assets
 
-from appglider import releases
-from appglider.catalog import custom_app
-from appglider.storage import atomic_json
+from appglider.core.catalog import custom_app
+from appglider.core.storage import atomic_json
+from appglider.github import assets, download, http, pages, versions
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class DiscoveryTests(unittest.TestCase):
         }
 
     def select(self, names, arch="x86_64"):
-        return releases.select_release(
+        return assets.select_release(
             APP, {"tag_name": "v1.2.3", "assets": [self.asset(name) for name in names]}, arch
         )
 
@@ -96,7 +96,7 @@ class DiscoveryTests(unittest.TestCase):
             stem = {"pdfcraft": "printcraft", "solidcraft": "solvecraft"}.get(app.id, app.id)
             name = f"{stem}-1.2.3-linux-x86_64.AppImage"
             with self.subTest(app=app.id):
-                selected = releases.select_release(
+                selected = assets.select_release(
                     app,
                     {
                         "tag_name": "v1.2.3",
@@ -119,14 +119,14 @@ class DiscoveryTests(unittest.TestCase):
             asset["browser_download_url"].replace("Desktop", "desktop"),
         ):
             with self.subTest(url=url), self.assertRaisesRegex(ValueError, "repository"):
-                releases.select_release(
+                assets.select_release(
                     APP,
                     {"tag_name": "v1.2.3", "assets": [{**asset, "browser_download_url": url}]},
                     "x86_64",
                 )
-        for size in (False, 0, -1, releases.MAX_DOWNLOAD + 1):
+        for size in (False, 0, -1, assets.MAX_DOWNLOAD + 1):
             with self.subTest(size=size), self.assertRaisesRegex(ValueError, "size"):
-                releases.select_release(
+                assets.select_release(
                     APP, {"tag_name": "v1.2.3", "assets": [{**asset, "size": size}]}, "x86_64"
                 )
 
@@ -139,13 +139,13 @@ class DiscoveryTests(unittest.TestCase):
         )
         asset["size"] = 334154232
         asset["digest"] = "sha256:100f068127b2598167f00ba4db0e0699ded45adf97bbab2d22ff171a1e1ecc40"
-        expected = releases.Release(
+        expected = assets.Release(
             "5.13.0", name, asset["browser_download_url"], asset["size"], asset["digest"][7:]
         )
         html = (Path(__file__).parent / "fixtures/cura-release-assets.html").read_bytes()
-        with patch.object(releases, "architecture", return_value="x86_64"):
+        with patch.object(versions, "architecture", return_value="x86_64"):
             with patch.object(
-                releases,
+                http,
                 "read_metadata",
                 return_value=json.dumps(
                     {
@@ -154,18 +154,18 @@ class DiscoveryTests(unittest.TestCase):
                     }
                 ).encode(),
             ):
-                self.assertEqual(releases.api_release(app, Event()), expected)
+                self.assertEqual(assets.api_release(app, Event()), expected)
             with tempfile.TemporaryDirectory() as directory:
                 cache = Path(directory)
                 with (
                     patch.object(
-                        releases,
+                        assets,
                         "api_release",
-                        side_effect=releases.RateLimited("api.github.com", time.time() + 60),
+                        side_effect=http.RateLimited("api.github.com", time.time() + 60),
                     ),
-                    patch.object(releases, "read_metadata", return_value=html) as metadata,
+                    patch.object(http, "read_metadata", return_value=html) as metadata,
                     patch.object(
-                        releases,
+                        http,
                         "request",
                         side_effect=[
                             Response(f"{app.source_url}/releases/tag/5.13.0"),
@@ -173,18 +173,18 @@ class DiscoveryTests(unittest.TestCase):
                         ],
                     ) as request,
                 ):
-                    found = releases.latest_release(app, Event(), cache)
+                    found = download.latest_release(app, Event(), cache)
                     self.assertEqual(found, expected)
                     metadata.assert_called_once_with(
                         f"{app.source_url}/releases/expanded_assets/5.13.0"
                     )
                     request.assert_called_with(expected.url, method="HEAD")
-                self.assertEqual(releases.cached_release(app, cache), found)
+                self.assertEqual(download.cached_release(app, cache), found)
                 atomic_json(
                     cache / f"{app.id}-x86_64.json",
                     {"checked_at": time.time(), "release": asdict(expected)},
                 )
-                self.assertEqual(releases.cached_release(app, cache), expected)
+                self.assertEqual(download.cached_release(app, cache), expected)
 
     def test_public_digest_must_name_the_selected_asset(self):
         release = release_for("1.2.3", appimage_bytes())
@@ -197,14 +197,12 @@ class DiscoveryTests(unittest.TestCase):
         )
         with (
             patch.object(
-                releases, "request", return_value=Response(f"{APP.source_url}/releases/tag/v1.2.3")
+                http, "request", return_value=Response(f"{APP.source_url}/releases/tag/v1.2.3")
             ),
-            patch.object(
-                releases, "read_metadata", side_effect=[html, releases.MissingResource("404")]
-            ),
+            patch.object(http, "read_metadata", side_effect=[html, http.MissingResource("404")]),
             self.assertRaisesRegex(ValueError, "No GitHub SHA-256 digest"),
         ):
-            releases.page_release(APP, Event())
+            pages.page_release(APP, Event())
 
     def test_public_assets_preserve_escaped_names_and_download_urls(self):
         base = release_for("1.2.3", appimage_bytes())
@@ -213,10 +211,10 @@ class DiscoveryTests(unittest.TestCase):
             base, name=name, url=base.url.rsplit("/", 1)[0] + "/" + quote(name, safe="")
         )
         with (
-            patch.object(releases, "architecture", return_value="x86_64"),
-            patch.object(releases, "read_metadata", return_value=public_assets(release)),
+            patch.object(versions, "architecture", return_value="x86_64"),
+            patch.object(http, "read_metadata", return_value=public_assets(release)),
             patch.object(
-                releases,
+                http,
                 "request",
                 side_effect=[
                     Response(f"{APP.source_url}/releases/tag/v1.2.3"),
@@ -224,44 +222,44 @@ class DiscoveryTests(unittest.TestCase):
                 ],
             ),
         ):
-            self.assertEqual(releases.page_release(APP, Event()), release)
+            self.assertEqual(pages.page_release(APP, Event()), release)
 
     def test_public_and_api_report_ambiguity_consistently(self):
         base = release_for("1.2.3", appimage_bytes())
-        assets = [self.asset(name) for name in ("Desktop-x64.AppImage", "Portable-x64.AppImage")]
+        listing = [self.asset(name) for name in ("Desktop-x64.AppImage", "Portable-x64.AppImage")]
         html = b"".join(
             public_assets(replace(base, name=asset["name"], url=asset["browser_download_url"]))
-            for asset in assets
+            for asset in listing
         )
         with (
-            patch.object(releases, "architecture", return_value="x86_64"),
+            patch.object(versions, "architecture", return_value="x86_64"),
             patch.object(
-                releases,
+                http,
                 "read_metadata",
-                return_value=json.dumps({"tag_name": "v1.2.3", "assets": assets}).encode(),
+                return_value=json.dumps({"tag_name": "v1.2.3", "assets": listing}).encode(),
             ),
             self.assertRaisesRegex(ValueError, "Multiple AppImages"),
         ):
-            releases.api_release(APP, Event())
+            assets.api_release(APP, Event())
         with (
-            patch.object(releases, "architecture", return_value="x86_64"),
-            patch.object(releases, "read_metadata", return_value=html),
+            patch.object(versions, "architecture", return_value="x86_64"),
+            patch.object(http, "read_metadata", return_value=html),
             patch.object(
-                releases, "request", return_value=Response(f"{APP.source_url}/releases/tag/v1.2.3")
+                http, "request", return_value=Response(f"{APP.source_url}/releases/tag/v1.2.3")
             ) as request,
             self.assertRaisesRegex(ValueError, "Multiple AppImages"),
         ):
-            releases.page_release(APP, Event())
+            pages.page_release(APP, Event())
         request.assert_called_once_with(f"{APP.source_url}/releases/latest")
 
     def test_public_parser_rejects_conflicting_digests_and_ignores_foreign_links(self):
         release = release_for("1.2.3", appimage_bytes())
-        parser = releases.ReleaseAssetsParser(release.url.rsplit("/", 1)[0] + "/")
+        parser = pages.ReleaseAssetsParser(release.url.rsplit("/", 1)[0] + "/")
         parser.feed(public_assets(release).decode())
         self.assertEqual(parser.digests[release.name], "sha256:" + release.sha256)
         with self.assertRaisesRegex(ValueError, "conflicting SHA-256"):
             parser.feed(public_assets(replace(release, sha256="0" * 64)).decode())
-        parser = releases.ReleaseAssetsParser(release.url.rsplit("/", 1)[0] + "/")
+        parser = pages.ReleaseAssetsParser(release.url.rsplit("/", 1)[0] + "/")
         parser.feed(
             public_assets(
                 replace(release, url=release.url.replace(APP.repo, "other/repo"))
@@ -272,9 +270,9 @@ class DiscoveryTests(unittest.TestCase):
     def test_changed_public_markup_fails_without_guessing(self):
         with (
             patch.object(
-                releases, "request", return_value=Response(f"{APP.source_url}/releases/tag/v1.2.3")
+                http, "request", return_value=Response(f"{APP.source_url}/releases/tag/v1.2.3")
             ),
-            patch.object(releases, "read_metadata", return_value=b"<div>sha256:1234</div>"),
+            patch.object(http, "read_metadata", return_value=b"<div>sha256:1234</div>"),
             self.assertRaisesRegex(ValueError, "public asset listing"),
         ):
-            releases.page_release(APP, Event())
+            pages.page_release(APP, Event())

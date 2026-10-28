@@ -22,14 +22,16 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from test_library import APP, appimage_bytes, release_for
 
-from appglider import APP_VERSION, self_update
+from appglider import APP_VERSION
 from appglider import app as app_module
+from appglider.github.assets import Release
+from appglider.github.versions import Cancelled, check_cancel
+from appglider.install import self_update
+from appglider.install.library import Library
+from appglider.install.self_update import CheckFailed, SelfUpdate
 from appglider.instance import SingleInstance
-from appglider.jobs import TaskResult
-from appglider.library import Library
-from appglider.releases import Cancelled, Release, check_cancel
-from appglider.self_update import CheckFailed, SelfUpdate
-from appglider.window import LauncherWindow
+from appglider.ui.jobs import TaskResult
+from appglider.ui.window import LauncherWindow
 
 URL = "https://github.com/Vyrnexis/AppGlider/releases/tag/"
 ASSET = "https://github.com/Vyrnexis/AppGlider/releases/download/"
@@ -65,7 +67,7 @@ def leftovers(folder: Path, keep: Path) -> list[str]:
     )
 
 
-@patch("appglider.self_update.APP_VERSION", "0.8.1")
+@patch("appglider.install.self_update.APP_VERSION", "0.8.1")
 class PureTests(unittest.TestCase):
     def test_only_a_strictly_newer_stable_tag_is_offered(self) -> None:
         for tag, expected in (
@@ -91,23 +93,23 @@ class PureTests(unittest.TestCase):
                 self.assertEqual(self_update.newer_version(tag), expected)
 
     def test_an_unreadable_running_version_never_offers_anything(self) -> None:
-        with patch("appglider.self_update.APP_VERSION", "development"):
+        with patch("appglider.install.self_update.APP_VERSION", "development"):
             self.assertIsNone(self_update.newer_version("v9.9.9"))
 
     def test_check_returns_the_original_tag_only_when_newer(self) -> None:
-        with patch("appglider.self_update.latest_tag", return_value="v0.9.1") as latest:
+        with patch("appglider.install.self_update.latest_tag", return_value="v0.9.1") as latest:
             cancel = Event()
             self.assertEqual(self_update.check(cancel), "v0.9.1")
             latest.assert_called_once_with("Vyrnexis/AppGlider", cancel)
         for tag in ("v0.8.1", "v0.7.0"):
-            with patch("appglider.self_update.latest_tag", return_value=tag):
+            with patch("appglider.install.self_update.latest_tag", return_value=tag):
                 self.assertIsNone(self_update.check(Event()))
 
     def test_check_never_falls_back_to_the_api(self) -> None:
         with (
-            patch("appglider.self_update.latest_tag", return_value=None),
-            patch("appglider.releases.request") as request,
-            patch("appglider.releases.latest_release") as api,
+            patch("appglider.install.self_update.latest_tag", return_value=None),
+            patch("appglider.github.http.request") as request,
+            patch("appglider.github.download.latest_release") as api,
         ):
             with self.assertRaises(CheckFailed):
                 self_update.check(Event())
@@ -117,7 +119,7 @@ class PureTests(unittest.TestCase):
     def test_a_cancelled_check_raises_instead_of_answering(self) -> None:
         cancel = Event()
         cancel.set()
-        with patch("appglider.releases.redirect_location") as redirect:
+        with patch("appglider.github.http.redirect_location") as redirect:
             with self.assertRaises(Cancelled):
                 self_update.check(cancel)
             redirect.assert_not_called()
@@ -139,7 +141,7 @@ class PureTests(unittest.TestCase):
         self.assertEqual(SelfUpdate(stamp).hint(None), "Up to date · checked 13:07")
 
     def test_the_notification_key_cannot_be_an_app_id(self) -> None:
-        from appglider.catalog import KNOWN_IDS, custom_app
+        from appglider.core.catalog import KNOWN_IDS, custom_app
 
         self.assertNotIn(self_update.NOTIFY_KEY, KNOWN_IDS.values())
         self.assertIn(":", self_update.NOTIFY_KEY)
@@ -150,24 +152,24 @@ class ImageTests(unittest.TestCase):
     def test_running_image_needs_the_appimage_and_a_python_inside_its_mount(self) -> None:
         with (
             patch.dict(os.environ, {"APPDIR": "/tmp/mount", "APPIMAGE": "/home/a b/G.AppImage"}),
-            patch("appglider.self_update.sys.prefix", "/tmp/mount/opt/python"),
+            patch("appglider.install.self_update.sys.prefix", "/tmp/mount/opt/python"),
         ):
             self.assertEqual(self_update.running_image(), Path("/home/a b/G.AppImage"))
 
     def test_other_ways_of_starting_have_no_image(self) -> None:
         with (
             patch.dict(os.environ, {"APPDIR": "/tmp/other", "APPIMAGE": "/other.AppImage"}),
-            patch("appglider.self_update.sys.prefix", "/project/.venv"),
+            patch("appglider.install.self_update.sys.prefix", "/project/.venv"),
         ):
             self.assertIsNone(self_update.running_image())
         with (
             patch.dict(os.environ, {"APPDIR": "/tmp/mount"}, clear=True),
-            patch("appglider.self_update.sys.prefix", "/tmp/mount/opt/python"),
+            patch("appglider.install.self_update.sys.prefix", "/tmp/mount/opt/python"),
         ):
             self.assertIsNone(self_update.running_image())
         with (
             patch.dict(os.environ, {"APPIMAGE": "/a.AppImage"}, clear=True),
-            patch("appglider.self_update.sys.prefix", "/tmp/mount/opt/python"),
+            patch("appglider.install.self_update.sys.prefix", "/tmp/mount/opt/python"),
         ):
             self.assertIsNone(self_update.running_image())
 
@@ -189,7 +191,7 @@ class ImageTests(unittest.TestCase):
                 self.assertTrue(self_update.can_replace(image))
 
 
-@patch("appglider.self_update.APP_VERSION", "0.8.1")
+@patch("appglider.install.self_update.APP_VERSION", "0.8.1")
 class DownloadTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -208,8 +210,8 @@ class DownloadTests(unittest.TestCase):
     ) -> self_update.Downloaded:
         release, data = release_and_data
         with (
-            patch("appglider.self_update.latest_release", return_value=release) as latest,
-            patch("appglider.releases.request", return_value=io.BytesIO(data)),
+            patch("appglider.install.self_update.latest_release", return_value=release) as latest,
+            patch("appglider.github.http.request", return_value=io.BytesIO(data)),
         ):
             try:
                 return self_update.download_update(
@@ -295,7 +297,7 @@ class DownloadTests(unittest.TestCase):
         def verified(path: Path) -> None:
             self.cancel.set()
 
-        with patch("appglider.self_update.library.check_appimage", side_effect=verified):
+        with patch("appglider.install.appimage.check_appimage", side_effect=verified):
             with self.assertRaises(Cancelled):
                 self.fetch((release, data))
         self.assert_untouched()
@@ -358,7 +360,9 @@ class DownloadTests(unittest.TestCase):
 
     def test_not_enough_free_space_stops_before_anything_is_written(self) -> None:
         usage = namedtuple("usage", "total used free")
-        with patch("appglider.self_update.shutil.disk_usage", return_value=usage(10, 10, 10)):
+        with patch(
+            "appglider.install.self_update.shutil.disk_usage", return_value=usage(10, 10, 10)
+        ):
             with self.assertRaisesRegex(ValueError, "free disk space"):
                 self.fetch(appglider_release())
         self.assert_untouched()
@@ -371,9 +375,9 @@ class DownloadTests(unittest.TestCase):
             self.cancel.set()
             check_cancel(cancel)
 
-        with patch("appglider.self_update.download", side_effect=interrupted):
+        with patch("appglider.install.self_update.download", side_effect=interrupted):
             with (
-                patch("appglider.self_update.latest_release", return_value=release),
+                patch("appglider.install.self_update.latest_release", return_value=release),
                 self.assertRaises(Cancelled),
             ):
                 self_update.download_update(
@@ -399,11 +403,15 @@ class CleanupTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(
-            patch("appglider.self_update.running_image", side_effect=lambda: self.state["image"])
+            patch(
+                "appglider.install.self_update.running_image",
+                side_effect=lambda: self.state["image"],
+            )
         )
         self.is_running = stack.enter_context(
             patch(
-                "appglider.self_update.library.running", side_effect=lambda p: self.state["running"]
+                "appglider.install.self_update.library.running",
+                side_effect=lambda p: self.state["running"],
             )
         )
         self.record(self.old, self.image)
@@ -553,7 +561,7 @@ class CleanupTests(unittest.TestCase):
             cleanup.assert_called_once_with(settings.return_value)
 
 
-@patch("appglider.self_update.APP_VERSION", "0.8.1")
+@patch("appglider.install.self_update.APP_VERSION", "0.8.1")
 class ReadyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -567,7 +575,7 @@ class ReadyTests(unittest.TestCase):
         self.settings.setValue(self_update.REPLACED_KEY, str(self.image))
         self.settings.setValue(self_update.READY_KEY, str(self.new))
         self.settings.setValue(self_update.VERSION_KEY, "0.9.1")
-        patcher = patch("appglider.self_update.running_image", return_value=self.image)
+        patcher = patch("appglider.install.self_update.running_image", return_value=self.image)
         self.running = patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -672,7 +680,7 @@ class WaitingForTheLockTests(unittest.TestCase):
         instance.acquire_after_update.assert_not_called()
 
 
-@patch("appglider.self_update.APP_VERSION", "0.8.1")
+@patch("appglider.install.self_update.APP_VERSION", "0.8.1")
 class WindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -693,14 +701,16 @@ class WindowTests(unittest.TestCase):
         self.gate: Event | None = None
         stack = ExitStack()
         self.addCleanup(stack.close)
-        stack.enter_context(patch("appglider.self_update.check", side_effect=self.fake_check))
+        stack.enter_context(
+            patch("appglider.install.self_update.check", side_effect=self.fake_check)
+        )
         self.running = stack.enter_context(
-            patch("appglider.self_update.running_image", return_value=self.image)
+            patch("appglider.install.self_update.running_image", return_value=self.image)
         )
         self.opened: list[str] = []
         stack.enter_context(
             patch(
-                "appglider.window.QDesktopServices.openUrl",
+                "appglider.ui.window.QDesktopServices.openUrl",
                 side_effect=lambda url: self.opened.append(url.toString()),
             )
         )
@@ -746,7 +756,7 @@ class WindowTests(unittest.TestCase):
 
     def install_app(self, version: str = "1.0.0") -> None:
         payload = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for(version, payload), Event(), lambda *args: None
             )
@@ -756,7 +766,7 @@ class WindowTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(
-            patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True)
+            patch("appglider.ui.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True)
         )
         stack.enter_context(patch.object(self.window.tray, "isVisible", return_value=True))
         stack.enter_context(patch.object(self.window, "isActiveWindow", return_value=False))
@@ -803,7 +813,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.opened, [URL + "v0.9.1"])
 
     def test_an_image_in_a_folder_that_cannot_be_written_gets_the_releases_button(self) -> None:
-        with patch("appglider.self_update.can_replace", return_value=False):
+        with patch("appglider.install.self_update.can_replace", return_value=False):
             self.check("v0.9.1")
         self.assertEqual(self.window.self_update_button.text(), "Releases on GitHub ↗")
 
@@ -940,7 +950,7 @@ class WindowTests(unittest.TestCase):
         window.startup_check()
         self.wait()
         self.assertEqual(self.calls, 1)
-        with patch("appglider.window.github_status.quota_low", return_value=True):
+        with patch("appglider.ui.window.github_status.quota_low", return_value=True):
             window.scheduled_check()
         self.wait()
         self.assertEqual(self.calls, 2)
@@ -1046,8 +1056,8 @@ class WindowTests(unittest.TestCase):
         release, data = release_and_data
         self.check(tag)
         with (
-            patch("appglider.self_update.latest_release", return_value=release) as latest,
-            patch("appglider.releases.request", return_value=io.BytesIO(data)),
+            patch("appglider.install.self_update.latest_release", return_value=release) as latest,
+            patch("appglider.github.http.request", return_value=io.BytesIO(data)),
         ):
             self.latest = latest
             self.window.self_update_button.click()
@@ -1167,8 +1177,8 @@ class WindowTests(unittest.TestCase):
             check_cancel(cancel)
 
         with (
-            patch("appglider.self_update.latest_release", return_value=release),
-            patch("appglider.self_update.download", side_effect=slow),
+            patch("appglider.install.self_update.latest_release", return_value=release),
+            patch("appglider.install.self_update.download", side_effect=slow),
         ):
             window.self_update_button.click()
             self.assertEqual(window.footer.text(), "Downloading AppGlider 0.9.1…")
@@ -1183,8 +1193,8 @@ class WindowTests(unittest.TestCase):
         self.assert_still_offered()
         self.assertFalse(window.cancel_button.isVisible())
         with (
-            patch("appglider.self_update.latest_release", return_value=release),
-            patch("appglider.releases.request", return_value=io.BytesIO(data)),
+            patch("appglider.install.self_update.latest_release", return_value=release),
+            patch("appglider.github.http.request", return_value=io.BytesIO(data)),
         ):
             window.self_update_button.click()
             self.finish_task()
@@ -1197,8 +1207,8 @@ class WindowTests(unittest.TestCase):
         seen: list[str] = []
         window.task_progress = lambda message, *rest: seen.append(message)  # type: ignore[method-assign]
         with (
-            patch("appglider.self_update.latest_release", return_value=release),
-            patch("appglider.releases.request", return_value=io.BytesIO(data)),
+            patch("appglider.install.self_update.latest_release", return_value=release),
+            patch("appglider.github.http.request", return_value=io.BytesIO(data)),
         ):
             window.self_update_button.click()
             self.finish_task()
@@ -1208,8 +1218,8 @@ class WindowTests(unittest.TestCase):
         self.check("v0.9.1")
         release, data = appglider_release()
         with (
-            patch("appglider.self_update.can_replace", return_value=False),
-            patch("appglider.self_update.latest_release") as latest,
+            patch("appglider.install.self_update.can_replace", return_value=False),
+            patch("appglider.install.self_update.latest_release") as latest,
         ):
             self.window.refresh()
             self.window.self_update_button.click()
@@ -1252,7 +1262,7 @@ class WindowTests(unittest.TestCase):
         self.ready_window()
         with (
             patch.dict(os.environ, {"APPIMAGE": "/old.AppImage", "APPDIR": "/old", "HOME": "/h"}),
-            patch("appglider.window.subprocess.Popen") as popen,
+            patch("appglider.ui.window.subprocess.Popen") as popen,
             patch.object(window, "quit_launcher") as quit_launcher,
         ):
             window.self_update_button.click()
@@ -1274,7 +1284,7 @@ class WindowTests(unittest.TestCase):
         self.new_image.write_text(f'#!/bin/sh\ntouch "{marker}"\n')
         self.new_image.chmod(0o755)
         with (
-            patch("appglider.window.check_appimage"),
+            patch("appglider.ui.window.check_appimage"),
             patch.object(window, "quit_launcher") as quit_launcher,
         ):
             window.self_update_button.click()
@@ -1289,7 +1299,7 @@ class WindowTests(unittest.TestCase):
         self.ready_window()
         with (
             patch(
-                "appglider.window.subprocess.Popen",
+                "appglider.ui.window.subprocess.Popen",
                 side_effect=PermissionError("Permission denied"),
             ),
             patch.object(window, "quit_launcher") as quit_launcher,
@@ -1305,7 +1315,7 @@ class WindowTests(unittest.TestCase):
         for damage in (self.new_image.unlink, lambda: self.new_image.write_bytes(b"junk")):
             damage()
             with (
-                patch("appglider.window.subprocess.Popen") as process,
+                patch("appglider.ui.window.subprocess.Popen") as process,
                 patch.object(window, "quit_launcher") as quit_launcher,
             ):
                 window.restart_self()
@@ -1317,7 +1327,7 @@ class WindowTests(unittest.TestCase):
         window = self.window
         self.ready_window()
         with (
-            patch("appglider.window.subprocess.Popen") as process,
+            patch("appglider.ui.window.subprocess.Popen") as process,
             patch.object(window, "quit_launcher") as quit_launcher,
         ):
             window.task = object()  # type: ignore[assignment]
@@ -1348,7 +1358,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(
             again.settings_page.self_row.hint.text(), "Version 0.9.1 is ready · restart to use it"
         )
-        with patch("appglider.self_update.check", return_value="v0.9.1"):
+        with patch("appglider.install.self_update.check", return_value="v0.9.1"):
             again.start_self_check()
             deadline = time.monotonic() + 10
             while again.self_task is not None and time.monotonic() < deadline:

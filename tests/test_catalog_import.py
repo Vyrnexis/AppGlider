@@ -9,9 +9,9 @@ from unittest.mock import patch
 from catalog_fixture import APPS, STARTER_ENTRIES, stock
 from test_library import APP, appimage_bytes, ignore_progress, release_for
 
-from appglider.catalog import custom_app
-from appglider.catalogfile import EXAMPLE_CATALOG, CatalogEntry, parse, read, render
-from appglider.library import Library
+from appglider.core.catalog import custom_app
+from appglider.core.catalogfile import EXAMPLE_CATALOG, CatalogEntry, parse, read, render
+from appglider.install.library import Library
 
 
 class CatalogImportTests(unittest.TestCase):
@@ -93,7 +93,7 @@ class CatalogImportTests(unittest.TestCase):
     def test_installs_made_with_the_old_built_in_ids_match_again_after_importing(self) -> None:
         stock(self.library)
         data = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(data)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(data)):
             self.library.install(APP, release_for("1.0.0", data), Event(), ignore_progress)
         (self.library.data_dir / "repositories.json").unlink()  # as in a 0.4.0 library
         fresh = Library(

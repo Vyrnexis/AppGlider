@@ -20,20 +20,21 @@ from PySide6.QtWidgets import QApplication, QBoxLayout, QMessageBox
 from test_builds import BAMBU, bambu_metadata, chosen_bambu
 from test_library import APP, appimage_bytes, release_for
 
-from appglider import APP_ICON, releases
-from appglider.app_page import (
+from appglider import APP_ICON
+from appglider.github import assets, versions
+from appglider.github.assets import Release
+from appglider.github.icons import IconCandidate, normalise_icon
+from appglider.github.release_info import ReleaseInfo, ReleaseOption, info_path
+from appglider.install.library import Library
+from appglider.ui.controls import Segmented, Switch
+from appglider.ui.pages.app_page import (
     NotesBrowser,
     format_date,
     format_size,
     release_page_url,
     version_text,
 )
-from appglider.controls import Segmented, Switch
-from appglider.icons import IconCandidate, normalise_icon
-from appglider.library import Library
-from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
-from appglider.releases import Release
-from appglider.window import LauncherWindow
+from appglider.ui.window import LauncherWindow
 
 BLUE = (
     b'<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">'
@@ -74,7 +75,7 @@ class AppPageTests(unittest.TestCase):
     def install(self, *versions: str) -> None:
         for version in versions:
             payload = appimage_bytes(version.encode())
-            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+            with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
                 self.library.install(
                     APP, release_for(version, payload), Event(), lambda *args: None
                 )
@@ -265,7 +266,7 @@ class AppPageTests(unittest.TestCase):
         self.install("1.0.0")
         with (
             patch.object(self.library, "create_shortcut", side_effect=ValueError("no good")),
-            patch("appglider.window.QMessageBox.warning") as warning,
+            patch("appglider.ui.window.QMessageBox.warning") as warning,
         ):
             self.window.create_shortcut(APP.id)
             deadline = time.monotonic() + 5
@@ -333,10 +334,10 @@ class AppPageTests(unittest.TestCase):
         old = next(app for app in self.library.apps if app.id == BAMBU.id)
         entries = [bambu_metadata(), bambu_metadata("02.09.00.12", preview=True)]
         with (
-            patch.object(releases, "api_entries", return_value=entries),
-            patch("appglider.library.download") as download,
+            patch.object(assets, "api_entries", return_value=entries),
+            patch("appglider.install.library.download") as download,
             patch(
-                "appglider.app_page.QInputDialog.getItem",
+                "appglider.ui.pages.app_page.QInputDialog.getItem",
                 side_effect=lambda parent, title, label, items, current, editable: (
                     next(item for item in items if "22.04" in item),
                     True,
@@ -364,8 +365,8 @@ class AppPageTests(unittest.TestCase):
         self.window.scan_installed()
         self.window.open_app(BAMBU.id)
         with (
-            patch.object(releases, "api_entries", return_value=[bambu_metadata()]),
-            patch("appglider.app_page.QInputDialog.getItem", return_value=("", False)),
+            patch.object(assets, "api_entries", return_value=[bambu_metadata()]),
+            patch("appglider.ui.pages.app_page.QInputDialog.getItem", return_value=("", False)),
             patch.object(self.library, "set_build_variant") as save,
         ):
             self.page.build_button.click()
@@ -379,12 +380,12 @@ class AppPageTests(unittest.TestCase):
         self.window.scan_installed()
         self.window.open_app(BAMBU.id)
         with (
-            patch.object(releases, "api_entries", return_value=[bambu_metadata()]),
+            patch.object(assets, "api_entries", return_value=[bambu_metadata()]),
             patch(
-                "appglider.app_page.QInputDialog.getItem",
+                "appglider.ui.pages.app_page.QInputDialog.getItem",
                 side_effect=lambda parent, title, label, items, *args: (items[0], True),
             ),
-            patch("appglider.app_page.QMessageBox.warning") as warning,
+            patch("appglider.ui.pages.app_page.QMessageBox.warning") as warning,
             patch.object(self.library, "set_build_variant", side_effect=OSError("disk full")),
         ):
             self.page.choose_build()
@@ -397,9 +398,9 @@ class AppPageTests(unittest.TestCase):
         self.library.add_repository(BAMBU)
         self.window.scan_installed()
         with (
-            patch.object(releases, "api_entries", return_value=[bambu_metadata()]),
+            patch.object(assets, "api_entries", return_value=[bambu_metadata()]),
             patch.object(self.page, "choose_build") as choose,
-            patch("appglider.library.download") as download,
+            patch("appglider.install.library.download") as download,
         ):
             self.window.install_app(BAMBU.id)
             self.wait_for_task()
@@ -416,8 +417,8 @@ class AppPageTests(unittest.TestCase):
         cached = self.library.icon_path(APP)
         self.assertEqual(self.page.icon_hint.text(), "Default icon")
         with (
-            patch("appglider.app_page.discover_icons", return_value=found[:1]),
-            patch("appglider.app_page.QInputDialog.getItem") as picker,
+            patch("appglider.ui.pages.app_page.discover_icons", return_value=found[:1]),
+            patch("appglider.ui.pages.app_page.QInputDialog.getItem") as picker,
         ):
             self.page.find_icons_action.trigger()
             self.wait_for_task()
@@ -430,9 +431,9 @@ class AppPageTests(unittest.TestCase):
         )
         self.assertEqual(self.page.icon.pixmap().toImage().pixelColor(0, 0).name(), "#ff0000")
         with (
-            patch("appglider.app_page.discover_icons", return_value=found),
+            patch("appglider.ui.pages.app_page.discover_icons", return_value=found),
             patch(
-                "appglider.app_page.QInputDialog.getItem", return_value=("blue.svg", True)
+                "appglider.ui.pages.app_page.QInputDialog.getItem", return_value=("blue.svg", True)
             ) as picker,
         ):
             self.page.find_icons_action.trigger()
@@ -456,9 +457,9 @@ class AppPageTests(unittest.TestCase):
         ):
             with (
                 self.subTest(outcome=outcome),
-                patch("appglider.window.QMessageBox.warning"),
+                patch("appglider.ui.window.QMessageBox.warning"),
                 patch(
-                    "appglider.app_page.discover_icons",
+                    "appglider.ui.pages.app_page.discover_icons",
                     side_effect=outcome if isinstance(outcome, Exception) else None,
                     return_value=outcome,
                 ),
@@ -473,15 +474,20 @@ class AppPageTests(unittest.TestCase):
         self.window.open_app(APP.id)
         image = Path(self.temp.name) / "a local icon.png"
         image.write_bytes(normalise_icon(BLUE))
-        with patch("appglider.app_page.QFileDialog.getOpenFileName", return_value=(str(image), "")):
+        with patch(
+            "appglider.ui.pages.app_page.QFileDialog.getOpenFileName", return_value=(str(image), "")
+        ):
             self.page.choose_icon_action.trigger()
         cached = self.library.icon_path(APP)
         saved = cached.read_bytes()
         self.assertEqual(saved, normalise_icon(BLUE))
         image.write_bytes(b"broken PNG")
         with (
-            patch("appglider.app_page.QFileDialog.getOpenFileName", return_value=(str(image), "")),
-            patch("appglider.app_page.QMessageBox.warning") as warning,
+            patch(
+                "appglider.ui.pages.app_page.QFileDialog.getOpenFileName",
+                return_value=(str(image), ""),
+            ),
+            patch("appglider.ui.pages.app_page.QMessageBox.warning") as warning,
         ):
             self.page.choose_icon_action.trigger()
         warning.assert_called_once()
@@ -496,10 +502,10 @@ class AppPageTests(unittest.TestCase):
             progress("Looking through folders… 7 pages so far")
             started.set()
             cancel.wait(timeout=2)
-            releases.check_cancel(cancel)
+            versions.check_cancel(cancel)
             return ()
 
-        with patch("appglider.app_page.discover_icons", side_effect=lookup):
+        with patch("appglider.ui.pages.app_page.discover_icons", side_effect=lookup):
             self.page.find_icons_action.trigger()
             deadline = time.monotonic() + 3
             while not started.is_set() and time.monotonic() < deadline:
@@ -538,7 +544,8 @@ class AppPageTests(unittest.TestCase):
         window.open_app(APP.id)
         self.assertTrue(self.page.remove_button.isEnabled())
         with patch(
-            "appglider.app_page.QMessageBox.question", return_value=QMessageBox.StandardButton.No
+            "appglider.ui.pages.app_page.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
         ) as ask:
             self.page.remove_button.click()
         ask.assert_called_once()
@@ -546,7 +553,8 @@ class AppPageTests(unittest.TestCase):
         self.assertIn(APP.id, window.cards)
         self.assertIs(window.pages.currentWidget(), self.page)
         with patch(
-            "appglider.app_page.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
+            "appglider.ui.pages.app_page.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
         ):
             self.page.remove_button.click()
         self.assertEqual(window.pages.currentIndex(), 0)
@@ -558,7 +566,7 @@ class AppPageTests(unittest.TestCase):
         self.install("1.0.0")
         self.window.open_app(APP.id)
         self.assertFalse(self.page.remove_button.isEnabled())
-        with patch("appglider.app_page.QMessageBox.question") as ask:
+        with patch("appglider.ui.pages.app_page.QMessageBox.question") as ask:
             self.page.remove_from_library()
         ask.assert_not_called()
         self.assertIn(APP.id, [app.id for app in self.library.apps])
@@ -650,7 +658,7 @@ class AppPageTests(unittest.TestCase):
         self.assertIn("Faster import", self.page.notes_view.toPlainText())
         self.assertTrue(self.page.notes_view.isVisibleTo(self.page))
         self.assertTrue(self.page.notes_empty.isHidden())
-        with patch("appglider.app_page.QDesktopServices.openUrl") as opened:
+        with patch("appglider.ui.pages.app_page.QDesktopServices.openUrl") as opened:
             self.page.notes_link.click()
         opened.assert_called_once_with(QUrl(f"https://github.com/{APP.repo}/releases/tag/v1.4.0"))
 
@@ -691,7 +699,7 @@ class AppPageTests(unittest.TestCase):
             self.qt.processEvents()
         self.assertTrue(all(browser.loadResource(2, name) is None for name in loaded))
         self.assertFalse(browser.document().resource(2, QUrl("https://example.com/x.png")))
-        with patch("appglider.app_page.QDesktopServices.openUrl") as opened:
+        with patch("appglider.ui.pages.app_page.QDesktopServices.openUrl") as opened:
             for url in (
                 "file:///etc/passwd",
                 "javascript:alert(1)",
@@ -781,7 +789,7 @@ class AppPageTests(unittest.TestCase):
     def test_the_result_of_a_check_arrives_in_the_labels(self) -> None:
         info = self.release_info()
         self.window.open_app(APP.id)
-        with patch("appglider.window.discover_releases", return_value=info):
+        with patch("appglider.ui.window.discover_releases", return_value=info):
             self.page.check_button.click()
             self.assertEqual(self.page.check_button.text(), "Checking…")
             self.assertFalse(self.page.check_button.isEnabled())

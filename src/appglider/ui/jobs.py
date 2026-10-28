@@ -6,10 +6,12 @@ from threading import Event
 
 from PySide6.QtCore import QObject, QRunnable, Signal
 
-from appglider.icons import IconCandidate
-from appglider.release_info import ReleaseInfo
-from appglider.releases import BuildChoiceRequired, Cancelled, Progress, Release
-from appglider.self_update import Downloaded
+from appglider.github.assets import BuildChoiceRequired, Release
+from appglider.github.download import Progress
+from appglider.github.icons import IconCandidate
+from appglider.github.release_info import ReleaseInfo
+from appglider.github.versions import Cancelled
+from appglider.install.self_update import Downloaded
 
 
 @dataclass

@@ -41,13 +41,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appglider.app_status import app_status
-from appglider.catalog import App
-from appglider.controls import repolish
-from appglider.icons import icon_pixmap
-from appglider.library import Installed
-from appglider.release_info import ReleaseInfo
-from appglider.releases import Release
+from appglider.core.catalog import App
+from appglider.github.assets import Release
+from appglider.github.icons import icon_pixmap
+from appglider.github.release_info import ReleaseInfo
+from appglider.install.library import Installed
+from appglider.ui.app_status import app_status
+from appglider.ui.controls import repolish
 
 
 def icon_label(app: App, size: int, path: Path | None = None) -> QLabel:

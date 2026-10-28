@@ -17,24 +17,18 @@ from unittest.mock import MagicMock, patch
 from catalog_fixture import APPS, stock
 
 from appglider import APP_TASKBAR_ICON
-from appglider.library import (
+from appglider.core.storage import atomic_json
+from appglider.github.assets import Release, select_release
+from appglider.github.download import download, latest_release
+from appglider.github.versions import Cancelled, architecture, version_key
+from appglider.install.appimage import check_appimage
+from appglider.install.library import (
     Installed,
     Library,
     Orphan,
-    check_appimage,
-    desktop_exec,
     previous_copy,
 )
-from appglider.releases import (
-    Cancelled,
-    Release,
-    architecture,
-    download,
-    latest_release,
-    select_release,
-    version_key,
-)
-from appglider.storage import atomic_json
+from appglider.install.shortcuts import desktop_exec
 
 APP = APPS[0]
 
@@ -82,7 +76,7 @@ class LibraryTests(unittest.TestCase):
     def install(self, version: str):
         data = appimage_bytes(version.encode())
         release = release_for(version, data)
-        with patch("appglider.releases.request", return_value=io.BytesIO(data)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(data)):
             return self.library.install(APP, release, Event(), ignore_progress)
 
     def test_update_hold_round_trip_is_lazy_and_cleared_on_uninstall(self) -> None:
@@ -182,7 +176,7 @@ class LibraryTests(unittest.TestCase):
             architecture(),
         )
         with (
-            patch("appglider.releases.request", return_value=io.BytesIO(content)),
+            patch("appglider.github.http.request", return_value=io.BytesIO(content)),
             self.assertRaisesRegex(ValueError, "different CPU architecture"),
         ):
             self.library.install(APP, release, Event(), ignore_progress)
@@ -223,7 +217,7 @@ class LibraryTests(unittest.TestCase):
             with (
                 self.subTest(cancelled=cancelled),
                 patch(
-                    "appglider.releases.request",
+                    "appglider.github.http.request",
                     return_value=io.BytesIO(b"x" * len(data)),
                 ),
             ):
@@ -237,7 +231,7 @@ class LibraryTests(unittest.TestCase):
         first = self.install("1.0.0")
         data = appimage_bytes(b"new release")
         with (
-            patch("appglider.releases.request", return_value=io.BytesIO(data)),
+            patch("appglider.github.http.request", return_value=io.BytesIO(data)),
             patch.object(self.library, "_save", side_effect=OSError("disk full")),
         ):
             with self.assertRaisesRegex(OSError, "disk full"):
@@ -322,7 +316,7 @@ class LibraryTests(unittest.TestCase):
 
     def test_ownership_and_running_checks_protect_installed_files(self) -> None:
         installed = self.install("1.0.0")
-        with patch("appglider.library.running", return_value=True):
+        with patch("appglider.install.library.running", return_value=True):
             with self.assertRaisesRegex(ValueError, "Close"):
                 self.library.remove(APP)
         self.assertTrue(installed.path.exists())
@@ -353,7 +347,7 @@ class LibraryTests(unittest.TestCase):
     def test_failed_download_does_not_trust_an_incomplete_file(self) -> None:
         data = appimage_bytes()
         release = release_for("1.0.0", data)
-        with patch("appglider.releases.request", return_value=io.BytesIO(data[:20])):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(data[:20])):
             with self.assertRaisesRegex(ValueError, "incomplete"):
                 download(release, self.root / "download", Event(), ignore_progress)
 
@@ -370,7 +364,7 @@ class LibraryTests(unittest.TestCase):
                     "SSL_CERT_DIR": "/etc/ssl/certs",
                 },
             ),
-            patch("appglider.library.subprocess.Popen") as spawn,
+            patch("appglider.install.library.subprocess.Popen") as spawn,
         ):
             spawn.return_value.poll.return_value = None
             self.library.launch(APP, installed)
@@ -402,7 +396,7 @@ class LibraryTests(unittest.TestCase):
         cancel = Event()
         cancel.set()
         with (
-            patch("appglider.releases.request", return_value=io.BytesIO(data)),
+            patch("appglider.github.http.request", return_value=io.BytesIO(data)),
             self.assertRaises(Cancelled),
         ):
             self.library.install(APP, release_for("1.1.0", data), cancel, ignore_progress)
@@ -448,10 +442,10 @@ class LibraryTests(unittest.TestCase):
 
         def launch() -> MagicMock:
             with (
-                patch("appglider.library.NIXOS_MARKER", marker),
-                patch("appglider.library.BINFMT_DIR", binfmt),
+                patch("appglider.install.library.NIXOS_MARKER", marker),
+                patch("appglider.install.library.BINFMT_DIR", binfmt),
                 patch.dict(os.environ, environment, clear=True),
-                patch("appglider.library.subprocess.Popen") as spawn,
+                patch("appglider.install.library.subprocess.Popen") as spawn,
             ):
                 spawn.return_value.poll.return_value = None
                 self.library.processes.clear()
@@ -488,7 +482,7 @@ class LibraryTests(unittest.TestCase):
         log = self.library.data_dir / "logs" / f"{APP.id}.log"
         log.parent.mkdir(parents=True)
         log.write_bytes(b"x" * (6 * 1024 * 1024))
-        with patch("appglider.library.subprocess.Popen") as spawn:
+        with patch("appglider.install.library.subprocess.Popen") as spawn:
             spawn.return_value.poll.return_value = None
             self.library.launch(APP, installed)
         self.assertEqual(log.stat().st_size, 0)
@@ -497,7 +491,7 @@ class LibraryTests(unittest.TestCase):
     def test_launching_a_running_app_leaves_its_oversized_log_alone(self) -> None:
         installed = self.install("1.0.0")
         log = self.library.data_dir / "logs" / f"{APP.id}.log"
-        with patch("appglider.library.subprocess.Popen") as spawn:
+        with patch("appglider.install.library.subprocess.Popen") as spawn:
             spawn.return_value.poll.return_value = None
             self.library.launch(APP, installed)
             log.write_bytes(b"x" * (6 * 1024 * 1024))
@@ -525,7 +519,7 @@ class LibraryTests(unittest.TestCase):
             except Exception as error:  # pragma: no cover - reported by the assertion below
                 outcome.append(error)
 
-        with patch("appglider.releases.request", return_value=Slow(data)):
+        with patch("appglider.github.http.request", return_value=Slow(data)):
             worker = Thread(target=run)
             worker.start()
             try:
@@ -550,14 +544,14 @@ class LibraryTests(unittest.TestCase):
                 if not inner.tell():
                     # Another launcher activates a different version mid-download.
                     with patch(
-                        "appglider.releases.request",
+                        "appglider.github.http.request",
                         return_value=io.BytesIO(appimage_bytes(b"other")),
                     ):
                         self.library.install(APP, other, Event(), ignore_progress)
                 return super().read(size)
 
         with (
-            patch("appglider.releases.request", return_value=Interfering(data)),
+            patch("appglider.github.http.request", return_value=Interfering(data)),
             self.assertRaisesRegex(ValueError, "library changed"),
         ):
             self.library.install(APP, release, Event(), ignore_progress)
@@ -588,8 +582,8 @@ class LibraryTests(unittest.TestCase):
         release = release_for("1.0.0", data)
         usage = shutil._ntuple_diskusage(10**12, 10**12 - 1024, 1024)
         with (
-            patch("appglider.library.shutil.disk_usage", return_value=usage),
-            patch("appglider.library.download") as fetch,
+            patch("appglider.install.library.shutil.disk_usage", return_value=usage),
+            patch("appglider.install.library.download") as fetch,
         ):
             with self.assertRaisesRegex(ValueError, "not enough free disk space"):
                 self.library.install(APP, release, Event(), ignore_progress)
@@ -619,7 +613,7 @@ class LibraryTests(unittest.TestCase):
         data = bytearray(Path(shutil.which("true")).read_bytes())
         data[8:11] = b"AI\x02"
         payload = bytes(data)
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             installed = self.library.install(
                 APP, release_for("1.0.0", payload), Event(), ignore_progress
             )
@@ -823,7 +817,7 @@ class LibraryTests(unittest.TestCase):
                 return replace(source, destination)
 
             with (
-                patch("appglider.storage.os.replace", side_effect=fail_shortcut),
+                patch("appglider.core.storage.os.replace", side_effect=fail_shortcut),
                 self.assertRaisesRegex(OSError, "disk full"),
             ):
                 repair()
@@ -965,12 +959,12 @@ class ReleaseTests(unittest.TestCase):
         expected = metadata["assets"][0].pop("digest").removeprefix("sha256:")
         filename = metadata["assets"][0]["name"]
         with patch(
-            "appglider.releases.read_metadata",
+            "appglider.github.http.read_metadata",
             side_effect=[json.dumps(metadata).encode(), f"{expected}  {filename}\n".encode()],
         ):
             self.assertEqual(latest_release(APP, Event()).sha256, expected)
         with patch(
-            "appglider.releases.read_metadata",
+            "appglider.github.http.read_metadata",
             side_effect=[
                 json.dumps(metadata).encode(),
                 f"{expected}  other-file.AppImage\n".encode(),

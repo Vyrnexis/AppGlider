@@ -3,10 +3,11 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-from appglider.catalog import App
-from appglider.library import Installed
-from appglider.release_info import ReleaseInfo
-from appglider.releases import Release, version_key
+from appglider.core.catalog import App
+from appglider.github.assets import Release
+from appglider.github.release_info import ReleaseInfo
+from appglider.github.versions import version_key
+from appglider.install.library import Installed
 
 
 @dataclass(frozen=True)

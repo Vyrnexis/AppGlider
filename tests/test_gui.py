@@ -54,24 +54,26 @@ from PySide6.QtWidgets import (
 )
 from test_library import APP, appimage_bytes, release_for
 
-from appglider import APP_ICON, APP_UPDATE_ICON, APP_VERSION, github_status, releases
-from appglider.catalog import App, custom_app
-from appglider.controls import SpaceBar
-from appglider.jobs import TaskResult
-from appglider.library import Installed, Library, previous_copy
-from appglider.preferences import (
+from appglider import APP_ICON, APP_UPDATE_ICON, APP_VERSION
+from appglider.core.catalog import App, custom_app
+from appglider.core.preferences import (
     appearance_choice,
     check_interval_hours,
     custom_order,
     notified_versions,
     pinned_apps,
 )
-from appglider.release_info import ReleaseInfo, ReleaseOption, info_path
-from appglider.releases import Release
-from appglider.rows import ORDER_MIME
-from appglider.settings_page import SettingsPage, format_space
-from appglider.storage import atomic_json
-from appglider.window import (
+from appglider.core.storage import atomic_json
+from appglider.github import http
+from appglider.github import status as github_status
+from appglider.github.assets import Release
+from appglider.github.release_info import ReleaseInfo, ReleaseOption, info_path
+from appglider.install.library import Installed, Library, previous_copy
+from appglider.ui.controls import SpaceBar
+from appglider.ui.jobs import TaskResult
+from appglider.ui.pages.settings_page import SettingsPage, format_space
+from appglider.ui.rows import ORDER_MIME
+from appglider.ui.window import (
     LauncherWindow,
     OrphansDialog,
     fit_size,
@@ -92,7 +94,7 @@ class LibraryTests(unittest.TestCase):
             str(Path(self.temp.name) / "settings.ini"), QSettings.Format.IniFormat
         )
         self.settings.setValue("appearance/theme", "Light")
-        check = patch("appglider.self_update.check", return_value=None)  # no network
+        check = patch("appglider.install.self_update.check", return_value=None)  # no network
         check.start()
         self.addCleanup(check.stop)
         library = stock(
@@ -183,7 +185,7 @@ class LibraryTests(unittest.TestCase):
             )
 
     def test_close_hides_to_tray_and_activation_restores_window(self) -> None:
-        with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
+        with patch("appglider.ui.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
             self.window.tray.show()
             self.assertFalse(self.window.close())
             self.assertFalse(self.window.isVisible())
@@ -251,7 +253,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(library.autostart_file.read_text(), "[Desktop Entry]\nExec=/bin/true\n")
 
     def test_no_tray_host_keeps_normal_close_behaviour(self) -> None:
-        with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False):
+        with patch("appglider.ui.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False):
             self.window.tray.show()
             event = QCloseEvent()
             self.window.closeEvent(event)
@@ -262,7 +264,7 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(self.window.tray_apps_menu.isEnabled())
         self.assertFalse(self.window.tray_check_action.isEnabled())
         payload = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("1.0.0", payload), Event(), lambda *args: None
             )
@@ -281,7 +283,7 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(window.tray_has_updates)
         self.assertEqual(window.tray.icon().cacheKey(), window.tray_icons[0].cacheKey())
         payload = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             window.library.install(APP, release_for("1.0.0", payload), Event(), lambda *args: None)
         window.releases[APP.id] = release_for("1.1.0", payload)
         window.scan_installed()
@@ -298,7 +300,7 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(QImage(str(icon)).pixelColor(0, 0).alpha(), 0)
 
     def test_background_checks_are_cheap_and_explicit_details_checks_are_full(self) -> None:
-        with patch("appglider.window.discover_releases", return_value=object()) as discover:
+        with patch("appglider.ui.window.discover_releases", return_value=object()) as discover:
             for force in (False, True):
                 operation = self.window.release_operation(APP, force)
                 operation(Event(), lambda *args: None)
@@ -312,7 +314,7 @@ class LibraryTests(unittest.TestCase):
             calls.append(kwargs)
             return self.release_info()
 
-        with patch("appglider.window.discover_releases", side_effect=discover):
+        with patch("appglider.ui.window.discover_releases", side_effect=discover):
             self.window.open_app(APP.id)
             self.window.app_page.check_button.click()
             self.wait_for_task()
@@ -326,7 +328,7 @@ class LibraryTests(unittest.TestCase):
     def install_apps(self, *apps: App) -> None:
         payload = appimage_bytes()
         for app in apps:
-            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+            with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
                 self.window.library.install(
                     app,
                     replace(release_for("1.0.0", payload), name=f"{app.id}-1.0.0.AppImage"),
@@ -375,7 +377,7 @@ class LibraryTests(unittest.TestCase):
         window.toggle_pin(names[3])
         custom = self.shown()
         self.assertNotEqual(custom[1:], [n for n in names if n != names[3]])
-        with patch("appglider.window.QMessageBox.question") as ask:
+        with patch("appglider.ui.window.QMessageBox.question") as ask:
             ask.return_value = QMessageBox.StandardButton.No
             window.sort_action.trigger()
             self.assertEqual(
@@ -465,7 +467,7 @@ class LibraryTests(unittest.TestCase):
         window = self.window
         payload = appimage_bytes()
         for app in (APP, APPS[3]):
-            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+            with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
                 window.library.install(
                     app,
                     replace(release_for("1.0.0", payload), name=f"{app.id}-1.0.0.AppImage"),
@@ -547,8 +549,8 @@ class LibraryTests(unittest.TestCase):
         release = release_for("1.0.0", payload)
         seen: list[str] = []
         with (
-            patch("appglider.window.QThreadPool.globalInstance"),
-            patch("appglider.window.latest_release", return_value=release),
+            patch("appglider.ui.window.QThreadPool.globalInstance"),
+            patch("appglider.ui.window.latest_release", return_value=release),
         ):
             self.window.install_app(APP.id)
             seen.append(self.window.cards[APP.id].chip.text())
@@ -804,7 +806,7 @@ class LibraryTests(unittest.TestCase):
         payload = appimage_bytes()
         chosen = (APP, APPS[3], APPS[6])
         for app in chosen:
-            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+            with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
                 window.library.install(
                     app,
                     replace(release_for("1.0.0", payload), name=f"{app.id}-1.0.0.AppImage"),
@@ -830,7 +832,7 @@ class LibraryTests(unittest.TestCase):
         window = self.window
         if APP.id not in window.installed:
             payload = appimage_bytes()
-            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+            with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
                 window.library.install(
                     APP, release_for("1.0.0", payload), Event(), lambda *args: None
                 )
@@ -842,7 +844,7 @@ class LibraryTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(
-            patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True)
+            patch("appglider.ui.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True)
         )
         stack.enter_context(patch.object(self.window.tray, "isVisible", return_value=True))
         stack.enter_context(patch.object(self.window, "isActiveWindow", return_value=False))
@@ -866,7 +868,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(card.chip.text(), "‖ Held · 1.1.0 out")
         self.assertIn("Held at v1.0.0 · v1.1.0 available", card.chip.toolTip())
         self.assertEqual(card.hold_action.text(), "Release hold")
-        with patch("appglider.window.discover_releases") as discover:
+        with patch("appglider.ui.window.discover_releases") as discover:
             window.update_all()
             self.assertIsNone(window.task)
             window.notify_updates()
@@ -941,7 +943,7 @@ class LibraryTests(unittest.TestCase):
             window.notify_updates()
         shown.assert_not_called()
         self.waiting_update("1.3.0")
-        with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False):
+        with patch("appglider.ui.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False):
             window.notify_updates()
         shown.assert_not_called()
 
@@ -952,7 +954,7 @@ class LibraryTests(unittest.TestCase):
         apps = APPS[:5]
         payload = appimage_bytes()
         for app in apps:
-            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+            with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
                 window.library.install(
                     app,
                     replace(release_for("1.0.0", payload), name=f"{app.id}-1.0.0.AppImage"),
@@ -1047,7 +1049,7 @@ class LibraryTests(unittest.TestCase):
             window.scheduled_check()
             refresh.assert_not_called()  # nothing installed
             payload = appimage_bytes()
-            with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+            with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
                 window.library.install(
                     APP, release_for("1.0.0", payload), Event(), lambda *args: None
                 )
@@ -1055,7 +1057,7 @@ class LibraryTests(unittest.TestCase):
             window.scheduled_check()
             refresh.assert_called_once_with()
             refresh.reset_mock()
-            with patch("appglider.window.github_status.quota_low", return_value=True):
+            with patch("appglider.ui.window.github_status.quota_low", return_value=True):
                 window.scheduled_check()
             window.task = object()  # a download or other task is running
             window.scheduled_check()
@@ -1081,11 +1083,11 @@ class LibraryTests(unittest.TestCase):
     def test_hiding_keeps_download_running_and_quit_can_cancel_safely(self) -> None:
         with (
             patch(
-                "appglider.window.QSystemTrayIcon.isSystemTrayAvailable",
+                "appglider.ui.window.QSystemTrayIcon.isSystemTrayAvailable",
                 return_value=True,
             ),
-            patch("appglider.window.QThreadPool.globalInstance"),
-            patch("appglider.window.QMessageBox.question") as question,
+            patch("appglider.ui.window.QThreadPool.globalInstance"),
+            patch("appglider.ui.window.QMessageBox.question") as question,
         ):
             self.window.tray.show()
             self.window.start_task("Downloading", lambda cancel, progress: TaskResult("Done"))
@@ -1348,10 +1350,10 @@ class LibraryTests(unittest.TestCase):
         with (
             patch.object(window.library, "launch") as launch,
             patch(
-                "appglider.window.QTimer.singleShot",
+                "appglider.ui.window.QTimer.singleShot",
                 side_effect=lambda delay, *args: single_shot(0, *args),
             ),
-            patch("appglider.window.QMessageBox.warning") as warning,
+            patch("appglider.ui.window.QMessageBox.warning") as warning,
         ):
             process = launch.return_value
             process.poll.return_value = 1
@@ -1573,7 +1575,7 @@ class LibraryTests(unittest.TestCase):
     def test_empty_library_and_added_repositories_make_no_background_requests(self) -> None:
         info = self.release_info()
         atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
-        with patch("appglider.window.discover_releases") as discover:
+        with patch("appglider.ui.window.discover_releases") as discover:
             self.window.refresh_releases()
             self.window.refresh_releases(force=True)
             self.window.library.add_repository(custom_app("example/another-app"))
@@ -1593,8 +1595,8 @@ class LibraryTests(unittest.TestCase):
         info = self.release_info()
         page = self.window.app_page
         with (
-            patch("appglider.window.discover_releases", return_value=info) as discover,
-            patch("appglider.library.download") as download,
+            patch("appglider.ui.window.discover_releases", return_value=info) as discover,
+            patch("appglider.install.library.download") as download,
         ):
             self.window.open_app(APP.id)
             before = page.versions["stable"].text.text()
@@ -1627,7 +1629,7 @@ class LibraryTests(unittest.TestCase):
 
             with (
                 self.subTest(leave=leave),
-                patch("appglider.window.discover_releases", side_effect=discover),
+                patch("appglider.ui.window.discover_releases", side_effect=discover),
             ):
                 self.window.release_infos.pop(APP.id, None)
                 self.window.open_app(APP.id)
@@ -1661,9 +1663,9 @@ class LibraryTests(unittest.TestCase):
         self.window.scan_installed()
         page = self.window.app_page
         with (
-            patch("appglider.window.discover_releases", side_effect=OSError("Offline")),
-            patch("appglider.window.QMessageBox.warning"),
-            patch("appglider.window.QThreadPool.globalInstance") as pool,
+            patch("appglider.ui.window.discover_releases", side_effect=OSError("Offline")),
+            patch("appglider.ui.window.QMessageBox.warning"),
+            patch("appglider.ui.window.QThreadPool.globalInstance") as pool,
         ):
             pool.return_value.start.side_effect = lambda task: task.run()
             self.window.open_app(APP.id)
@@ -1677,7 +1679,7 @@ class LibraryTests(unittest.TestCase):
         other = APPS[1]
         record = Installed(Path(self.temp.name) / "example.AppImage", "0.9.0", True)
         self.window.installed = {APP.id: record, other.id: record}
-        with patch("appglider.window.QThreadPool.globalInstance") as pool:
+        with patch("appglider.ui.window.QThreadPool.globalInstance") as pool:
             self.window.checks.add([APP.id, other.id])
             self.assertEqual(self.window.checks.queue, [other.id])
             self.window.installed.pop(other.id)
@@ -1713,8 +1715,8 @@ class LibraryTests(unittest.TestCase):
         for plentiful, started in ((False, 1), (True, 2)):
             with (
                 self.subTest(plentiful=plentiful),
-                patch("appglider.window.QThreadPool.globalInstance") as pool,
-                patch("appglider.window.github_status.quota_plentiful", return_value=plentiful),
+                patch("appglider.ui.window.QThreadPool.globalInstance") as pool,
+                patch("appglider.ui.window.github_status.quota_plentiful", return_value=plentiful),
             ):
                 self.window.installed = {APP.id: record, other.id: record}
                 self.window.checks.add([APP.id, other.id])
@@ -1729,11 +1731,11 @@ class LibraryTests(unittest.TestCase):
     def test_refresh_only_checks_installed_apps_and_respects_release_preferences(self) -> None:
         info = self.release_info()
         payload = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("0.9.0", payload), Event(), lambda *args: None
             )
-        with patch("appglider.window.discover_releases", return_value=info) as discover:
+        with patch("appglider.ui.window.discover_releases", return_value=info) as discover:
             self.window.refresh_releases()
             self.assertTrue(self.window.cards[APP.id].action_button.isEnabled())
             self.wait_for_release_checks()
@@ -1770,7 +1772,7 @@ class LibraryTests(unittest.TestCase):
     def test_card_preference_changes_offers_and_count_without_installing(self) -> None:
         info = self.release_info()
         payload = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             self.window.library.install(APP, info.stable.release, Event(), lambda *args: None)
         atomic_json(info_path(APP, self.window.library.data_dir / "release-cache"), asdict(info))
         self.window.scan_installed()
@@ -1817,7 +1819,7 @@ class LibraryTests(unittest.TestCase):
     def test_failed_refresh_retains_badges_and_shows_last_checked_without_dialog(self) -> None:
         info = replace(self.release_info(), checked_at=time.time() - 3600)
         payload = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("0.9.0", payload), Event(), lambda *args: None
             )
@@ -1825,8 +1827,8 @@ class LibraryTests(unittest.TestCase):
         self.window.scan_installed()
         self.assertIn("check needed", self.window.cards[APP.id].chip.toolTip())
         with (
-            patch("appglider.window.discover_releases", side_effect=OSError("Offline")),
-            patch("appglider.window.QMessageBox.warning") as warning,
+            patch("appglider.ui.window.discover_releases", side_effect=OSError("Offline")),
+            patch("appglider.ui.window.QMessageBox.warning") as warning,
         ):
             self.window.refresh_releases()
             self.wait_for_release_checks()
@@ -1854,8 +1856,8 @@ class LibraryTests(unittest.TestCase):
         payload = appimage_bytes()
         release = replace(release_for("1.1.0-beta.1", payload), prerelease=True, is_latest=False)
         with (
-            patch("appglider.window.latest_release", return_value=release) as latest,
-            patch("appglider.releases.request", return_value=io.BytesIO(payload)),
+            patch("appglider.ui.window.latest_release", return_value=release) as latest,
+            patch("appglider.github.http.request", return_value=io.BytesIO(payload)),
         ):
             card.action_button.click()
             self.wait_for_task()
@@ -1866,14 +1868,14 @@ class LibraryTests(unittest.TestCase):
 
     def test_closing_cancels_background_refresh_without_installation_prompt(self) -> None:
         payload = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("1.0.0", payload), Event(), lambda *args: None
             )
         with (
-            patch("appglider.window.QThreadPool.globalInstance"),
-            patch("appglider.window.QMessageBox.question") as question,
-            patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
+            patch("appglider.ui.window.QThreadPool.globalInstance"),
+            patch("appglider.ui.window.QMessageBox.question") as question,
+            patch("appglider.ui.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
         ):
             self.window.refresh_releases()
             task = self.window.checks.tasks[APP.id]
@@ -1888,7 +1890,7 @@ class LibraryTests(unittest.TestCase):
 
     def test_managed_appimage_gets_launch_action_and_installed_filter(self) -> None:
         payload = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("1.0.0", payload), Event(), lambda *args: None
             )
@@ -1898,7 +1900,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(card.action_button.text(), "Launch")
         self.window.filter_installed.click()
         self.assertEqual(self.visible_ids(), {APP.id})
-        with patch("appglider.library.subprocess.Popen") as spawn:
+        with patch("appglider.install.library.subprocess.Popen") as spawn:
             spawn.return_value.poll.return_value = None
             QTest.mouseClick(card.action_button, Qt.MouseButton.LeftButton)
             self.assertEqual(spawn.call_args.args[0], [str(path)])
@@ -1906,7 +1908,7 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(card.shortcut_action.isEnabled())
         shortcut = self.window.library.desktop_dir / f"appglider-{APP.id}.desktop"
         shortcut.unlink()
-        with patch("appglider.window.QMessageBox.warning") as warning:
+        with patch("appglider.ui.window.QMessageBox.warning") as warning:
             card.shortcut_requested.emit(APP.id)
             deadline = time.monotonic() + 5
             while self.window.menu_task is not None and time.monotonic() < deadline:
@@ -1932,15 +1934,15 @@ class LibraryTests(unittest.TestCase):
 
     def test_install_update_and_rollback_through_background_ui(self) -> None:
         card = self.window.cards[APP.id]
-        with patch("appglider.window.QMessageBox.warning") as warning:
+        with patch("appglider.ui.window.QMessageBox.warning") as warning:
             for version in ("1.0.0", "1.1.0"):
                 payload = appimage_bytes(version.encode())
                 release = release_for(version, payload)
                 self.window.releases[APP.id] = release
                 self.window.refresh()
                 with (
-                    patch("appglider.window.latest_release", return_value=release),
-                    patch("appglider.releases.request", return_value=io.BytesIO(payload)),
+                    patch("appglider.ui.window.latest_release", return_value=release),
+                    patch("appglider.github.http.request", return_value=io.BytesIO(payload)),
                 ):
                     self.assertEqual(
                         card.action_button.text(), "Update" if version == "1.1.0" else "Install"
@@ -1962,16 +1964,16 @@ class LibraryTests(unittest.TestCase):
         card = self.window.cards[APP.id]
         first_payload = appimage_bytes(b"1.0.0")
         first = release_for("1.0.0", first_payload)
-        with patch("appglider.releases.request", return_value=io.BytesIO(first_payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(first_payload)):
             self.window.library.install(APP, first, Event(), lambda *args: None)
         self.window.scan_installed()
         newer_payload = appimage_bytes(b"1.1.0")
         newer = release_for("1.1.0", newer_payload)
-        with patch("appglider.window.QMessageBox.warning") as warning:
+        with patch("appglider.ui.window.QMessageBox.warning") as warning:
             for latest, expected, version in ((first, "Updated 0 apps.", "1.0.0"),):
                 self.window.releases[APP.id] = newer
                 self.window.refresh()
-                with patch("appglider.window.latest_release", return_value=latest):
+                with patch("appglider.ui.window.latest_release", return_value=latest):
                     self.window.update_all()
                     self.wait_for_task()
                 self.assertEqual(self.window.footer.text(), expected)
@@ -1979,8 +1981,8 @@ class LibraryTests(unittest.TestCase):
             self.window.releases[APP.id] = newer
             self.window.refresh()
             with (
-                patch("appglider.window.latest_release", return_value=newer),
-                patch("appglider.releases.request", return_value=io.BytesIO(newer_payload)),
+                patch("appglider.ui.window.latest_release", return_value=newer),
+                patch("appglider.github.http.request", return_value=io.BytesIO(newer_payload)),
             ):
                 self.window.update_all()
                 self.wait_for_task()
@@ -1991,12 +1993,12 @@ class LibraryTests(unittest.TestCase):
 
     def test_busy_state_cancellation_and_launch_stays_available(self) -> None:
         payload = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
                 APP, release_for("1.0.0", payload), Event(), lambda *args: None
             )
         self.window.scan_installed()
-        with patch("appglider.window.QThreadPool.globalInstance"):
+        with patch("appglider.ui.window.QThreadPool.globalInstance"):
             self.window.start_task("Test operation", lambda cancel, progress: TaskResult("Done"))
         task = self.window.task
         self.assertIsNotNone(task)
@@ -2085,11 +2087,15 @@ class LibraryTests(unittest.TestCase):
     def test_browse_applies_a_valid_choice_at_once(self) -> None:
         page = self.window.settings_page
         chosen = str(Path(self.temp.name) / "browsed")
-        with patch("appglider.settings_page.QFileDialog.getExistingDirectory", return_value=chosen):
+        with patch(
+            "appglider.ui.pages.settings_page.QFileDialog.getExistingDirectory", return_value=chosen
+        ):
             page.browse_button.click()
         self.assertEqual(page.folder.text(), chosen)
         self.assertEqual(self.settings.value("installation/folder"), chosen)
-        with patch("appglider.settings_page.QFileDialog.getExistingDirectory", return_value=""):
+        with patch(
+            "appglider.ui.pages.settings_page.QFileDialog.getExistingDirectory", return_value=""
+        ):
             page.browse_button.click()
         self.assertEqual(self.settings.value("installation/folder"), chosen)
 
@@ -2114,13 +2120,13 @@ class LibraryTests(unittest.TestCase):
         app_single = self.window.apps[1]
 
         payload_rolled_old = appimage_bytes(b"v1" + b"x" * 200_000)
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload_rolled_old)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload_rolled_old)):
             library.install(
                 app_rolled, release_for("1.0.0", payload_rolled_old), Event(), lambda *a: None
             )
 
         payload_rolled_new = appimage_bytes(b"v2" + b"y" * 100_000)
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload_rolled_new)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload_rolled_new)):
             library.install(
                 app_rolled, release_for("1.1.0", payload_rolled_new), Event(), lambda *a: None
             )
@@ -2136,7 +2142,7 @@ class LibraryTests(unittest.TestCase):
 
         # Single app with no kept copy
         payload_single = appimage_bytes(b"v3" + b"z" * 500_000)
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload_single)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload_single)):
             library.install(
                 app_single, release_for("1.0.0", payload_single), Event(), lambda *a: None
             )
@@ -2211,7 +2217,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(set(captions), {"View AppGlider on GitHub", "Report an issue"})
         opened: list[str] = []
         with patch(
-            "appglider.settings_page.QDesktopServices.openUrl",
+            "appglider.ui.pages.settings_page.QDesktopServices.openUrl",
             side_effect=lambda url: opened.append(url.toString()),
         ):
             for button in captions.values():
@@ -2263,8 +2269,8 @@ class LibraryTests(unittest.TestCase):
         with (
             patch.object(github_status, "_status", github_status.GitHubStatus()),
             patch.object(github_status.time, "time", return_value=1000),
-            patch.dict(releases._RETRY_AFTER, {}, clear=True),
-            patch.object(releases, "request") as request,
+            patch.dict(http._RETRY_AFTER, {}, clear=True),
+            patch.object(http, "request") as request,
         ):
             self.window.update_github_status()
             self.assertEqual(self.window.github_label.text(), "GitHub status")
@@ -2283,7 +2289,7 @@ class LibraryTests(unittest.TestCase):
                 }
             )
             github_status.release_result("Public GitHub pages", APP.repo, 990)
-            releases._RETRY_AFTER["github.com"] = 1120
+            http._RETRY_AFTER["github.com"] = 1120
             self.window.github_timer.timeout.emit()
             self.qt.processEvents()
             observed.append(page.github_details.text())
@@ -2292,7 +2298,7 @@ class LibraryTests(unittest.TestCase):
             label = page.github_details
             self.assertGreaterEqual(label.height(), label.heightForWidth(label.width()))
             self.window.nav_library.click()  # hidden pages are not refreshed
-            releases._RETRY_AFTER["github.com"] = 1500
+            http._RETRY_AFTER["github.com"] = 1500
             self.window.github_timer.timeout.emit()
             self.assertEqual(page.github_details.text(), observed[2])
             request.assert_not_called()
@@ -2379,7 +2385,7 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(switch.isChecked())
         switch.click()
         self.assertFalse(self.settings.value("General/close-to-tray", True, type=bool))
-        with patch("appglider.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
+        with patch("appglider.ui.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=True):
             self.window.tray.show()
             event = QCloseEvent()
             self.window.closeEvent(event)

@@ -16,8 +16,9 @@ from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 from appglider import APP_ICON
-from appglider.catalog import custom_app
-from appglider.icons import (
+from appglider.core.catalog import custom_app
+from appglider.github.http import RateLimited
+from appglider.github.icons import (
     MAX_ICON_BYTES,
     discover_icons,
     icon_pixmap,
@@ -25,8 +26,8 @@ from appglider.icons import (
     normalise_icon,
     web_files,
 )
-from appglider.library import Library
-from appglider.releases import Cancelled, RateLimited
+from appglider.github.versions import Cancelled
+from appglider.install.library import Library
 
 SVG = (
     b'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">'
@@ -139,16 +140,16 @@ class IconTests(unittest.TestCase):
     def discover(self, files, *, quota_low=False, tree=None):
         entries, api_tree, raw, listing = self.repository(files)
         metadata = (
-            patch("appglider.icons.read_metadata", return_value=tree or api_tree)
+            patch("appglider.github.icons.read_metadata", return_value=tree or api_tree)
             if not isinstance(tree, Exception)
-            else patch("appglider.icons.read_metadata", side_effect=tree)
+            else patch("appglider.github.icons.read_metadata", side_effect=tree)
         )
         with (
             metadata as api,
-            patch("appglider.icons.releases.raw_bytes", side_effect=raw) as raw_read,
-            patch("appglider.icons.releases.web_listing", side_effect=listing) as web,
-            patch("appglider.icons.github_status.quota_low", return_value=quota_low),
-            patch("appglider.icons.LISTING_PAUSE", 0),
+            patch("appglider.github.http.raw_bytes", side_effect=raw) as raw_read,
+            patch("appglider.github.http.web_listing", side_effect=listing) as web,
+            patch("appglider.github.icons.github_status.quota_low", return_value=quota_low),
+            patch("appglider.github.icons.LISTING_PAUSE", 0),
         ):
             result = discover_icons(CUSTOM, Event())
         return result, api, raw_read, web
@@ -263,9 +264,9 @@ class IconTests(unittest.TestCase):
         ]
         tree = json.dumps({"tree": entries, "truncated": False}).encode()
         with (
-            patch("appglider.icons.read_metadata", return_value=tree),
-            patch("appglider.icons.releases.raw_bytes", return_value=SVG),
-            patch("appglider.icons.github_status.quota_low", return_value=False),
+            patch("appglider.github.icons.read_metadata", return_value=tree),
+            patch("appglider.github.http.raw_bytes", return_value=SVG),
+            patch("appglider.github.icons.github_status.quota_low", return_value=False),
         ):
             found = [icon.name for icon in discover_icons(custom_app("owner/app"), Event())]
         self.assertEqual(found, ["images/icon.png"])  # "app" is too short to count as a name
@@ -283,8 +284,8 @@ class IconTests(unittest.TestCase):
         cancel = Event()
         cancel.set()
         with (
-            patch("appglider.icons.read_metadata") as api,
-            patch("appglider.icons.releases.web_listing") as web,
+            patch("appglider.github.icons.read_metadata") as api,
+            patch("appglider.github.http.web_listing") as web,
             self.assertRaises(Cancelled),
         ):
             discover_icons(CUSTOM, cancel)
@@ -297,9 +298,9 @@ class IconTests(unittest.TestCase):
             return [{"name": "a", "path": "a", "contentType": "directory"}], repo
 
         with (
-            patch("appglider.icons.github_status.quota_low", return_value=True),
-            patch("appglider.icons.releases.web_listing", side_effect=listing),
-            patch("appglider.icons.LISTING_PAUSE", 0),
+            patch("appglider.github.icons.github_status.quota_low", return_value=True),
+            patch("appglider.github.http.web_listing", side_effect=listing),
+            patch("appglider.github.icons.LISTING_PAUSE", 0),
             self.assertRaises(Cancelled),
         ):
             discover_icons(CUSTOM, cancel)
@@ -321,10 +322,10 @@ class IconTests(unittest.TestCase):
             return SVG
 
         with (
-            patch("appglider.icons.github_status.quota_low", return_value=True),
-            patch("appglider.icons.releases.web_listing", side_effect=listing),
-            patch("appglider.icons.releases.raw_bytes", side_effect=raw),
-            patch("appglider.icons.LISTING_PAUSE", 0),
+            patch("appglider.github.icons.github_status.quota_low", return_value=True),
+            patch("appglider.github.http.web_listing", side_effect=listing),
+            patch("appglider.github.http.raw_bytes", side_effect=raw),
+            patch("appglider.github.icons.LISTING_PAUSE", 0),
         ):
             result = discover_icons(CUSTOM, Event())
         self.assertEqual([icon.name for icon in result], ["logo.svg"])
@@ -345,11 +346,11 @@ class IconTests(unittest.TestCase):
 
     def walk(self, listing, **limits):
         with (
-            patch("appglider.icons.releases.web_listing", side_effect=listing) as web,
-            patch("appglider.icons.LISTING_PAUSE", 0),
+            patch("appglider.github.http.web_listing", side_effect=listing) as web,
+            patch("appglider.github.icons.LISTING_PAUSE", 0),
         ):
             for name, value in limits.items():
-                patcher = patch(f"appglider.icons.{name}", value)
+                patcher = patch(f"appglider.github.icons.{name}", value)
                 patcher.start()
                 self.addCleanup(patcher.stop)
             files, _ = web_files(CUSTOM, Event())
@@ -454,14 +455,16 @@ class IconTests(unittest.TestCase):
     def test_the_search_reports_what_it_is_doing_so_a_slow_one_does_not_look_frozen(self):
         messages = []
         with (
-            patch("appglider.icons.read_metadata", side_effect=RateLimited("api.github.com", 1)),
             patch(
-                "appglider.icons.releases.web_listing",
+                "appglider.github.icons.read_metadata", side_effect=RateLimited("api.github.com", 1)
+            ),
+            patch(
+                "appglider.github.http.web_listing",
                 side_effect=self.endless_with_strong_file_on(2),
             ),
-            patch("appglider.icons.releases.raw_bytes", return_value=SVG),
-            patch("appglider.icons.github_status.quota_low", return_value=False),
-            patch("appglider.icons.LISTING_PAUSE", 0),
+            patch("appglider.github.http.raw_bytes", return_value=SVG),
+            patch("appglider.github.icons.github_status.quota_low", return_value=False),
+            patch("appglider.github.icons.LISTING_PAUSE", 0),
         ):
             discover_icons(CUSTOM, Event(), messages.append)
         self.assertEqual(messages[0], "Reading Example App's file list…")
@@ -472,8 +475,8 @@ class IconTests(unittest.TestCase):
         )
         self.assertEqual(messages[-1], "Checking the possible icons…")
         with (
-            patch("appglider.icons.github_status.quota_low", return_value=True),
-            patch("appglider.icons.releases.web_listing", return_value=([], "owner/example-app")),
+            patch("appglider.github.icons.github_status.quota_low", return_value=True),
+            patch("appglider.github.http.web_listing", return_value=([], "owner/example-app")),
         ):
             discover_icons(CUSTOM, Event())  # progress is optional
 
@@ -486,7 +489,7 @@ class IconTests(unittest.TestCase):
 
         _, opened = self.walk(endless, MAX_LISTINGS=7)
         self.assertEqual(len(opened), 7)
-        with patch("appglider.icons.time.monotonic", side_effect=[0, 0, 100, 100]):
+        with patch("appglider.github.icons.time.monotonic", side_effect=[0, 0, 100, 100]):
             _, opened = self.walk(endless)
         self.assertEqual(len(opened), 1)  # the time budget ended it
 
@@ -516,7 +519,7 @@ class IconTests(unittest.TestCase):
         reopened = Library(self.library.data_dir, self.library.apps_dir, self.library.desktop_dir)
         self.assertEqual(reopened.icon_path(CUSTOM), path)
         self.assertEqual(reopened.apps[-1], CUSTOM)
-        with patch("appglider.storage.os.replace", side_effect=OSError("Disk full")):
+        with patch("appglider.core.storage.os.replace", side_effect=OSError("Disk full")):
             with self.assertRaises(OSError):
                 reopened.set_icon(CUSTOM, SVG.replace(b"39b3d7", b"112233"))
         with self.assertRaises(ValueError):

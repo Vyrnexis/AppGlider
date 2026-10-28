@@ -10,8 +10,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appglider.catalogfile import ParsedCatalog
-from appglider.library import ImportPlan
+from appglider.core.catalogfile import ParsedCatalog
+from appglider.install.library import ImportPlan
 
 
 class CatalogPreviewDialog(QDialog):

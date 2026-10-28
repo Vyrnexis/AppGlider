@@ -21,9 +21,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appglider.library import Library
-from appglider.theme import THEMES, stylesheet
-from appglider.window import LauncherWindow
+from appglider.install.library import Library
+from appglider.ui.theme import THEMES, stylesheet
+from appglider.ui.window import LauncherWindow
 
 
 class PolishTests(unittest.TestCase):
@@ -196,7 +196,7 @@ class StylesheetPathTests(unittest.TestCase):
             cache = str(Path(temp) / "o'brien home" / "cache")
             previous_sheet = qt.styleSheet()
             self.addCleanup(qt.setStyleSheet, previous_sheet)
-            with patch("appglider.theme.QStandardPaths.writableLocation", return_value=cache):
+            with patch("appglider.ui.theme.QStandardPaths.writableLocation", return_value=cache):
                 sheet = stylesheet(THEMES["Light"], "#2f6fed", False)
             previous = qInstallMessageHandler(handler)
             try:

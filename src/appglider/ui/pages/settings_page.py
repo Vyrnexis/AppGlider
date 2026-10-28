@@ -28,25 +28,26 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appglider import APP_NAME, APP_VERSION, self_update
-from appglider.app_page import SettingRow, add_setting_rows, format_size, panel
-from appglider.catalog_preview import CatalogPreviewDialog
-from appglider.catalogfile import EXAMPLE_CATALOG, CatalogError, read, render
-from appglider.controls import Segmented, SpaceBar, SpaceSwatch, Switch
-from appglider.library import previous_copy
-from appglider.preferences import (
+from appglider import APP_NAME, APP_VERSION
+from appglider.core.catalogfile import EXAMPLE_CATALOG, CatalogError, read, render
+from appglider.core.preferences import (
     ACCENTS,
     CHECK_INTERVALS,
     THEME_CHOICES,
     appearance_choice,
     check_interval_hours,
 )
-from appglider.releases import github_request_status
-from appglider.rows import ElidedLabel
-from appglider.storage import atomic_bytes
+from appglider.core.storage import atomic_bytes
+from appglider.github.http import github_request_status
+from appglider.install import self_update
+from appglider.install.library import previous_copy
+from appglider.ui.controls import Segmented, SpaceBar, SpaceSwatch, Switch
+from appglider.ui.pages.app_page import SettingRow, add_setting_rows, format_size, panel
+from appglider.ui.pages.catalog_preview import CatalogPreviewDialog
+from appglider.ui.rows import ElidedLabel
 
 if TYPE_CHECKING:
-    from appglider.window import LauncherWindow
+    from appglider.ui.window import LauncherWindow
 
 SECTIONS = ("General", "Updates", "Catalogs", "Storage", "GitHub", "About")
 LINKS = (

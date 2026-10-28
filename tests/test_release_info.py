@@ -11,13 +11,20 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
+from urllib.request import Request
 
 from test_library import APP
 from test_prereleases import metadata, release_list_html
 from test_releases import Response, public_assets
 
-from appglider import github_status, releases
-from appglider.release_info import cached_info, discover_releases, info_path, remember_release
+from appglider.github import assets, download, http, versions
+from appglider.github import status as github_status
+from appglider.github.release_info import (
+    cached_info,
+    discover_releases,
+    info_path,
+    remember_release,
+)
 
 
 class ReleaseInfoTests(unittest.TestCase):
@@ -30,12 +37,12 @@ class ReleaseInfoTests(unittest.TestCase):
         self.entries = [self.beta, self.stable]
 
     def discover(self):
-        with patch.object(releases, "api_entries", return_value=self.entries):
+        with patch.object(assets, "api_entries", return_value=self.entries):
             return discover_releases(APP, Event(), self.cache, force=True)
 
     def test_both_channels_use_two_api_requests_and_keep_user_preference(self):
         with patch.object(
-            releases,
+            http,
             "read_metadata",
             side_effect=[json.dumps(self.stable).encode(), json.dumps(self.entries).encode()],
         ) as read:
@@ -64,7 +71,7 @@ class ReleaseInfoTests(unittest.TestCase):
         self.assertEqual(info.choice(False).version, "0.6")
         self.assertEqual(info.choice(True).version, "0.7-beta.10")
         self.assertEqual(cached_info(APP, self.cache), info)
-        self.assertEqual(releases.cached_release(APP, self.cache), info.stable.release)
+        self.assertEqual(download.cached_release(APP, self.cache), info.stable.release)
 
     def test_unsupported_tags_keep_the_actionable_discovery_error(self):
         self.entries = [{**self.stable, "tag_name": "nightly"}]
@@ -100,7 +107,7 @@ class ReleaseInfoTests(unittest.TestCase):
         self.assertIsNone(info.choice(True).release)
         self.assertTrue(info.error(True))
         self.assertIsNone(
-            releases.cached_release(replace(APP, include_prereleases=True), self.cache)
+            download.cached_release(replace(APP, include_prereleases=True), self.cache)
         )
         self.assertEqual(cached_info(APP, self.cache), info)
 
@@ -114,22 +121,22 @@ class ReleaseInfoTests(unittest.TestCase):
         stale = cached_info(APP, self.cache)
         self.assertIsNotNone(stale)
         self.assertFalse(stale.fresh())
-        with patch.object(releases, "api_entries", side_effect=OSError("Offline")):
+        with patch.object(assets, "api_entries", side_effect=OSError("Offline")):
             with self.assertRaisesRegex(OSError, "Offline"):
                 discover_releases(APP, Event(), self.cache)
         self.assertEqual(path.read_bytes(), contents)
         for include in (False, True):
             channel = replace(APP, include_prereleases=include)
-            item_path = releases.release_cache_path(channel, self.cache)
+            item_path = download.release_cache_path(channel, self.cache)
             item = json.loads(item_path.read_text())
             item["checked_at"] = data["checked_at"]
             item_path.write_text(json.dumps(item))
-            self.assertIsNone(releases.cached_release(channel, self.cache))
+            self.assertIsNone(download.cached_release(channel, self.cache))
         self.assertEqual(cached_info(APP, self.cache).stable, info.stable)
 
     def test_fresh_cache_avoids_network_and_manual_refresh_bypasses_it(self):
         info = self.discover()
-        with patch.object(releases, "api_entries", return_value=self.entries) as read:
+        with patch.object(assets, "api_entries", return_value=self.entries) as read:
             self.assertEqual(discover_releases(APP, Event(), self.cache), info)
             read.assert_not_called()
             discover_releases(APP, Event(), self.cache, force=True)
@@ -167,8 +174,8 @@ class ReleaseInfoTests(unittest.TestCase):
         )
         self.assertEqual(info.preview.release.notes, "Beta notes")
         self.assertEqual(cached_info(APP, self.cache), info)
-        written = releases.release_cache_path(APP, self.cache)
-        self.assertEqual(releases.cached_release(APP, self.cache), info.stable.release)
+        written = download.release_cache_path(APP, self.cache)
+        self.assertEqual(download.cached_release(APP, self.cache), info.stable.release)
         self.assertIn("Stable notes", written.read_text())
         path = info_path(APP, self.cache)
         data = json.loads(path.read_text())
@@ -190,11 +197,9 @@ class ReleaseInfoTests(unittest.TestCase):
     def test_quota_fallback_discovers_both_channels_with_the_same_checksums(self):
         info = self.discover()
         with (
+            patch.object(assets, "api_entries", side_effect=http.RateLimited("api.github.com", 0)),
             patch.object(
-                releases, "api_entries", side_effect=releases.RateLimited("api.github.com", 0)
-            ),
-            patch.object(
-                releases,
+                http,
                 "request",
                 side_effect=[
                     Response(APP.source_url + "/releases/tag/v1.2.3"),
@@ -207,7 +212,7 @@ class ReleaseInfoTests(unittest.TestCase):
                 ],
             ),
             patch.object(
-                releases,
+                http,
                 "read_metadata",
                 side_effect=[
                     release_list_html(self.entries, "v1.2.3"),
@@ -236,8 +241,8 @@ class ReleaseInfoTests(unittest.TestCase):
 
     def cheap(self, tag, **options):
         with (
-            patch.object(releases, "latest_tag", return_value=tag) as latest,
-            patch.object(releases, "api_entries", return_value=self.entries) as api,
+            patch.object(http, "latest_tag", return_value=tag) as latest,
+            patch.object(assets, "api_entries", return_value=self.entries) as api,
         ):
             info = discover_releases(
                 options.pop("app", APP), Event(), self.cache, force=True, cheap=True
@@ -275,9 +280,9 @@ class ReleaseInfoTests(unittest.TestCase):
         latest.assert_not_called()
         api.assert_called_once()
         with (
-            patch.object(releases, "latest_tag", return_value="v1.2.3") as latest,
-            patch.object(releases, "feed_tags") as feed,
-            patch.object(releases, "api_entries", return_value=self.entries) as api,
+            patch.object(http, "latest_tag", return_value="v1.2.3") as latest,
+            patch.object(http, "feed_tags") as feed,
+            patch.object(assets, "api_entries", return_value=self.entries) as api,
         ):
             api.reset_mock()
             discover_releases(APP, Event(), self.cache, force=True)  # not asked to be cheap
@@ -288,8 +293,8 @@ class ReleaseInfoTests(unittest.TestCase):
     def test_a_fresh_cache_needs_no_request_at_all_even_when_cheap(self):
         self.discover()
         with (
-            patch.object(releases, "latest_tag") as latest,
-            patch.object(releases, "api_entries") as api,
+            patch.object(http, "latest_tag") as latest,
+            patch.object(assets, "api_entries") as api,
         ):
             discover_releases(APP, Event(), self.cache, cheap=True)
         latest.assert_not_called()
@@ -298,9 +303,9 @@ class ReleaseInfoTests(unittest.TestCase):
     def with_previews(self, tags):
         app = replace(APP, include_prereleases=True)
         with (
-            patch.object(releases, "feed_tags", return_value=tags) as feed,
-            patch.object(releases, "latest_tag") as latest,
-            patch.object(releases, "api_entries", return_value=self.entries) as api,
+            patch.object(http, "feed_tags", return_value=tags) as feed,
+            patch.object(http, "latest_tag") as latest,
+            patch.object(assets, "api_entries", return_value=self.entries) as api,
         ):
             info = discover_releases(app, Event(), self.cache, force=True, cheap=True)
         latest.assert_not_called()  # previews never use the Latest page
@@ -366,8 +371,8 @@ class FeedTests(unittest.TestCase):
         self.app = replace(APP, repo="owner/repo")
 
     def tags(self, result):
-        with patch.object(releases, "feed_request", return_value=result) as request:
-            tags = releases.feed_tags(self.app, self.cache, Event())
+        with patch.object(http, "feed_request", return_value=result) as request:
+            tags = http.feed_tags(self.app, self.cache, Event())
         return tags, request
 
     def test_tags_come_from_this_repositorys_release_links_only_and_are_remembered(self):
@@ -400,10 +405,10 @@ class FeedTests(unittest.TestCase):
         cancel = Event()
         cancel.set()
         with (
-            patch.object(releases, "feed_request") as request,
-            self.assertRaises(releases.Cancelled),
+            patch.object(http, "feed_request") as request,
+            self.assertRaises(versions.Cancelled),
         ):
-            releases.feed_tags(self.app, self.cache, cancel)
+            http.feed_tags(self.app, self.cache, cancel)
         request.assert_not_called()
 
     def opener(self, *, error=None, body=b"<feed/>", headers=None):
@@ -420,30 +425,34 @@ class FeedTests(unittest.TestCase):
                 return Reply()
 
         opener = Opener()
-        return opener, patch.object(releases, "build_opener", return_value=opener)
+        return opener, patch.object(http, "build_opener", return_value=opener)
 
     def test_feed_request_is_conditional_bounded_and_never_follows_redirects(self):
         opener, patched = self.opener()
         with patched:
-            self.assertEqual(
-                releases.feed_request("owner/repo", 'W/"old"'), (200, b"<feed/>", 'W/"x"')
-            )
+            self.assertEqual(http.feed_request("owner/repo", 'W/"old"'), (200, b"<feed/>", 'W/"x"'))
         self.assertEqual(opener.request.full_url, "https://github.com/owner/repo/releases.atom")
         self.assertEqual(opener.request.get_header("If-none-match"), 'W/"old"')
         self.assertEqual(opener.timeout, 20)
 
     def test_feed_request_outcomes(self):
-        def http(code):
+        def http_error(code):
             return HTTPError("u", code, "x", Message(), io.BytesIO())
 
-        with self.opener(error=http(304))[1]:
-            self.assertEqual(releases.feed_request("o/r", 'W/"e"'), (304, b"", 'W/"e"'))
-            self.assertIsNone(releases.feed_request("o/r", ""))  # a 304 needs a saved ETag
-        for failure in (http(404), http(429), http(500), URLError("x"), TimeoutError()):
+        with self.opener(error=http_error(304))[1]:
+            self.assertEqual(http.feed_request("o/r", 'W/"e"'), (304, b"", 'W/"e"'))
+            self.assertIsNone(http.feed_request("o/r", ""))  # a 304 needs a saved ETag
+        for failure in (
+            http_error(404),
+            http_error(429),
+            http_error(500),
+            URLError("x"),
+            TimeoutError(),
+        ):
             with self.subTest(failure=failure), self.opener(error=failure)[1]:
-                self.assertIsNone(releases.feed_request("o/r", ""))
-        with self.opener(body=b"x" * (releases.MAX_FEED + 1))[1]:
-            self.assertIsNone(releases.feed_request("o/r", ""))
+                self.assertIsNone(http.feed_request("o/r", ""))
+        with self.opener(body=b"x" * (http.MAX_FEED + 1))[1]:
+            self.assertIsNone(http.feed_request("o/r", ""))
 
 
 class WebFetchTests(unittest.TestCase):
@@ -465,7 +474,7 @@ class WebFetchTests(unittest.TestCase):
                 return reply
 
         opener = Opener()
-        patched = patch.object(releases, "build_opener", return_value=opener)
+        patched = patch.object(http, "build_opener", return_value=opener)
         return opener, patched
 
     def http(self, code):
@@ -474,7 +483,7 @@ class WebFetchTests(unittest.TestCase):
     def test_raw_files_come_from_the_raw_host_with_a_quoted_path_and_a_size_limit(self):
         opener, patched = self.opener(body=b"PNGDATA")
         with patched as build:
-            data = releases.raw_bytes("owner/repo", "assets/my icon#1.png", 100, Event())
+            data = http.raw_bytes("owner/repo", "assets/my icon#1.png", 100, Event())
         self.assertEqual(data, b"PNGDATA")
         self.assertEqual(
             opener.request.full_url,
@@ -483,9 +492,9 @@ class WebFetchTests(unittest.TestCase):
         self.assertTrue(opener.request.get_header("User-agent").startswith("AppGlider/"))
         self.assertEqual(opener.timeout, 20)
         (handler,) = build.call_args.args  # redirects are followed only to trusted hosts
-        self.assertIsInstance(handler, releases.GitHubRedirect)
+        self.assertIsInstance(handler, http.GitHubRedirect)
         with self.opener(body=b"x" * 101)[1], self.assertRaisesRegex(ValueError, "larger"):
-            releases.raw_bytes("owner/repo", "a.png", 100, Event())
+            http.raw_bytes("owner/repo", "a.png", 100, Event())
 
     def test_failures_become_plain_errors_and_never_rate_limit_the_api(self):
         for error, message in (
@@ -498,27 +507,27 @@ class WebFetchTests(unittest.TestCase):
         ):
             with self.subTest(error=error), self.opener(error=error)[1]:
                 with self.assertRaisesRegex(ValueError, message):
-                    releases.raw_bytes("owner/repo", "a.png", 100, Event())
-        self.assertEqual(releases._RETRY_AFTER.get("raw.githubusercontent.com", 0), 0)
+                    http.raw_bytes("owner/repo", "a.png", 100, Event())
+        self.assertEqual(http._RETRY_AFTER.get("raw.githubusercontent.com", 0), 0)
 
     def test_fetches_honour_cancellation_and_trusted_hosts(self):
         cancel = Event()
         cancel.set()
         with (
-            patch.object(releases, "build_opener") as build,
-            self.assertRaises(releases.Cancelled),
+            patch.object(http, "build_opener") as build,
+            self.assertRaises(versions.Cancelled),
         ):
-            releases.raw_bytes("owner/repo", "a.png", 100, cancel)
-        with self.assertRaises(releases.Cancelled):
-            releases.web_listing("owner/repo", "", cancel)
+            http.raw_bytes("owner/repo", "a.png", 100, cancel)
+        with self.assertRaises(versions.Cancelled):
+            http.web_listing("owner/repo", "", cancel)
         build.assert_not_called()
-        self.assertTrue(releases.valid_url("https://raw.githubusercontent.com/o/r/HEAD/a.png"))
+        self.assertTrue(http.valid_url("https://raw.githubusercontent.com/o/r/HEAD/a.png"))
         for url in (
             "https://raw.githubusercontent.com.evil.test/o/r/HEAD/a.png",
             "http://raw.githubusercontent.com/o/r/HEAD/a.png",
             "https://user@raw.githubusercontent.com/o/r/HEAD/a.png",
         ):
-            self.assertFalse(releases.valid_url(url))
+            self.assertFalse(http.valid_url(url))
 
     def page(self, items):
         payload = {"payload": {"codeViewTreeRoute": {"tree": {"items": items}}}}
@@ -538,13 +547,13 @@ class WebFetchTests(unittest.TestCase):
         ]
         opener, patched = self.opener(body=self.page([good, folder, *junk]))
         with patched:
-            items, repo = releases.web_listing("owner/repo", "assets", Event())
+            items, repo = http.web_listing("owner/repo", "assets", Event())
         self.assertEqual((items, repo), ([good, folder], "owner/repo"))
         self.assertEqual(opener.request.full_url, "https://github.com/owner/repo/tree/HEAD/assets")
         self.assertEqual(opener.request.get_header("Accept"), "application/json")
         opener, patched = self.opener(body=self.page([good]))
         with patched:
-            releases.web_listing("owner/repo", "", Event())
+            http.web_listing("owner/repo", "", Event())
         self.assertEqual(opener.request.full_url, "https://github.com/owner/repo/tree/HEAD")
 
     def test_a_moved_repository_reports_its_current_name_so_later_requests_skip_the_redirect(self):
@@ -557,26 +566,26 @@ class WebFetchTests(unittest.TestCase):
             ("https://github.com/bad name/x y/tree/HEAD", "owner/repo"),
         ):
             with self.subTest(final=final), self.opener(body=self.page([]), final=final)[1]:
-                self.assertEqual(releases.web_listing("owner/repo", "", Event())[1], expected)
+                self.assertEqual(http.web_listing("owner/repo", "", Event())[1], expected)
 
     def test_a_listing_in_an_unexpected_form_is_an_error_not_a_guess(self):
         for body in (b"not json", b"[]", b'{"payload": {}}', b'{"payload": 5}', b"null"):
             with self.subTest(body=body), self.opener(body=body)[1]:
                 with self.assertRaisesRegex(ValueError, "expected form"):
-                    releases.web_listing("owner/repo", "", Event())
+                    http.web_listing("owner/repo", "", Event())
         with self.opener(body=self.page("not a list"))[1]:
-            self.assertEqual(releases.web_listing("owner/repo", "", Event())[0], [])
-        with self.opener(body=b"x" * (releases.MAX_LISTING + 1))[1]:
+            self.assertEqual(http.web_listing("owner/repo", "", Event())[0], [])
+        with self.opener(body=b"x" * (http.MAX_LISTING + 1))[1]:
             with self.assertRaises(ValueError):
-                releases.web_listing("owner/repo", "", Event())
+                http.web_listing("owner/repo", "", Event())
         with self.opener(error=self.http(301))[1], self.assertRaisesRegex(ValueError, "HTTP 301"):
-            releases.web_listing("owner/repo", "", Event())  # a redirect that could not be used
+            http.web_listing("owner/repo", "", Event())  # a redirect that could not be used
 
 
 class LatestTagTests(unittest.TestCase):
     def tag(self, location, repo="owner/repo"):
-        with patch.object(releases, "redirect_location", return_value=location):
-            return releases.latest_tag(repo, Event())
+        with patch.object(http, "redirect_location", return_value=location):
+            return http.latest_tag(repo, Event())
 
     def test_tags_are_read_from_the_redirect_of_this_repository(self):
         base = "https://github.com/Owner/Repo/releases/tag/"
@@ -604,10 +613,10 @@ class LatestTagTests(unittest.TestCase):
         cancel = Event()
         cancel.set()
         with (
-            patch.object(releases, "redirect_location") as read,
-            self.assertRaises(releases.Cancelled),
+            patch.object(http, "redirect_location") as read,
+            self.assertRaises(versions.Cancelled),
         ):
-            releases.latest_tag("owner/repo", cancel)
+            http.latest_tag("owner/repo", cancel)
         read.assert_not_called()
 
     def opener(self, *, error=None, response=None):
@@ -619,7 +628,7 @@ class LatestTagTests(unittest.TestCase):
                 return response or io.BytesIO()
 
         opener = Opener()
-        return opener, patch.object(releases, "build_opener", return_value=opener)
+        return opener, patch.object(http, "build_opener", return_value=opener)
 
     def http(self, code, location=""):
         headers = Message()
@@ -633,7 +642,7 @@ class LatestTagTests(unittest.TestCase):
         url = "https://github.com/owner/repo/releases/latest"
         opener, patched = self.opener(error=self.http(302, "/owner/repo/releases/tag/v1.0.0"))
         with patched:
-            self.assertEqual(releases.redirect_location(url), "/owner/repo/releases/tag/v1.0.0")
+            self.assertEqual(http.redirect_location(url), "/owner/repo/releases/tag/v1.0.0")
         self.assertEqual(opener.request.get_method(), "HEAD")
         self.assertEqual(opener.timeout, 10)
         self.assertTrue(opener.request.get_header("User-agent").startswith("AppGlider/"))
@@ -650,20 +659,20 @@ class LatestTagTests(unittest.TestCase):
             {"response": io.BytesIO(b"a normal page")},
         ):
             with self.subTest(outcome=list(outcome)), self.opener(**outcome)[1]:
-                self.assertIsNone(releases.redirect_location(url))
+                self.assertIsNone(http.redirect_location(url))
         for other in (
             "https://api.github.com/repos/owner/repo/releases/latest",
             "https://example.com/owner/repo/releases/latest",
             "http://github.com/owner/repo/releases/latest",
         ):
             with self.subTest(url=other), self.opener(error=self.http(302, "/x"))[1]:
-                self.assertIsNone(releases.redirect_location(other))
+                self.assertIsNone(http.redirect_location(other))
 
     def test_the_redirect_handler_never_follows(self):
-        handler = releases.NoRedirect()
+        handler = http.NoRedirect()
         self.assertIsNone(
             handler.redirect_request(
-                releases.Request("https://github.com/a/b/releases/latest"),
+                Request("https://github.com/a/b/releases/latest"),
                 io.BytesIO(),
                 302,
                 "Found",

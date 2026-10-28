@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from appglider import APP_ICON
 
-ASSETS = Path(__file__).parent / "assets"
+ASSETS = Path(__file__).parent.parent / "assets"
 MAX_DESCRIPTION = 200
 
 

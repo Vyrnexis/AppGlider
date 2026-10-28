@@ -23,15 +23,17 @@ from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 from test_builds import BAMBU, bambu_metadata, chosen_bambu
 from test_library import appimage_bytes
 
-from appglider import APP_ICON, releases
-from appglider.catalog import custom_app, load_apps
-from appglider.catalog_preview import CatalogPreviewDialog
-from appglider.icons import IconCandidate, normalise_icon
-from appglider.jobs import TaskResult
-from appglider.library import Library
-from appglider.release_info import ReleaseInfo, ReleaseOption, discover_releases
-from appglider.releases import Release, architecture, check_cancel, select_release
-from appglider.window import LauncherWindow
+from appglider import APP_ICON
+from appglider.core.catalog import custom_app, load_apps
+from appglider.github import assets, http
+from appglider.github.assets import Release, select_release
+from appglider.github.icons import IconCandidate, normalise_icon
+from appglider.github.release_info import ReleaseInfo, ReleaseOption, discover_releases
+from appglider.github.versions import architecture, check_cancel
+from appglider.install.library import Library
+from appglider.ui.jobs import TaskResult
+from appglider.ui.pages.catalog_preview import CatalogPreviewDialog
+from appglider.ui.window import LauncherWindow
 
 CUSTOM = custom_app("https://github.com/emmertex/lightcraft-classic", "LightCraft Classic")
 
@@ -57,7 +59,7 @@ class CatalogTests(unittest.TestCase):
 
     def install(self, version):
         payload = appimage_bytes(version.encode())
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             return self.library.install(
                 CUSTOM, custom_release(version, payload), Event(), lambda *a: None
             )
@@ -174,7 +176,7 @@ class CatalogTests(unittest.TestCase):
         self.library.add_repository(CUSTOM)
         path = self.library.data_dir / "repositories.json"
         original = path.read_bytes()
-        with patch("appglider.storage.os.replace", side_effect=OSError("Disk full")):
+        with patch("appglider.core.storage.os.replace", side_effect=OSError("Disk full")):
             with self.assertRaises(OSError):
                 self.library.add_repository(custom_app("other/another-app"))
         self.assertEqual(path.read_bytes(), original)
@@ -239,7 +241,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.library = stock(Library(self.root / "data", self.root / "apps", self.root / "desktop"))
         self.settings = QSettings(str(self.root / "settings.ini"), QSettings.Format.IniFormat)
-        icons = patch("appglider.add_page.discover_icons", return_value=())
+        icons = patch("appglider.ui.pages.add_page.discover_icons", return_value=())
         icons.start()
         self.addCleanup(icons.stop)
         self.settings.setValue("appearance/theme", "Light")
@@ -264,7 +266,7 @@ class RepositoryGuiTests(unittest.TestCase):
 
         with (
             patch(
-                "appglider.settings_page.QFileDialog.getOpenFileName",
+                "appglider.ui.pages.settings_page.QFileDialog.getOpenFileName",
                 return_value=(str(path), ""),
             ),
             patch.object(CatalogPreviewDialog, "exec", exec_preview),
@@ -310,7 +312,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.library.add_repository(custom_app("owner/one", "One", True, "One.AppImage"))
         target = self.root / "out.toml"
         with patch(
-            "appglider.settings_page.QFileDialog.getSaveFileName",
+            "appglider.ui.pages.settings_page.QFileDialog.getSaveFileName",
             return_value=(str(target), ""),
         ):
             self.catalogs.export_catalog()
@@ -319,12 +321,14 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertTrue(text.startswith("# AppGlider catalog"))
         self.assertIn('repo = "owner/one"', text)
         self.assertIn("stable_only = false", text)
-        with patch("appglider.settings_page.QFileDialog.getSaveFileName", return_value=("", "")):
+        with patch(
+            "appglider.ui.pages.settings_page.QFileDialog.getSaveFileName", return_value=("", "")
+        ):
             self.catalogs.export_catalog()
         self.assertIn("Exported", self.window.footer.text())
         blocked = self.root  # a directory cannot be written as a file
         with patch(
-            "appglider.settings_page.QFileDialog.getSaveFileName",
+            "appglider.ui.pages.settings_page.QFileDialog.getSaveFileName",
             return_value=(str(blocked), ""),
         ):
             self.catalogs.export_catalog()
@@ -374,7 +378,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.window.refresh()
             for button in (page.import_button, page.example_button, page.export_button):
                 self.assertFalse(button.isEnabled())
-            with patch("appglider.settings_page.QFileDialog.getOpenFileName") as chooser:
+            with patch("appglider.ui.pages.settings_page.QFileDialog.getOpenFileName") as chooser:
                 page.import_catalog()
                 chooser.assert_not_called()
             with patch.object(CatalogPreviewDialog, "exec") as preview:
@@ -397,7 +401,9 @@ class RepositoryGuiTests(unittest.TestCase):
             QTest.mouseClick(self.window.nav_add, Qt.MouseButton.LeftButton)
         self.dialog.url.setText(CUSTOM.source_url)
         self.dialog.name.setText(CUSTOM.name)
-        with patch("appglider.add_page.latest_release", return_value=custom_release()) as latest:
+        with patch(
+            "appglider.ui.pages.add_page.latest_release", return_value=custom_release()
+        ) as latest:
             QTest.mouseClick(self.dialog.inspect_button, Qt.MouseButton.LeftButton)
             self.wait_for_task(self.dialog)
             latest.assert_called_once()
@@ -504,7 +510,8 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn("lightcraft", reopened.cards)
         self.window.open_app(CUSTOM.id)
         with patch(
-            "appglider.app_page.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
+            "appglider.ui.pages.app_page.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
         ):
             self.window.app_page.remove_button.click()
         self.assertNotIn(CUSTOM.id, self.window.cards)
@@ -518,7 +525,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIsNone(self.dialog.release)
         for address in ("https://evil.test/a/b", APPS[0].source_url):
             self.dialog.url.setText(address)
-            with patch("appglider.add_page.latest_release") as latest:
+            with patch("appglider.ui.pages.add_page.latest_release") as latest:
                 self.dialog.inspect_repository()
                 latest.assert_not_called()
             self.assertIsNone(self.dialog.task)
@@ -528,7 +535,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.window.open_add_app()
         self.dialog.url.setText(CUSTOM.source_url)
         with patch(
-            "appglider.add_page.latest_release",
+            "appglider.ui.pages.add_page.latest_release",
             side_effect=ValueError("No published SHA-256 checksum"),
         ):
             self.dialog.inspect_repository()
@@ -547,7 +554,7 @@ class RepositoryGuiTests(unittest.TestCase):
             b'<path d="M0 0H32V32H0Z" fill="blue"/></svg>'
         )
         choices = (IconCandidate("assets/red.svg", first), IconCandidate("assets/blue.svg", second))
-        with patch("appglider.add_page.discover_icons", return_value=choices):
+        with patch("appglider.ui.pages.add_page.discover_icons", return_value=choices):
             self.inspect()
         self.assertFalse(self.dialog.icon_preview.pixmap().isNull())
         self.dialog.icon_choices.setCurrentIndex(1)
@@ -559,7 +566,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.window.cards[CUSTOM.id].icon.pixmap().toImage().pixelColor(0, 0).name(), "#0000ff"
         )
         payload = appimage_bytes()
-        with patch("appglider.releases.request", return_value=io.BytesIO(payload)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             self.library.install(CUSTOM, custom_release(payload=payload), Event(), lambda *a: None)
         self.window.scan_installed()
         shortcut = self.library.desktop_dir / f"appglider-{CUSTOM.id}.desktop"
@@ -568,7 +575,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertFalse(self.window.tray_apps_menu.actions()[0].icon().isNull())
 
     def test_icon_lookup_failure_still_allows_the_repository_to_be_added(self):
-        with patch("appglider.add_page.discover_icons", side_effect=ValueError("quota")):
+        with patch("appglider.ui.pages.add_page.discover_icons", side_effect=ValueError("quota")):
             self.inspect()
         self.dialog.add_repository()
         self.assertIn(CUSTOM, self.library.apps)
@@ -576,9 +583,9 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_add_multi_build_repo_remembers_choice_and_keeps_preview_preference_independent(self):
         entries = [bambu_metadata(), bambu_metadata("02.09.00.12", preview=True)]
         with (
-            patch.object(releases, "api_entries", return_value=entries),
-            patch("appglider.add_page.discover_icons", return_value=()),
-            patch("appglider.library.download") as download,
+            patch.object(assets, "api_entries", return_value=entries),
+            patch("appglider.ui.pages.add_page.discover_icons", return_value=()),
+            patch("appglider.install.library.download") as download,
         ):
             self.window.open_add_app()
             self.dialog.url.setText(BAMBU.source_url)
@@ -614,10 +621,10 @@ class RepositoryGuiTests(unittest.TestCase):
                     asset[key].replace("ubuntu24.04", "ubu24").replace("ubuntu22.04", "ubu22")
                 )
         with (
-            patch.object(releases, "api_entries", return_value=[bambu_metadata(), preview]),
+            patch.object(assets, "api_entries", return_value=[bambu_metadata(), preview]),
             patch(
-                "appglider.add_page.discover_icons",
-                side_effect=[icons, releases.RateLimited("api.github.com", 1)],
+                "appglider.ui.pages.add_page.discover_icons",
+                side_effect=[icons, http.RateLimited("api.github.com", 1)],
             ) as discover,
         ):
             self.window.open_add_app()
@@ -648,12 +655,12 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_channel_changes_keep_explicit_default_and_local_icon_until_repository_changes(self):
         png = normalise_icon(APP_ICON.read_bytes())
         choices = (IconCandidate("repository.png", png),)
-        with patch("appglider.add_page.discover_icons", return_value=choices) as discover:
+        with patch("appglider.ui.pages.add_page.discover_icons", return_value=choices) as discover:
             self.inspect()
             self.dialog.icon_choices.setCurrentIndex(1)
             self.assertIsNone(self.dialog.selected_icon)
             self.dialog.release_channel.setCurrentIndex(1, notify=True)
-            with patch("appglider.add_page.latest_release", return_value=custom_release()):
+            with patch("appglider.ui.pages.add_page.latest_release", return_value=custom_release()):
                 self.dialog.inspect_repository()
                 self.wait_for_task(self.dialog)
             self.assertIsNone(self.dialog.selected_icon)
@@ -661,12 +668,12 @@ class RepositoryGuiTests(unittest.TestCase):
             image = self.root / "local.png"
             image.write_bytes(png)
             with patch(
-                "appglider.add_page.QFileDialog.getOpenFileName",
+                "appglider.ui.pages.add_page.QFileDialog.getOpenFileName",
                 return_value=(str(image), ""),
             ):
                 self.dialog.choose_icon()
             self.dialog.release_channel.setCurrentIndex(0, notify=True)
-            with patch("appglider.add_page.latest_release", return_value=custom_release()):
+            with patch("appglider.ui.pages.add_page.latest_release", return_value=custom_release()):
                 self.dialog.inspect_repository()
                 self.wait_for_task(self.dialog)
             self.assertEqual(self.dialog.selected_icon, png)
@@ -679,14 +686,14 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_failed_icon_lookup_explains_fallback_and_can_be_retried(self):
         icon = IconCandidate("application.png", normalise_icon(APP_ICON.read_bytes()))
         with patch(
-            "appglider.add_page.discover_icons",
+            "appglider.ui.pages.add_page.discover_icons",
             side_effect=[ValueError("request limit reached"), (icon,)],
         ) as discover:
             self.inspect()
             self.assertTrue(self.dialog.add_button.isEnabled())
             self.assertIn("default icon", self.dialog.status.text())
             self.assertIn("request limit reached", self.dialog.status.text())
-            with patch("appglider.add_page.latest_release", return_value=custom_release()):
+            with patch("appglider.ui.pages.add_page.latest_release", return_value=custom_release()):
                 self.dialog.inspect_repository()
                 self.wait_for_task(self.dialog)
             self.assertEqual(discover.call_count, 2)
@@ -697,9 +704,9 @@ class RepositoryGuiTests(unittest.TestCase):
         self.library.add_repository(BAMBU)
         self.window.scan_installed()
         with (
-            patch.object(releases, "api_entries", return_value=[bambu_metadata()]),
+            patch.object(assets, "api_entries", return_value=[bambu_metadata()]),
             patch.object(self.window, "choose_build") as choose,
-            patch("appglider.library.download") as download,
+            patch("appglider.install.library.download") as download,
         ):
             self.window.install_app(BAMBU.id)
             self.wait_for_task(self.window)
@@ -711,21 +718,21 @@ class RepositoryGuiTests(unittest.TestCase):
         selected = chosen_bambu()
         self.library.add_repository(selected)
         payload = appimage_bytes()
-        with patch.object(releases, "request", return_value=io.BytesIO(payload)):
+        with patch.object(http, "request", return_value=io.BytesIO(payload)):
             self.library.install(
                 selected,
                 select_release(selected, bambu_metadata(), architecture()),
                 Event(),
                 lambda *args: None,
             )
-        with patch.object(releases, "api_entries", return_value=[bambu_metadata()]):
+        with patch.object(assets, "api_entries", return_value=[bambu_metadata()]):
             old_info = discover_releases(selected, Event(), self.library.data_dir / "release-cache")
         for failed in (False, True):
             self.library.set_build_variant(selected.id, selected.build_variant)
             self.window.scan_installed()
             with (
                 self.subTest(failed=failed),
-                patch("appglider.window.QThreadPool.globalInstance") as pool,
+                patch("appglider.ui.window.QThreadPool.globalInstance") as pool,
             ):
                 self.window.checks.add([selected.id])
                 self.library.set_build_variant(selected.id, chosen_bambu(index=0).build_variant)
@@ -749,7 +756,7 @@ class RepositoryGuiTests(unittest.TestCase):
         selected = chosen_bambu()
         self.library.add_repository(selected)
         payload = appimage_bytes()
-        with patch.object(releases, "request", return_value=io.BytesIO(payload)):
+        with patch.object(http, "request", return_value=io.BytesIO(payload)):
             installed = self.library.install(
                 selected,
                 select_release(selected, bambu_metadata(), architecture()),
@@ -759,7 +766,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.window.scan_installed()
         entries = [bambu_metadata("02.09.00.12", variants=("22.04",))]
         cache = self.library.data_dir / "release-cache"
-        with patch.object(releases, "api_entries", return_value=entries):
+        with patch.object(assets, "api_entries", return_value=entries):
             info = discover_releases(selected, Event(), cache, force=True)
         self.window.release_check_done(
             selected.id,
@@ -777,9 +784,9 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(self.window.updates_count.text(), "1")
         self.assertTrue(self.window.update_all_button.isHidden())
         with (
-            patch.object(releases, "api_entries", return_value=entries),
-            patch("appglider.library.download") as download,
-            patch("appglider.app_page.QInputDialog.getItem") as picker,
+            patch.object(assets, "api_entries", return_value=entries),
+            patch("appglider.install.library.download") as download,
+            patch("appglider.ui.pages.app_page.QInputDialog.getItem") as picker,
         ):
             QTest.mouseClick(card.action_button, Qt.MouseButton.LeftButton)
             self.assertIs(self.window.pages.currentWidget(), self.window.app_page)
@@ -793,7 +800,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(self.library.scan()[selected.id], installed)
         self.assertTrue(installed.path.is_file())
         self.assertEqual(self.window.cards[selected.id].action_button.text(), "Update")
-        with patch.object(releases, "request", return_value=io.BytesIO(payload)):
+        with patch.object(http, "request", return_value=io.BytesIO(payload)):
             self.window.install_app(selected.id)
             self.wait_for_task(self.window)
         updated = self.library.scan()[selected.id]
@@ -809,7 +816,7 @@ class RepositoryGuiTests(unittest.TestCase):
             check_cancel(cancel)
             return custom_release()
 
-        with patch("appglider.add_page.latest_release", side_effect=lookup):
+        with patch("appglider.ui.pages.add_page.latest_release", side_effect=lookup):
             self.dialog.inspect_repository()
             task = self.dialog.task
             self.window.nav_library.click()
@@ -829,7 +836,7 @@ class RepositoryGuiTests(unittest.TestCase):
             gate.wait(5)
             return custom_release()  # ignores the cancel: the result still arrives
 
-        with patch("appglider.add_page.latest_release", side_effect=lookup):
+        with patch("appglider.ui.pages.add_page.latest_release", side_effect=lookup):
             self.dialog.inspect_repository()
             self.window.nav_library.click()
             self.assertIsNotNone(self.dialog.task)
@@ -851,8 +858,8 @@ class RepositoryGuiTests(unittest.TestCase):
             return ()
 
         with (
-            patch("appglider.add_page.latest_release", return_value=custom_release()),
-            patch("appglider.add_page.discover_icons", side_effect=lookup),
+            patch("appglider.ui.pages.add_page.latest_release", return_value=custom_release()),
+            patch("appglider.ui.pages.add_page.discover_icons", side_effect=lookup),
         ):
             self.dialog.inspect_repository()
             self.window.nav_library.click()
@@ -872,8 +879,8 @@ class RepositoryGuiTests(unittest.TestCase):
             return ()
 
         with (
-            patch("appglider.add_page.latest_release", return_value=custom_release()),
-            patch("appglider.add_page.discover_icons", side_effect=lookup),
+            patch("appglider.ui.pages.add_page.latest_release", return_value=custom_release()),
+            patch("appglider.ui.pages.add_page.discover_icons", side_effect=lookup),
         ):
             QTest.mouseClick(self.dialog.inspect_button, Qt.MouseButton.LeftButton)
             deadline = time.monotonic() + 3
@@ -889,7 +896,7 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_icon_save_failure_does_not_undo_repository_addition(self):
         png = normalise_icon(APP_ICON.read_bytes())
         with patch(
-            "appglider.add_page.discover_icons",
+            "appglider.ui.pages.add_page.discover_icons",
             return_value=(IconCandidate("icon.png", png),),
         ):
             self.inspect()
@@ -904,9 +911,9 @@ class RepositoryGuiTests(unittest.TestCase):
         self.dialog.add_repository()
         payload = appimage_bytes()
         with (
-            patch("appglider.window.latest_release", return_value=custom_release()),
-            patch("appglider.releases.request", return_value=io.BytesIO(payload)),
-            patch("appglider.window.QMessageBox.warning") as warning,
+            patch("appglider.ui.window.latest_release", return_value=custom_release()),
+            patch("appglider.github.http.request", return_value=io.BytesIO(payload)),
+            patch("appglider.ui.window.QMessageBox.warning") as warning,
         ):
             self.window.install_app(CUSTOM.id)
             self.wait_for_task(self.window)
@@ -923,7 +930,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.window.app_page.back_button.click()
         release = custom_release("0.9.5")
         info = ReleaseInfo(ReleaseOption(release.version, release), None, time.time())
-        with patch("appglider.window.discover_releases", return_value=info) as discover:
+        with patch("appglider.ui.window.discover_releases", return_value=info) as discover:
             self.window.refresh_releases()
             deadline = time.monotonic() + 10
             while self.window.checks.busy and time.monotonic() < deadline:
@@ -934,14 +941,14 @@ class RepositoryGuiTests(unittest.TestCase):
             self.assertEqual(discover.call_args.args[0].id, CUSTOM.id)
         self.assertEqual(self.window.updates_count.text(), "1")
         with (
-            patch("appglider.window.latest_release", return_value=custom_release("0.9.5")),
-            patch("appglider.releases.request", return_value=io.BytesIO(payload)),
+            patch("appglider.ui.window.latest_release", return_value=custom_release("0.9.5")),
+            patch("appglider.github.http.request", return_value=io.BytesIO(payload)),
         ):
             self.window.update_all()
             self.wait_for_task(self.window)
         self.assertEqual(self.window.installed[CUSTOM.id].version, "0.9.5")
         with patch(
-            "appglider.window.QMessageBox.question",
+            "appglider.ui.window.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             self.window.remove_app(CUSTOM.id)
@@ -949,7 +956,8 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(self.window.filter_installed.text(), "Installed (0)")
         self.window.open_app(CUSTOM.id)
         with patch(
-            "appglider.app_page.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
+            "appglider.ui.pages.app_page.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
         ):
             self.window.app_page.remove_button.click()
         self.assertNotIn(CUSTOM.id, self.window.cards)
@@ -968,7 +976,7 @@ class RepositoryGuiTests(unittest.TestCase):
                 )
             return beta
 
-        with patch("appglider.add_page.latest_release", side_effect=inspect):
+        with patch("appglider.ui.pages.add_page.latest_release", side_effect=inspect):
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)
             self.assertIn("Only prereleases", self.dialog.status.text())

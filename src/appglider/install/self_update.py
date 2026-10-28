@@ -17,18 +17,13 @@ from threading import Event
 
 from PySide6.QtCore import QSettings
 
-from appglider import APP_VERSION, library
-from appglider.catalog import custom_app
-from appglider.releases import (
-    Progress,
-    Release,
-    check_cancel,
-    download,
-    latest_release,
-    latest_tag,
-    release_version,
-    version_key,
-)
+from appglider import APP_VERSION
+from appglider.core.catalog import custom_app
+from appglider.github.assets import Release
+from appglider.github.download import Progress, download, latest_release
+from appglider.github.http import latest_tag
+from appglider.github.versions import check_cancel, release_version, version_key
+from appglider.install import appimage, library
 
 REPO = "Vyrnexis/AppGlider"
 # Key in the announced-versions record; app ids never contain a colon, so it cannot clash.
@@ -145,7 +140,7 @@ def download_update(
             progress(f"Downloading AppGlider {version}…", received, total)
 
         download(release, stage, cancel, report)
-        library.check_appimage(stage)
+        appimage.check_appimage(stage)
         stage.chmod(0o755)
         check_cancel(cancel)
         os.replace(stage, target)
@@ -174,7 +169,7 @@ def eligible(old: Path, image: Path) -> bool:
     if old.is_symlink() or not old.is_file() or not is_image_name(old.name):
         return False
     try:
-        library.check_appimage(old)
+        appimage.check_appimage(old)
     except (OSError, ValueError):
         return False
     return True
@@ -232,7 +227,7 @@ def ready_update(settings: QSettings) -> Ready | None:
     )
     if usable:
         with contextlib.suppress(OSError, ValueError):
-            library.check_appimage(path)
+            appimage.check_appimage(path)
             return Ready(path, version)
     forget(settings)
     return None

@@ -14,10 +14,10 @@ from catalog_fixture import APPS, stock
 from test_library import appimage_bytes, ignore_progress
 from test_releases import Response, public_assets
 
-from appglider import releases
-from appglider.catalog import custom_app
-from appglider.library import Library
-from appglider.release_info import cached_info, discover_releases, info_path
+from appglider.core.catalog import custom_app
+from appglider.github import assets, download, http, pages, versions
+from appglider.github.release_info import cached_info, discover_releases, info_path
+from appglider.install.library import Library
 
 BAMBU = custom_app("bambulab/BambuStudio", "Bambu Studio")
 
@@ -45,7 +45,7 @@ def bambu_metadata(
 
 def chosen_bambu(data=None, index=1):
     data = data or bambu_metadata()
-    pattern = releases.asset_variant(
+    pattern = assets.asset_variant(
         data["assets"][index]["name"], data["tag_name"].removeprefix("v")
     )
     return replace(BAMBU, build_variant=pattern)
@@ -58,12 +58,12 @@ class BuildTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.cache = self.root / "cache"
         self.library = stock(Library(self.root / "data", self.root / "apps", self.root / "desktop"))
-        arch = patch.object(releases, "architecture", return_value="x86_64")
+        arch = patch.object(versions, "architecture", return_value="x86_64")
         arch.start()
         self.addCleanup(arch.stop)
 
     def test_four_part_versions_preserve_numeric_and_preview_ordering(self):
-        versions = [
+        ordered = [
             "02.08.02.9",
             "2.8.2.10-beta.2",
             "2.8.2.10-beta.10",
@@ -72,66 +72,62 @@ class BuildTests(unittest.TestCase):
             "2.8.3",
             "02.09.00.12",
         ]
-        self.assertEqual(sorted(reversed(versions), key=releases.version_key), versions)
-        self.assertEqual(releases.version_key("2.8.2"), releases.version_key("02.08.02.0"))
+        self.assertEqual(sorted(reversed(ordered), key=versions.version_key), ordered)
+        self.assertEqual(versions.version_key("2.8.2"), versions.version_key("02.08.02.0"))
         app = replace(chosen_bambu(), include_prereleases=True)
         stable = bambu_metadata()
         preview = bambu_metadata("02.09.00.12", preview=True)
         for include, version in ((False, "02.08.02.61"), (True, "02.09.00.12")):
-            entry = releases.newest_release([preview, stable], include)
-            selected = releases.select_release(
+            entry = assets.newest_release([preview, stable], include)
+            selected = assets.select_release(
                 replace(app, include_prereleases=include), entry, "x86_64"
             )
             self.assertEqual(selected.version, version)
             self.assertEqual(selected.prerelease, include)
             self.assertIn("ubuntu24.04", selected.name)
         newer_stable = bambu_metadata("02.09.00.13")
-        entry = releases.newest_release([preview, newer_stable, stable], True)
-        selected = releases.select_release(app, entry, "x86_64")
+        entry = assets.newest_release([preview, newer_stable, stable], True)
+        selected = assets.select_release(app, entry, "x86_64")
         self.assertFalse(selected.prerelease)
         self.assertTrue(selected.newer_than(preview["tag_name"].removeprefix("v")))
 
     def test_multiple_candidates_require_explicit_choice_and_keep_cpu_filtering(self):
         data = bambu_metadata()
         foreign = {**data["assets"][0], "name": "BambuStudio-arm64.AppImage"}
-        with self.assertRaises(releases.BuildChoiceRequired) as failure:
-            releases.select_asset(BAMBU, [foreign, *data["assets"]], "02.08.02.61", "x86_64")
+        with self.assertRaises(assets.BuildChoiceRequired) as failure:
+            assets.select_asset(BAMBU, [foreign, *data["assets"]], "02.08.02.61", "x86_64")
         choices = failure.exception.choices
         self.assertEqual(len(choices), 2)
         self.assertTrue(all("arm64" not in name for _, name in choices))
         for pattern, name in choices:
-            selected = releases.select_release(
-                replace(BAMBU, build_variant=pattern), data, "x86_64"
-            )
+            selected = assets.select_release(replace(BAMBU, build_variant=pattern), data, "x86_64")
             self.assertEqual(selected.name, name)
         single = bambu_metadata(variants=("22.04",))
         self.assertEqual(
-            releases.select_release(BAMBU, single, "x86_64").name, single["assets"][0]["name"]
+            assets.select_release(BAMBU, single, "x86_64").name, single["assets"][0]["name"]
         )
 
     def test_saved_variant_survives_version_and_timestamp_changes_but_never_switches(self):
         app = chosen_bambu()
         newer = bambu_metadata("02.09.00.12", timestamp="20261025123456")
-        self.assertIn("ubuntu24.04", releases.select_release(app, newer, "x86_64").name)
+        self.assertIn("ubuntu24.04", assets.select_release(app, newer, "x86_64").name)
         missing = bambu_metadata("02.09.00.12", variants=("22.04",))
         with self.assertRaisesRegex(
-            releases.BuildChoiceRequired, "saved build is unavailable"
+            assets.BuildChoiceRequired, "saved build is unavailable"
         ) as failure:
-            releases.select_release(app, missing, "x86_64")
+            assets.select_release(app, missing, "x86_64")
         self.assertEqual(len(failure.exception.choices), 1)
         self.assertIn("22.04", failure.exception.choices[0][1])
 
     def test_colliding_build_dates_remain_selectable_without_arbitrary_matching(self):
         data = bambu_metadata(variants=("24.04",))
         data["assets"] += bambu_metadata(variants=("24.04",), timestamp="20260821120000")["assets"]
-        with self.assertRaises(releases.BuildChoiceRequired) as failure:
-            releases.select_release(BAMBU, data, "x86_64")
+        with self.assertRaises(assets.BuildChoiceRequired) as failure:
+            assets.select_release(BAMBU, data, "x86_64")
         choices = failure.exception.choices
         self.assertNotEqual(choices[0][0], choices[1][0])
         for pattern, filename in choices:
-            selected = releases.select_release(
-                replace(BAMBU, build_variant=pattern), data, "x86_64"
-            )
+            selected = assets.select_release(replace(BAMBU, build_variant=pattern), data, "x86_64")
             self.assertEqual(selected.name, filename)
 
     def test_case_distinct_choices_stay_separate_in_selection_and_caches(self):
@@ -147,53 +143,53 @@ class BuildTests(unittest.TestCase):
                 + renamed,
             }
         )
-        with self.assertRaises(releases.BuildChoiceRequired) as failure:
-            releases.select_release(BAMBU, data, "x86_64")
+        with self.assertRaises(assets.BuildChoiceRequired) as failure:
+            assets.select_release(BAMBU, data, "x86_64")
         apps = [replace(BAMBU, build_variant=pattern) for pattern, _ in failure.exception.choices]
         self.assertNotEqual(
-            releases.release_cache_path(apps[0], self.cache),
-            releases.release_cache_path(apps[1], self.cache),
+            download.release_cache_path(apps[0], self.cache),
+            download.release_cache_path(apps[1], self.cache),
         )
         for app, (_, filename) in zip(apps, failure.exception.choices, strict=True):
-            selected = releases.select_release(app, data, "x86_64")
+            selected = assets.select_release(app, data, "x86_64")
             self.assertEqual(selected.name, filename)
 
     def test_api_public_fallback_and_cache_agree_on_selected_build(self):
         data = bambu_metadata()
         app = chosen_bambu(data)
-        expected = releases.select_release(app, data, "x86_64")
+        expected = assets.select_release(app, data, "x86_64")
         public = b"".join(
-            public_assets(releases.select_release(chosen_bambu(data, index), data, "x86_64"))
+            public_assets(assets.select_release(chosen_bambu(data, index), data, "x86_64"))
             for index in range(len(data["assets"]))
         )
-        with patch.object(releases, "read_metadata", return_value=json.dumps(data).encode()):
-            self.assertEqual(releases.latest_release(app, Event(), self.cache), expected)
+        with patch.object(http, "read_metadata", return_value=json.dumps(data).encode()):
+            self.assertEqual(download.latest_release(app, Event(), self.cache), expected)
         other = chosen_bambu(data, 0)
-        with patch.object(releases, "read_metadata", return_value=json.dumps(data).encode()):
-            self.assertIn("ubuntu22.04", releases.latest_release(other, Event(), self.cache).name)
+        with patch.object(http, "read_metadata", return_value=json.dumps(data).encode()):
+            self.assertIn("ubuntu22.04", download.latest_release(other, Event(), self.cache).name)
         self.assertNotEqual(
-            releases.release_cache_path(app, self.cache),
-            releases.release_cache_path(other, self.cache),
+            download.release_cache_path(app, self.cache),
+            download.release_cache_path(other, self.cache),
         )
-        self.assertEqual(releases.cached_release(app, self.cache), expected)
+        self.assertEqual(download.cached_release(app, self.cache), expected)
         with (
             patch.object(
-                releases,
+                http,
                 "request",
                 side_effect=[
                     Response(BAMBU.source_url + "/releases/tag/" + data["tag_name"]),
                     Response(expected.url, {"Content-Length": str(expected.size)}),
                 ],
             ) as request,
-            patch.object(releases, "read_metadata", return_value=public),
+            patch.object(http, "read_metadata", return_value=public),
         ):
-            self.assertEqual(releases.page_release(app, Event()), expected)
+            self.assertEqual(pages.page_release(app, Event()), expected)
             request.assert_called_with(expected.url, method="HEAD")
 
     def test_discovery_retains_both_channels_and_caches_missing_build_attention(self):
         app = chosen_bambu()
         entries = [bambu_metadata(), bambu_metadata("02.09.00.12", preview=True)]
-        with patch.object(releases, "api_entries", return_value=entries):
+        with patch.object(assets, "api_entries", return_value=entries):
             info = discover_releases(app, Event(), self.cache)
             self.assertIn("ubuntu24.04", info.choice(False).release.name)
             self.assertEqual(info.choice(True).version, "02.09.00.12")
@@ -203,7 +199,7 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(info_path(app, self.cache), info_path(other, self.cache))
         self.assertEqual(cached_info(app, self.cache), info)
         with patch.object(
-            releases,
+            assets,
             "api_entries",
             return_value=[bambu_metadata("02.10.00.0", variants=("22.04",))],
         ):
@@ -211,7 +207,7 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(missing.stable.build_required)
         self.assertIsNone(missing.stable.release)
         self.assertEqual(cached_info(app, self.cache), missing)
-        self.assertIsNone(releases.cached_release(app, self.cache))
+        self.assertIsNone(download.cached_release(app, self.cache))
 
     def test_preferences_are_additive_persist_and_reject_corruption_without_data_loss(self):
         self.assertEqual(self.library.apps, APPS)
@@ -231,7 +227,7 @@ class BuildTests(unittest.TestCase):
         path = self.library.data_dir / "build-preferences.json"
         before = path.read_bytes()
         with (
-            patch("appglider.storage.os.replace", side_effect=OSError("disk full")),
+            patch("appglider.core.storage.os.replace", side_effect=OSError("disk full")),
             self.assertRaises(OSError),
         ):
             self.library.set_build_variant(app.id, app.build_variant)
@@ -257,12 +253,12 @@ class BuildTests(unittest.TestCase):
                 asset[key] = (
                     asset[key].replace("ubuntu22.04", "ubu22").replace("ubuntu24.04", "ubu24")
                 )
-        with patch.object(releases, "api_entries", return_value=[stable, preview]):
+        with patch.object(assets, "api_entries", return_value=[stable, preview]):
             stable_choice = discover_releases(chosen_bambu(), Event(), self.cache)
             self.assertIsNotNone(stable_choice.choice(False).release)
             self.assertTrue(stable_choice.choice(True).build_required)
-            with self.assertRaises(releases.BuildChoiceRequired) as failure:
-                releases.select_release(replace(BAMBU, include_prereleases=True), preview, "x86_64")
+            with self.assertRaises(assets.BuildChoiceRequired) as failure:
+                assets.select_release(replace(BAMBU, include_prereleases=True), preview, "x86_64")
             pattern, _ = failure.exception.choices[1]
             preview_choice = discover_releases(
                 replace(BAMBU, include_prereleases=True, build_variant=pattern), Event(), self.cache
@@ -274,17 +270,15 @@ class BuildTests(unittest.TestCase):
         app = replace(chosen_bambu(), include_prereleases=True)
         self.library.add_repository(app)
         payload = appimage_bytes()
-        with patch.object(releases, "request", return_value=io.BytesIO(payload)):
+        with patch.object(http, "request", return_value=io.BytesIO(payload)):
             first = self.library.install(
                 app,
-                releases.select_release(app, bambu_metadata(), "x86_64"),
+                assets.select_release(app, bambu_metadata(), "x86_64"),
                 Event(),
                 ignore_progress,
             )
-        preview = releases.select_release(
-            app, bambu_metadata("02.09.00.12", preview=True), "x86_64"
-        )
-        with patch.object(releases, "request", return_value=io.BytesIO(payload)):
+        preview = assets.select_release(app, bambu_metadata("02.09.00.12", preview=True), "x86_64")
+        with patch.object(http, "request", return_value=io.BytesIO(payload)):
             second = self.library.install(app, preview, Event(), ignore_progress)
         self.assertTrue(second.prerelease)
         self.assertEqual(second.previous, first.path)

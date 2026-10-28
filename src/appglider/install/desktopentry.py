@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from appglider.catalog import App
+from appglider.core.catalog import App
 
 Groups = dict[str, dict[str, str]]
 

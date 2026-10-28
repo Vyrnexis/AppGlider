@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from appglider.catalog import KNOWN_IDS, custom_app
-from appglider.catalogfile import read
-from appglider.library import Library
+from appglider.core.catalog import KNOWN_IDS, custom_app
+from appglider.core.catalogfile import read
+from appglider.install.library import Library
 
 STARTER = Path(__file__).parents[1] / "docs" / "catalogs" / "artcraft.toml"
 _BY_REPO = {entry.repo: entry for entry in read(STARTER).entries}

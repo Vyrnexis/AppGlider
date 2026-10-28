@@ -15,9 +15,9 @@ from catalog_fixture import stock
 from test_library import APP, appimage_bytes, ignore_progress
 from test_releases import Response, public_assets
 
-from appglider import releases
-from appglider.catalog import custom_app
-from appglider.library import Library
+from appglider.core.catalog import custom_app
+from appglider.github import assets, download, http, pages, versions
+from appglider.install.library import Library
 
 
 def metadata(version, prerelease=False, draft=False):
@@ -68,7 +68,7 @@ class PrereleaseTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.library = stock(Library(self.root / "data", self.root / "apps", self.root / "desktop"))
         self.app = replace(APP, include_prereleases=True)
-        self.arch = patch.object(releases, "architecture", return_value="x86_64")
+        self.arch = patch.object(versions, "architecture", return_value="x86_64")
         self.arch.start()
         self.addCleanup(self.arch.stop)
 
@@ -76,15 +76,15 @@ class PrereleaseTests(unittest.TestCase):
         def read(url):
             if url.endswith("/latest"):
                 if stable is None:
-                    raise releases.MissingResource("404")
+                    raise http.MissingResource("404")
                 return json.dumps(stable).encode()
             return json.dumps(entries).encode()
 
-        with patch.object(releases, "read_metadata", side_effect=read):
-            return releases.api_release(app, Event())
+        with patch.object(http, "read_metadata", side_effect=read):
+            return assets.api_release(app, Event())
 
     def test_semantic_prerelease_ordering_and_build_metadata(self):
-        versions = [
+        ordered = [
             "1.2.3-alpha.1",
             "1.2.3-beta.2",
             "1.2.3-beta.10",
@@ -93,9 +93,9 @@ class PrereleaseTests(unittest.TestCase):
             "1.2.3",
             "1.2.4-beta.1",
         ]
-        self.assertEqual(sorted(reversed(versions), key=releases.version_key), versions)
+        self.assertEqual(sorted(reversed(ordered), key=versions.version_key), ordered)
         self.assertEqual(
-            releases.version_key("1.2.3+build.2"), releases.version_key("1.2.3+build.10")
+            versions.version_key("1.2.3+build.2"), versions.version_key("1.2.3+build.10")
         )
 
     def test_stable_default_and_opted_in_selection(self):
@@ -133,14 +133,14 @@ class PrereleaseTests(unittest.TestCase):
     def test_release_list_scan_is_bounded(self):
         def read(url):
             if url.endswith("/latest"):
-                raise releases.MissingResource("404")
+                raise http.MissingResource("404")
             page = int(url.rsplit("=", 1)[1])
             return json.dumps(
                 [metadata(f"1.0.0-beta.{page * 10 + i}", True) for i in range(30)]
             ).encode()
 
-        with patch.object(releases, "read_metadata", side_effect=read) as reader:
-            self.assertEqual(releases.api_release(self.app, Event()).version, "1.0.0-beta.39")
+        with patch.object(http, "read_metadata", side_effect=read) as reader:
+            self.assertEqual(assets.api_release(self.app, Event()).version, "1.0.0-beta.39")
             self.assertEqual(reader.call_count, 2)
 
     def test_api_and_public_prerelease_selection_agree(self):
@@ -150,7 +150,7 @@ class PrereleaseTests(unittest.TestCase):
         expected = self.api(self.app, stable, entries)
         with (
             patch.object(
-                releases,
+                http,
                 "request",
                 side_effect=[
                     Response(f"{APP.source_url}/releases/tag/v1.2.3"),
@@ -158,12 +158,12 @@ class PrereleaseTests(unittest.TestCase):
                 ],
             ),
             patch.object(
-                releases,
+                http,
                 "read_metadata",
                 side_effect=[release_list_html(entries, "v1.2.3"), public_assets(expected)],
             ),
         ):
-            self.assertEqual(releases.page_release(self.app, Event()), expected)
+            self.assertEqual(pages.page_release(self.app, Event()), expected)
 
     def test_public_only_prereleases_and_quota_fallback(self):
         beta = metadata("1.0.0-beta.1", True)
@@ -172,29 +172,29 @@ class PrereleaseTests(unittest.TestCase):
             with (
                 self.subTest(include=app.include_prereleases),
                 patch.object(
-                    releases,
+                    http,
                     "request",
                     side_effect=[
-                        releases.MissingResource("404"),
+                        http.MissingResource("404"),
                         Response(expected.url, {"Content-Length": str(expected.size)}),
                     ],
                 ),
                 patch.object(
-                    releases,
+                    http,
                     "read_metadata",
                     side_effect=[release_list_html([beta]), public_assets(expected)],
                 ),
             ):
                 if app.include_prereleases:
                     with patch.object(
-                        releases,
+                        assets,
                         "api_release",
-                        side_effect=releases.RateLimited("api.github.com", 100),
+                        side_effect=http.RateLimited("api.github.com", 100),
                     ):
-                        self.assertEqual(releases.latest_release(app, Event()), expected)
+                        self.assertEqual(download.latest_release(app, Event()), expected)
                 else:
                     with self.assertRaisesRegex(ValueError, "Only prereleases"):
-                        releases.page_release(app, Event())
+                        pages.page_release(app, Event())
 
     def test_public_listing_reads_additional_pages_and_requires_owned_release_links(self):
         stable = metadata("1.2.3")
@@ -203,7 +203,7 @@ class PrereleaseTests(unittest.TestCase):
         first = release_list_html([stable], "v1.2.3") + b'<a rel="next" href="?page=2">Next</a>'
         with (
             patch.object(
-                releases,
+                http,
                 "request",
                 side_effect=[
                     Response(f"{APP.source_url}/releases/tag/v1.2.3"),
@@ -211,7 +211,7 @@ class PrereleaseTests(unittest.TestCase):
                 ],
             ),
             patch.object(
-                releases,
+                http,
                 "read_metadata",
                 side_effect=[
                     first,
@@ -220,9 +220,9 @@ class PrereleaseTests(unittest.TestCase):
                 ],
             ) as reader,
         ):
-            self.assertEqual(releases.page_release(self.app, Event()), expected)
+            self.assertEqual(pages.page_release(self.app, Event()), expected)
             self.assertEqual(reader.call_args_list[1].args[0], APP.source_url + "/releases?page=2")
-        parser = releases.ReleaseListParser(APP)
+        parser = pages.ReleaseListParser(APP)
         parser.feed(release_list_html([beta]).decode().replace(APP.repo, "other/repository"))
         self.assertEqual(parser.entries, [])
 
@@ -242,7 +242,7 @@ class PrereleaseTests(unittest.TestCase):
                 "browser_download_url"
             ].replace("/v" + version + "/", "/studio-v" + version + "/")
             release = self.api(APP, data, [])
-            with patch.object(releases, "request", return_value=io.BytesIO(appimage_bytes())):
+            with patch.object(http, "request", return_value=io.BytesIO(appimage_bytes())):
                 self.library.install(APP, release, Event(), ignore_progress)
             reopened = Library(
                 self.library.data_dir, self.library.apps_dir, self.library.desktop_dir
@@ -256,22 +256,22 @@ class PrereleaseTests(unittest.TestCase):
         stable = self.api(APP, metadata("1.2.3"), [])
         beta = self.api(self.app, None, [metadata("1.3.0-beta.1", True)])
         for app, result in ((APP, stable), (self.app, beta)):
-            with patch.object(releases, "api_release", return_value=result):
-                self.assertEqual(releases.latest_release(app, Event(), cache), result)
+            with patch.object(assets, "api_release", return_value=result):
+                self.assertEqual(download.latest_release(app, Event(), cache), result)
         self.assertNotEqual(
-            releases.release_cache_path(APP, cache), releases.release_cache_path(self.app, cache)
+            download.release_cache_path(APP, cache), download.release_cache_path(self.app, cache)
         )
-        self.assertEqual(releases.cached_release(APP, cache), stable)
-        self.assertEqual(releases.cached_release(self.app, cache), beta)
-        path = releases.release_cache_path(APP, cache)
+        self.assertEqual(download.cached_release(APP, cache), stable)
+        self.assertEqual(download.cached_release(self.app, cache), beta)
+        path = download.release_cache_path(APP, cache)
         data = json.loads(path.read_text())
         for key in ("prerelease", "is_latest"):
             data["release"].pop(key)
         path.write_text(json.dumps(data))
-        self.assertEqual(releases.cached_release(APP, cache), stable)
+        self.assertEqual(download.cached_release(APP, cache), stable)
         data["release"] = asdict(beta)
         path.write_text(json.dumps(data))
-        self.assertIsNone(releases.cached_release(APP, cache))
+        self.assertIsNone(download.cached_release(APP, cache))
 
     def test_preferences_for_builtin_and_custom_apps_preserve_existing_files(self):
         custom = custom_app("owner/tool")
@@ -307,7 +307,7 @@ class PrereleaseTests(unittest.TestCase):
         stable = self.api(app, metadata("1.3.0"), [])
 
         def install(release):
-            with patch.object(releases, "request", return_value=io.BytesIO(appimage_bytes())):
+            with patch.object(http, "request", return_value=io.BytesIO(appimage_bytes())):
                 return self.library.install(app, release, Event(), ignore_progress)
 
         self.assertTrue(install(beta).prerelease)

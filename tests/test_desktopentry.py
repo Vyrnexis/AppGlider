@@ -11,16 +11,17 @@ from unittest.mock import patch
 
 from catalog_fixture import APPS
 
-from appglider import desktopentry
-from appglider.desktopentry import (
+from appglider.install import desktopentry
+from appglider.install.appimage import clean_environment
+from appglider.install.desktopentry import (
     DesktopMetadata,
     extract_desktop_groups,
     keep_known,
     metadata_from_groups,
     parse_groups,
 )
-from appglider.launch_options import LaunchOptions
-from appglider.library import clean_environment, shortcut_text
+from appglider.install.launch_options import LaunchOptions
+from appglider.install.shortcuts import shortcut_text
 
 APP = APPS[0]
 

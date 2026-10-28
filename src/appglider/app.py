@@ -11,11 +11,11 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QComboBox, QSystemTrayIcon
 
 from appglider import APP_NAME, APP_TASKBAR_ICON, APP_VERSION
-from appglider.catalogfile import EXAMPLE_CATALOG
-from appglider.catalogfile import read as read_catalog
+from appglider.core.catalogfile import EXAMPLE_CATALOG
+from appglider.core.catalogfile import read as read_catalog
+from appglider.install.self_update import AFTER_UPDATE_FLAG, cleanup, running_image
 from appglider.instance import SingleInstance
-from appglider.self_update import AFTER_UPDATE_FLAG, cleanup, running_image
-from appglider.window import LauncherWindow
+from appglider.ui.window import LauncherWindow
 
 
 def launcher_command() -> list[str]:

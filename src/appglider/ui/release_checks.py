@@ -5,9 +5,9 @@ from threading import Event
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
-from appglider.catalog import App
-from appglider.jobs import Task, TaskResult
-from appglider.releases import Progress
+from appglider.core.catalog import App
+from appglider.github.download import Progress
+from appglider.ui.jobs import Task, TaskResult
 
 Operation = Callable[[Event, Progress], TaskResult]
 

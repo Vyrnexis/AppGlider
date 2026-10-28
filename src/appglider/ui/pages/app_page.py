@@ -29,38 +29,33 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appglider.app_status import app_status
-from appglider.catalog import App
-from appglider.controls import Segmented, Switch, repolish
-from appglider.icons import (
+from appglider.core.catalog import App
+from appglider.github.assets import BuildChoiceRequired, Release, variant_label
+from appglider.github.download import Progress, latest_release
+from appglider.github.http import file_stamp
+from appglider.github.icons import (
     MAX_ICON_BYTES,
     IconCandidate,
     discover_icons,
     icon_pixmap,
     normalise_icon,
 )
-from appglider.jobs import TaskResult
-from appglider.launch_options import (
+from appglider.github.release_info import ReleaseInfo, ReleaseOption, remember_release
+from appglider.github.versions import version_key
+from appglider.install.launch_options import (
     LaunchOptions,
     format_arguments,
     format_environment,
     parse_arguments,
     parse_environment,
 )
-from appglider.library import PreviousCopy, previous_copy
-from appglider.release_info import ReleaseInfo, ReleaseOption, remember_release
-from appglider.releases import (
-    BuildChoiceRequired,
-    Progress,
-    Release,
-    file_stamp,
-    latest_release,
-    variant_label,
-    version_key,
-)
+from appglider.install.library import PreviousCopy, previous_copy
+from appglider.ui.app_status import app_status
+from appglider.ui.controls import Segmented, Switch, repolish
+from appglider.ui.jobs import TaskResult
 
 if TYPE_CHECKING:
-    from appglider.window import LauncherWindow
+    from appglider.ui.window import LauncherWindow
 
 NOTES_MAX_HEIGHT = 260
 WEB_SCHEMES = ("http", "https")

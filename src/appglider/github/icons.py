@@ -13,9 +13,12 @@ from threading import Event
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt
 from PySide6.QtGui import QImage, QImageReader, QPixmap
 
-from appglider import APP_ICON, github_status, releases
-from appglider.catalog import App
-from appglider.releases import check_cancel, read_metadata
+from appglider import APP_ICON
+from appglider.core.catalog import App
+from appglider.github import http
+from appglider.github import status as github_status
+from appglider.github.http import read_metadata
+from appglider.github.versions import check_cancel
 
 MAX_ICON_BYTES = 2 * 1024 * 1024
 PLAIN_DOCTYPE = re.compile(
@@ -243,7 +246,7 @@ def web_files(
         queue.sort(key=lambda entry: (-folder_priority(entry[0]), entry[1]))
         path, depth = queue.pop(0)
         try:
-            items, repo = releases.web_listing(repo, path, cancel)
+            items, repo = http.web_listing(repo, path, cancel)
         except ValueError:
             if opened == 0:
                 return files, repo  # the very first page failed: nothing to learn here
@@ -300,7 +303,7 @@ def discover_icons(
     say("Checking the possible icons…")
 
     def read_file(path: str) -> bytes:
-        return releases.raw_bytes(repo, path, MAX_ICON_BYTES, cancel)
+        return http.raw_bytes(repo, path, MAX_ICON_BYTES, cancel)
 
     declared: set[str] = set()
     for path in sorted(path for path in files if path.endswith(".desktop"))[:2]:

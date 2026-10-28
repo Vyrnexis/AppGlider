@@ -22,27 +22,23 @@ from PySide6.QtWidgets import (
 )
 
 from appglider import APP_ICON
-from appglider.app_page import SettingRow, VersionValue, add_setting_rows, panel
-from appglider.catalog import App, custom_app
-from appglider.controls import Segmented
-from appglider.icons import (
+from appglider.core.catalog import App, custom_app
+from appglider.github.assets import Release, variant_label
+from appglider.github.download import Progress, latest_release
+from appglider.github.icons import (
     MAX_ICON_BYTES,
     IconCandidate,
     discover_icons,
     normalise_icon,
 )
-from appglider.jobs import Task, TaskResult
-from appglider.release_info import remember_release
-from appglider.releases import (
-    Progress,
-    Release,
-    architecture,
-    latest_release,
-    variant_label,
-)
+from appglider.github.release_info import remember_release
+from appglider.github.versions import architecture
+from appglider.ui.controls import Segmented
+from appglider.ui.jobs import Task, TaskResult
+from appglider.ui.pages.app_page import SettingRow, VersionValue, add_setting_rows, panel
 
 if TYPE_CHECKING:
-    from appglider.window import LauncherWindow
+    from appglider.ui.window import LauncherWindow
 
 PROMPT = "Inspect this repository before adding it."
 MAX_WIDTH = 720

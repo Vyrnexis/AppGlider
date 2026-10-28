@@ -5,9 +5,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from appglider.catalog import MAX_DESCRIPTION, App, custom_app, default_description
+from appglider.core.catalog import MAX_DESCRIPTION, App, custom_app, default_description
 
-EXAMPLE_CATALOG = Path(__file__).parent / "assets" / "catalogs" / "artcraft.toml"
+EXAMPLE_CATALOG = Path(__file__).parent.parent / "assets" / "catalogs" / "artcraft.toml"
 FORMAT = 1
 MAX_BYTES = 256 * 1024
 MAX_APPS = 100

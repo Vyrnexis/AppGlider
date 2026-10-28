@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, QRectF, QStandardPaths, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
 
-from appglider.preferences import ACCENTS
+from appglider.core.preferences import ACCENTS
 
 # Colour tokens per theme (see docs/design.md). "System" picks Light or Dark from the desktop.
 THEMES: dict[str, dict[str, str]] = {

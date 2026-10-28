@@ -5,8 +5,8 @@ from pathlib import Path
 
 from catalog_fixture import APPS
 
-from appglider.catalog import custom_app
-from appglider.catalogfile import (
+from appglider.core.catalog import custom_app
+from appglider.core.catalogfile import (
     MAX_APPS,
     MAX_BYTES,
     CatalogEntry,

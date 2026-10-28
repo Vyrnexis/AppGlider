@@ -12,7 +12,7 @@ from unittest.mock import patch
 from catalog_fixture import stock
 from test_library import APP, appimage_bytes, ignore_progress, release_for
 
-from appglider.launch_options import (
+from appglider.install.launch_options import (
     LaunchOptions,
     format_arguments,
     format_environment,
@@ -20,7 +20,7 @@ from appglider.launch_options import (
     parse_arguments,
     parse_environment,
 )
-from appglider.library import Installed, Library
+from appglider.install.library import Installed, Library
 
 GROUPS = {
     "Desktop Entry": {
@@ -79,13 +79,15 @@ class LibraryCase(unittest.TestCase):
         )
         self.shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
         self.path = self.library.data_dir / "launch-options.json"
-        self.extract = patch("appglider.library.extract_desktop_groups", return_value=None)
+        self.extract = patch(
+            "appglider.install.shortcuts.extract_desktop_groups", return_value=None
+        )
         self.extract.start()
         self.addCleanup(self.extract.stop)
 
     def install(self, version: str) -> Installed:
         data = appimage_bytes(version.encode())
-        with patch("appglider.releases.request", return_value=io.BytesIO(data)):
+        with patch("appglider.github.http.request", return_value=io.BytesIO(data)):
             return self.library.install(APP, release_for(version, data), Event(), ignore_progress)
 
 
@@ -120,7 +122,7 @@ class LaunchOptionsTests(LibraryCase):
         )
         with (
             patch.dict("os.environ", {"MY_VAR": "old", "KEEP": "1"}),
-            patch("appglider.library.subprocess.Popen") as spawn,
+            patch("appglider.install.library.subprocess.Popen") as spawn,
         ):
             spawn.return_value.poll.return_value = None
             self.library.launch(APP, installed)
@@ -132,7 +134,7 @@ class LaunchOptionsTests(LibraryCase):
 
     def test_launch_without_options_is_unchanged(self) -> None:
         installed = self.install("1.0.0")
-        with patch("appglider.library.subprocess.Popen") as spawn:
+        with patch("appglider.install.library.subprocess.Popen") as spawn:
             spawn.return_value.poll.return_value = None
             self.library.launch(APP, installed)
         self.assertEqual(spawn.call_args.args[0], [str(installed.path)])
@@ -187,7 +189,7 @@ class MenuMetadataTests(LibraryCase):
                 pass
             return GROUPS
 
-        with patch("appglider.library.extract_desktop_groups", side_effect=read):
+        with patch("appglider.install.shortcuts.extract_desktop_groups", side_effect=read):
             installed = self.install("1.0.0")
         self.assertEqual(len(calls), 1)
         self.assertNotEqual(calls[0], installed.path)  # read from the verified download
@@ -206,15 +208,15 @@ class MenuMetadataTests(LibraryCase):
 
     def test_failed_activation_keeps_the_cache_of_the_active_version(self) -> None:
         installed = self.install("1.0.0")
-        with patch("appglider.library.extract_desktop_groups", return_value=GROUPS):
+        with patch("appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS):
             self.library.collect_desktop_metadata(APP, installed.path, installed.path)
         cache = self.library.data_dir / "desktop" / f"{APP.id}.json"
         before = cache.read_text()
         other = {"Desktop Entry": {"Categories": "Game;"}}
         data = appimage_bytes(b"1.1.0")
         with (
-            patch("appglider.releases.request", return_value=io.BytesIO(data)),
-            patch("appglider.library.extract_desktop_groups", return_value=other),
+            patch("appglider.github.http.request", return_value=io.BytesIO(data)),
+            patch("appglider.install.shortcuts.extract_desktop_groups", return_value=other),
             patch.object(self.library, "_save", side_effect=OSError("disk full")),
         ):
             with self.assertRaisesRegex(OSError, "disk full"):
@@ -226,14 +228,16 @@ class MenuMetadataTests(LibraryCase):
     def test_rollback_reads_the_previous_version(self) -> None:
         self.install("1.0.0")
         self.install("1.1.0")
-        with patch("appglider.library.extract_desktop_groups", return_value=GROUPS) as read:
+        with patch(
+            "appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS
+        ) as read:
             self.library.rollback(APP)
         read.assert_called_once()
         self.assertIn("Categories=Office;", self.shortcut.read_text())
 
     def test_cached_details_do_not_apply_to_a_changed_file(self) -> None:
         installed = self.install("1.0.0")
-        with patch("appglider.library.extract_desktop_groups", return_value=GROUPS):
+        with patch("appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS):
             self.library.collect_desktop_metadata(APP, installed.path, installed.path)
         self.library.create_shortcut(APP)
         self.assertIn("Categories=Office;", self.shortcut.read_text())
@@ -244,7 +248,9 @@ class MenuMetadataTests(LibraryCase):
     def test_repair_reads_the_details_when_none_are_saved(self) -> None:
         self.install("1.0.0")
         self.shortcut.unlink()
-        with patch("appglider.library.extract_desktop_groups", return_value=GROUPS) as read:
+        with patch(
+            "appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS
+        ) as read:
             self.library.create_shortcut(APP)
             self.library.create_shortcut(APP)  # saved now: not read again
         read.assert_called_once()
@@ -252,7 +258,7 @@ class MenuMetadataTests(LibraryCase):
 
     def test_tampered_cache_values_are_sanitised_again(self) -> None:
         installed = self.install("1.0.0")
-        with patch("appglider.library.extract_desktop_groups", return_value=GROUPS):
+        with patch("appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS):
             self.library.collect_desktop_metadata(APP, installed.path, installed.path)
         cache = self.library.data_dir / "desktop" / f"{APP.id}.json"
         data = json.loads(cache.read_text())
@@ -268,7 +274,7 @@ class MenuMetadataTests(LibraryCase):
 
     def test_uninstall_removes_the_cache(self) -> None:
         installed = self.install("1.0.0")
-        with patch("appglider.library.extract_desktop_groups", return_value=GROUPS):
+        with patch("appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS):
             self.library.collect_desktop_metadata(APP, installed.path, installed.path)
         cache = self.library.data_dir / "desktop" / f"{APP.id}.json"
         self.assertTrue(cache.exists())
@@ -278,9 +284,10 @@ class MenuMetadataTests(LibraryCase):
     def test_the_desktop_database_is_refreshed_after_changes_when_available(self) -> None:
         with (
             patch(
-                "appglider.library.shutil.which", return_value="/usr/bin/update-desktop-database"
+                "appglider.install.shortcuts.shutil.which",
+                return_value="/usr/bin/update-desktop-database",
             ),
-            patch("appglider.library.subprocess.run") as run,
+            patch("appglider.install.shortcuts.subprocess.run") as run,
         ):
             self.install("1.0.0")
         self.assertEqual(
@@ -288,11 +295,11 @@ class MenuMetadataTests(LibraryCase):
             ["/usr/bin/update-desktop-database", str(self.library.desktop_dir)],
         )
         self.assertEqual(run.call_args.kwargs["timeout"], 10)
-        with patch("appglider.library.shutil.which", return_value=None):
+        with patch("appglider.install.shortcuts.shutil.which", return_value=None):
             self.library.update_desktop_database()  # nothing to run, nothing raised
         with (
-            patch("appglider.library.shutil.which", return_value="/x"),
-            patch("appglider.library.subprocess.run", side_effect=OSError("gone")),
+            patch("appglider.install.shortcuts.shutil.which", return_value="/x"),
+            patch("appglider.install.shortcuts.subprocess.run", side_effect=OSError("gone")),
         ):
             self.library.update_desktop_database()
 
@@ -302,9 +309,11 @@ class StartupRefreshTests(LibraryCase):
         installed = self.install("1.0.0")
         self.shortcut.write_text(OLD_ENTRY)
         with (
-            patch("appglider.library.extract_desktop_groups", return_value=GROUPS) as read,
-            patch("appglider.library.shutil.which", return_value="/bin/udd"),
-            patch("appglider.library.subprocess.run") as run,
+            patch(
+                "appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS
+            ) as read,
+            patch("appglider.install.shortcuts.shutil.which", return_value="/bin/udd"),
+            patch("appglider.install.shortcuts.subprocess.run") as run,
         ):
             self.assertEqual(self.library.refresh_shortcuts(), 1)
             self.assertEqual(self.library.refresh_shortcuts(), 0)
@@ -316,7 +325,9 @@ class StartupRefreshTests(LibraryCase):
         self.assertEqual(list(self.library.desktop_dir.glob("*.desktop")), [self.shortcut])
 
         self.shortcut.unlink()
-        with patch("appglider.library.extract_desktop_groups", return_value=GROUPS) as read:
+        with patch(
+            "appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS
+        ) as read:
             self.assertEqual(self.library.refresh_shortcuts(), 0)
         read.assert_not_called()
         self.assertFalse(self.shortcut.exists())
@@ -332,7 +343,7 @@ class StartupRefreshTests(LibraryCase):
                 target.write_text(OLD_ENTRY)
                 self.shortcut.symlink_to(target)
             before = self.shortcut.read_text()
-            with patch("appglider.library.extract_desktop_groups", return_value=GROUPS):
+            with patch("appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS):
                 self.assertEqual(self.library.refresh_shortcuts(), 0)
             self.assertEqual(self.shortcut.read_text(), before)
 
@@ -342,7 +353,9 @@ class StartupRefreshTests(LibraryCase):
         self.library._save({APP.id: Installed(external, None, False)})
         self.shortcut.parent.mkdir(parents=True)
         self.shortcut.write_text(OLD_ENTRY)
-        with patch("appglider.library.extract_desktop_groups", return_value=GROUPS) as read:
+        with patch(
+            "appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS
+        ) as read:
             self.assertEqual(self.library.refresh_shortcuts(), 0)
         read.assert_not_called()
         self.assertEqual(self.shortcut.read_text(), OLD_ENTRY)

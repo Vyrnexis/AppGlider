@@ -9,10 +9,12 @@ from pathlib import Path
 from threading import Event
 from typing import Any, Literal
 
-from appglider import github_status, releases
-from appglider.catalog import App
-from appglider.releases import Release
-from appglider.storage import atomic_json
+from appglider.core.catalog import App
+from appglider.core.storage import atomic_json
+from appglider.github import assets, download, http, pages, versions
+from appglider.github import status as github_status
+from appglider.github.assets import Release
+from appglider.github.versions import VERSION, check_cancel, release_version, version_key
 
 
 @dataclass(frozen=True)
@@ -37,7 +39,7 @@ class ReleaseInfo:
         )
         return max(
             (choice for choice in choices if choice is not None),
-            key=lambda choice: releases.version_key(choice.version),
+            key=lambda choice: version_key(choice.version),
             default=None,
         )
 
@@ -48,20 +50,20 @@ class ReleaseInfo:
         return "Only prereleases are available. Choose Stable + previews to use them."
 
     def fresh(self) -> bool:
-        return 0 <= time.time() - self.checked_at < releases.CACHE_SECONDS
+        return 0 <= time.time() - self.checked_at < download.CACHE_SECONDS
 
 
 def info_path(app: App, cache_dir: Path) -> Path:
     return (
         cache_dir
-        / f"{app.id}-{releases.architecture()}{releases.build_cache_suffix(app)}-catalog.json"
+        / f"{app.id}-{versions.architecture()}{assets.build_cache_suffix(app)}-catalog.json"
     )
 
 
 def cached_info(app: App, cache_dir: Path) -> ReleaseInfo | None:
     try:
         path = info_path(app, cache_dir)
-        if path.stat().st_size > releases.MAX_METADATA:
+        if path.stat().st_size > http.MAX_METADATA:
             return None
         data = json.loads(path.read_text())
         if not isinstance(data, dict) or data.get("build_variant", "") != app.build_variant:
@@ -80,14 +82,14 @@ def cached_info(app: App, cache_dir: Path) -> ReleaseInfo | None:
             if (
                 not isinstance(version, str)
                 or len(version) > 128
-                or not re.fullmatch(releases.VERSION, version)
+                or not re.fullmatch(VERSION, version)
                 or not isinstance(error, str)
                 or len(error) > 4096
                 or type(build_required) is not bool
             ):
                 return None
             release = (
-                releases.release_from_cache(replace(app, include_prereleases=True), item["release"])
+                download.release_from_cache(replace(app, include_prereleases=True), item["release"])
                 if item["release"] is not None
                 else None
             )
@@ -143,29 +145,28 @@ def inspect_entries(
             options.append(None)
             continue
         try:
-            data = releases.newest_release(candidates, True)
+            data = assets.newest_release(candidates, True)
         except ValueError as error:
             version_errors.append(error)
             options.append(None)
             continue
-        version = releases.release_version(data["tag_name"])
+        version = release_version(data["tag_name"])
         assert version is not None  # newest_release only returns recognised versions.
         if channel == "newer_stable" and (
-            options[0] is None
-            or releases.version_key(version) <= releases.version_key(options[0].version)
+            options[0] is None or version_key(version) <= version_key(options[0].version)
         ):
             options.append(None)
             continue
         try:
-            releases.check_cancel(cancel)
+            check_cancel(cancel)
             if public:
-                release = releases.page_release_asset(app, data, cancel)
+                release = pages.page_release_asset(app, data, cancel)
             else:
-                release = releases.select_release(app, data, releases.architecture())
-                release = releases.with_checksum(app, data["tag_name"], release, cancel)
-        except releases.RateLimited:
+                release = assets.select_release(app, data, versions.architecture())
+                release = assets.with_checksum(app, data["tag_name"], release, cancel)
+        except http.RateLimited:
             raise
-        except releases.BuildChoiceRequired as error:
+        except assets.BuildChoiceRequired as error:
             options.append(ReleaseOption(version, None, str(error)[:4096], True))
         except ValueError as error:
             options.append(ReleaseOption(version, None, str(error)[:4096]))
@@ -190,8 +191,8 @@ def unchanged_source(
     if not app.include_prereleases:
         if cached.stable is None:
             return None
-        tag = releases.latest_tag(app.repo, cancel)
-        if tag is not None and releases.release_version(tag) == cached.stable.version:
+        tag = http.latest_tag(app.repo, cancel)
+        if tag is not None and release_version(tag) == cached.stable.version:
             return "GitHub release page"
         return None
     known = [
@@ -199,10 +200,10 @@ def unchanged_source(
         for option in (cached.stable, cached.preview, cached.newer_stable)
         if option is not None
     ]
-    tags = releases.feed_tags(app, cache_dir, cancel) if known else None
-    versions = [v for v in (releases.release_version(tag) for tag in tags or []) if v]
-    if versions and releases.version_key(max(versions, key=releases.version_key)) <= (
-        releases.version_key(max(known, key=releases.version_key))
+    tags = http.feed_tags(app, cache_dir, cancel) if known else None
+    versions = [v for v in (release_version(tag) for tag in tags or []) if v]
+    if versions and version_key(max(versions, key=version_key)) <= (
+        version_key(max(known, key=version_key))
     ):
         return "GitHub release feed"
     return None
@@ -218,7 +219,7 @@ def discover_releases(
     GitHub's public release feed. The API is asked only when something newer appeared or the
     answer was unclear.
     """
-    releases.check_cancel(cancel)
+    check_cancel(cancel)
     cached = cached_info(app, cache_dir)
     if not force and cached and cached.fresh():
         github_status.release_result("Cached information", app.repo, cached.checked_at)
@@ -230,16 +231,16 @@ def discover_releases(
         with contextlib.suppress(OSError):
             atomic_json(info_path(app, cache_dir), asdict(info))
         return info
-    releases.restore_rate_limits(cache_dir)
+    http.restore_rate_limits(cache_dir)
     app = replace(app, include_prereleases=True)
     try:
-        info = inspect_entries(app, releases.api_entries(app, cancel), cancel)
+        info = inspect_entries(app, assets.api_entries(app, cancel), cancel)
         github_status.release_result("GitHub API", app.repo, info.checked_at)
-    except releases.RateLimited:
-        releases.save_rate_limits(cache_dir)
-        info = inspect_entries(app, releases.page_entries(app, cancel), cancel, public=True)
+    except http.RateLimited:
+        http.save_rate_limits(cache_dir)
+        info = inspect_entries(app, pages.page_entries(app, cancel), cancel, public=True)
         github_status.release_result("Public GitHub pages", app.repo, info.checked_at)
-    releases.check_cancel(cancel)
+    check_cancel(cancel)
     with contextlib.suppress(OSError):
         atomic_json(info_path(app, cache_dir), asdict(info))
         # Keep the existing download cache format and its five-minute safety window.
@@ -247,13 +248,13 @@ def discover_releases(
             choice = info.choice(include)
             if choice and choice.release:
                 atomic_json(
-                    releases.release_cache_path(
+                    download.release_cache_path(
                         replace(app, include_prereleases=include), cache_dir
                     ),
                     {"checked_at": info.checked_at, "release": asdict(choice.release)},
                 )
             else:
-                releases.release_cache_path(
+                download.release_cache_path(
                     replace(app, include_prereleases=include), cache_dir
                 ).unlink(missing_ok=True)
     return info

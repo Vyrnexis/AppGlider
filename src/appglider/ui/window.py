@@ -42,7 +42,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMainWindow,
     QMenu,
     QMessageBox,
     QProgressBar,
@@ -59,52 +58,42 @@ from appglider import (
     APP_ICON,
     APP_NAME,
     APP_TASKBAR_ICON,
-    APP_UPDATE_ICON,
     APP_VERSION,
-    github_status,
-    self_update,
 )
-from appglider.add_page import AddPage
-from appglider.app_page import AppPage, link_button
-from appglider.catalog import App
-from appglider.icons import icon_pixmap
-from appglider.jobs import Lookup, Task, TaskResult
-from appglider.library import Installed, Library, Orphan, check_appimage, clean_environment
-from appglider.preferences import (
+from appglider.core.catalog import App
+from appglider.core.preferences import (
     ACCENTS,
     DEFAULT_ACCENT,
     MAX_PINNED,
     appearance_choice,
     check_interval_hours,
     custom_order,
-    notified_versions,
     pinned_apps,
 )
-from appglider.release_checks import ReleaseChecks
-from appglider.release_info import (
+from appglider.github import status as github_status
+from appglider.github.assets import BuildChoiceRequired, Release
+from appglider.github.download import Progress, cached_release, latest_release, release_cache_path
+from appglider.github.http import file_stamp, github_request_status, restore_rate_limits
+from appglider.github.icons import icon_pixmap
+from appglider.github.release_info import (
     ReleaseInfo,
     cached_info,
     discover_releases,
     info_path,
     remember_release,
 )
-from appglider.releases import (
-    BuildChoiceRequired,
-    Cancelled,
-    Progress,
-    Release,
-    cached_release,
-    check_cancel,
-    file_stamp,
-    github_request_status,
-    latest_release,
-    release_cache_path,
-    restore_rate_limits,
-    version_key,
-)
-from appglider.rows import AppList, AppRow, DragHandle, StatusMessage
-from appglider.settings_page import SettingsPage
-from appglider.theme import NAV_ICON_SIZE, THEMES, nav_icon, palette, refresh_icon, stylesheet
+from appglider.github.versions import Cancelled, check_cancel, version_key
+from appglider.install import self_update
+from appglider.install.appimage import check_appimage, clean_environment
+from appglider.install.library import Installed, Library, Orphan
+from appglider.ui.jobs import Lookup, Task, TaskResult
+from appglider.ui.pages.add_page import AddPage
+from appglider.ui.pages.app_page import AppPage, link_button
+from appglider.ui.pages.settings_page import SettingsPage
+from appglider.ui.release_checks import ReleaseChecks
+from appglider.ui.rows import AppList, AppRow, DragHandle, StatusMessage
+from appglider.ui.theme import NAV_ICON_SIZE, THEMES, nav_icon, palette, refresh_icon, stylesheet
+from appglider.ui.tray import TrayMixin
 
 SIDEBAR_WIDTH = 210
 LEGACY_SECTIONS = {0: "General", 1: "Catalogs", 2: "Storage", 3: "GitHub", 4: "About"}
@@ -184,7 +173,7 @@ def nav_entry(text: str, *, badge: bool = False) -> tuple[QPushButton, QLabel]:
     return button, count
 
 
-class LauncherWindow(QMainWindow):
+class LauncherWindow(TrayMixin):
     def __init__(self, settings: QSettings | None = None, library: Library | None = None) -> None:
         super().__init__()
         self.settings = settings if settings is not None else QSettings()
@@ -209,7 +198,7 @@ class LauncherWindow(QMainWindow):
         self.check_errors: dict[str, str] = {}
         self.release_infos: dict[str, ReleaseInfo] = {}
         self.cache_stamps: dict[str, object] = {}
-        self.tray_key: list[tuple[str, str, Path, tuple[int, int, int] | None]] | None = None
+        self.tray_key = None
         self.release_errors: dict[str, str] = {}
         self.checks = ReleaseChecks(
             self.checkable_app,
@@ -545,27 +534,6 @@ class LauncherWindow(QMainWindow):
         body_layout.addWidget(self.status_line)
         self.update_status_line()
 
-    def build_tray(self) -> None:
-        """System tray icon and its menu."""
-        self.tray_icons = (QIcon(str(APP_ICON)), QIcon(str(APP_UPDATE_ICON)))
-        self.tray = QSystemTrayIcon(self.tray_icons[0], self)
-        self.tray_has_updates = False
-        self.tray_menu = QMenu(self)
-        self.tray_menu.addAction("Open AppGlider").triggered.connect(self.show_launcher)
-        self.tray_check_action = self.tray_menu.addAction("Check for updates")
-        self.tray_check_action.triggered.connect(self.check_for_updates)
-        self.tray_apps_menu = self.tray_menu.addMenu("Installed apps")
-        self.tray_menu.addSeparator()
-        self.tray_menu.addAction("Quit AppGlider").triggered.connect(self.quit_launcher)
-        self.tray_menu.aboutToShow.connect(self.scan_installed)
-        self.tray.setContextMenu(self.tray_menu)
-        self.tray.activated.connect(self.tray_activated)
-        self.tray.messageClicked.connect(self.show_launcher)
-        self.notify_pending = False
-        self.notified = notified_versions(self.settings)
-        if QSystemTrayIcon.isSystemTrayAvailable():
-            self.tray.show()
-
     def setup_keyboard(self) -> None:
         """Shortcuts, focus behaviour and the order Tab walks through the controls."""
         for sequence, handler in (("Ctrl+F", self.focus_search), ("Esc", self.go_back)):
@@ -635,45 +603,6 @@ class LauncherWindow(QMainWindow):
             self.notify_pending = True
             self.refresh_releases()
             self.notify_pending = self.notify_pending and self.checks.busy
-
-    def notify_updates(self) -> None:
-        """Tell the user, once per new version, that updates are waiting (opt-in)."""
-        waiting = {
-            app.id: release.version
-            for app in self.apps
-            if app.id in self.installed
-            and self.has_update(app.id)
-            and (release := self.releases.get(app.id)) is not None
-        }
-        names = [
-            f"{app.name} {waiting[app.id]}"
-            for app in self.apps
-            if waiting.get(app.id) not in (None, self.notified.get(app.id))
-        ]
-        own = self.self_state.version
-        if own and own != self.notified.get(self_update.NOTIFY_KEY):
-            names.insert(0, f"AppGlider {own}")
-        if own:
-            waiting[self_update.NOTIFY_KEY] = own
-        elif not self.self_state.checked_at and self_update.NOTIFY_KEY in self.notified:
-            # Not checked this session: keep what was announced rather than announce it twice.
-            waiting[self_update.NOTIFY_KEY] = self.notified[self_update.NOTIFY_KEY]
-        self.notified = dict(waiting)
-        self.settings.setValue("notifications/seen", json.dumps(self.notified))
-        if (
-            not names
-            or not self.settings.value("notifications/updates", False, type=bool)
-            or not QSystemTrayIcon.isSystemTrayAvailable()
-            or not self.tray.isVisible()
-            or (self.isVisible() and self.isActiveWindow())
-        ):
-            return
-        if len(names) == 1:
-            text = f"{names[0]} is available."
-        else:
-            more = f", and {len(names) - 3} more" if len(names) > 3 else ""
-            text = f"{len(names)} updates are waiting: {', '.join(names[:3])}{more}."
-        self.tray.showMessage("AppGlider: updates available", text, self.tray_icons[1], 15000)
 
     def update_github_status(self) -> None:
         label, details, limited = github_request_status()
@@ -869,13 +798,6 @@ class LauncherWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
-    def tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason in (
-            QSystemTrayIcon.ActivationReason.Trigger,
-            QSystemTrayIcon.ActivationReason.DoubleClick,
-        ):
-            self.show_launcher()
-
     def quit_launcher(self) -> None:
         self.show_launcher()
         self.quitting = True
@@ -893,28 +815,7 @@ class LauncherWindow(QMainWindow):
         self.filter_installed.setText(f"Installed ({len(self.installed)})")
         updates_view = self.view == "updates"
         own = self.self_state.version
-        self.tray.setToolTip(
-            f"AppGlider · Updates: {update_count}"
-            + (f" · AppGlider {own} available" if own else "")
-        )
-        if (update_count > 0 or bool(own)) != self.tray_has_updates:
-            self.tray_has_updates = update_count > 0 or bool(own)
-            self.tray.setIcon(self.tray_icons[int(self.tray_has_updates)])
-        self.tray_check_action.setEnabled(not self.checks.busy and bool(self.installed))
-        tray_apps = [
-            (app, self.library.icon_path(app))
-            for app in self.sorted_apps(app for app in self.apps if app.id in self.installed)
-        ]
-        tray_key = [(app.id, app.name, path, file_stamp(path)) for app, path in tray_apps]
-        if tray_key != self.tray_key:
-            self.tray_key = tray_key
-            self.tray_apps_menu.clear()
-            self.tray_apps_menu.setEnabled(bool(tray_apps))
-            for app, path in tray_apps:
-                action = self.tray_apps_menu.addAction(QIcon(icon_pixmap(path, 64)), app.name)
-                action.triggered.connect(
-                    lambda checked=False, app_id=app.id: self.launch_app(app_id)
-                )
+        self.update_tray(update_count, own)
         query = self.search.text().strip().casefold()
         visible = [
             app
