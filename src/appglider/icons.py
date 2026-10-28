@@ -18,6 +18,9 @@ from appglider.catalog import App
 from appglider.releases import check_cancel, read_metadata
 
 MAX_ICON_BYTES = 2 * 1024 * 1024
+PLAIN_DOCTYPE = re.compile(
+    r'<!DOCTYPE\s+svg(?:\s+PUBLIC\s+"[^"<>\[\]]*"\s+"[^"<>\[\]]*")?\s*>', re.I
+)
 
 
 @dataclass(frozen=True)
@@ -73,6 +76,9 @@ def normalise_icon(data: bytes) -> bytes:
             text_svg = data.decode("utf-8-sig")
         except UnicodeDecodeError as error:
             raise ValueError("SVG icons must use UTF-8 encoding.") from error
+        # Editors often write the standard SVG 1.1 declaration; one without an internal
+        # subset defines nothing, so it is removed rather than refused.
+        text_svg = PLAIN_DOCTYPE.sub("", text_svg, count=1)
         if "<!DOCTYPE" in text_svg.upper() or "<!ENTITY" in text_svg.upper():
             raise ValueError("SVG icons must not contain document types or entities.")
         try:
@@ -89,6 +95,10 @@ def normalise_icon(data: bytes) -> bytes:
                 for value in re.findall(r"url\s*\((.*?)\)", text, re.I | re.S)
             ):
                 raise ValueError("SVG icons must not load external resources.")
+        buffer.close()
+        buffer.setData(QByteArray(text_svg.encode()))
+        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        reader = QImageReader(buffer, b"svg")
     size = reader.size()
     if not size.isValid() or max(size.width(), size.height()) > 4096:
         raise ValueError("Icon dimensions must be between 1 and 4096 pixels.")
@@ -141,6 +151,8 @@ VARIANT_WORDS = {
     "mac", "macos", "osx", "win", "windows", "ios", "android", "title", "about", "gradient",
     "grayscale", "splash", "badge", "banner", "screenshot", "wordmark",
 }  # fmt: skip
+# Folders or names for a project's preview builds, whose logo is often a recoloured variant.
+PREVIEW_WORDS = {"insider", "insiders", "nightly", "canary", "beta", "alpha", "preview", "unstable"}
 
 
 def words(path: str) -> list[str]:
@@ -314,12 +326,13 @@ def discover_icons(
         stem = re.sub(r"[^a-z0-9]", "", PurePosixPath(path).stem.lower())
         return len(slug) >= 4 and slug in stem
 
-    def rank(path: str) -> tuple[int, int, int, int, int, str]:
+    def rank(path: str) -> tuple[int, int, int, int, int, int, str]:
         lower = path.lower()
         stem = PurePosixPath(lower).stem
         resolution = resolution_of(lower)
         return (
             int(stem not in declared),
+            int(any(word in PREVIEW_WORDS for word in words(path))),
             int(slug not in re.sub(r"[^a-z0-9]", "", stem)),
             int("linux" not in lower and "hicolor" not in lower),
             int(PurePosixPath(lower).suffix != ".png"),
@@ -369,4 +382,11 @@ def discover_icons(
         if len(result) == 4:
             break
     check_cancel(cancel)
-    return tuple(result)
+    # Artwork far from square (page corners, wide logos) goes after the real icons.
+    return tuple(sorted(result, key=lambda candidate: not squarish(candidate.png)))
+
+
+def squarish(png: bytes) -> bool:
+    """Whether a PNG from normalise_icon is close to square, read from its header."""
+    width, height = int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+    return bool(width and height) and max(width, height) <= 1.2 * min(width, height)

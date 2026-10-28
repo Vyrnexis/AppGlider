@@ -55,6 +55,16 @@ class IconTests(unittest.TestCase):
                 self.assertEqual(max(image.width(), image.height()), 512)
                 self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
 
+    def test_the_standard_svg_document_type_line_is_accepted(self):
+        # Inkscape and most editors write it; VSCodium's icons carry it, for example.
+        doctype = (
+            b'<?xml version="1.0" encoding="UTF-8"?>\n'
+            b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"'
+            b' "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n'
+        )
+        image = QImage.fromData(normalise_icon(doctype + SVG), "PNG")
+        self.assertEqual(image.size().width(), 512)
+
     def test_raster_icons_are_shrunk_but_never_enlarged(self):
         for side, expected in ((32, 32), (1024, 512)):
             with self.subTest(side=side):
@@ -87,6 +97,8 @@ class IconTests(unittest.TestCase):
             SVG.replace(b"<path", b'<image href="file:///etc/passwd"/><path'),
             SVG.replace(b"<path", b'<image href="https://example.com/icon.png"/><path'),
             b'<!DOCTYPE svg [<!ENTITY x "hello">]>' + SVG,
+            b'<!DOCTYPE svg PUBLIC "a" "b" [<!ENTITY x "hello">]>' + SVG,
+            b'<!DOCTYPE svg PUBLIC "a" "b"><!DOCTYPE svg [<!ENTITY x "y">]>' + SVG,
             SVG.replace(b"<path", b'<style>@import "https://example.com/a.css";</style><path'),
             SVG.replace(b'fill="#39b3d7"', b'fill="url(file:///tmp/image)"'),
         ]
@@ -230,6 +242,18 @@ class IconTests(unittest.TestCase):
         self.assertNotIn("ExampleApp_about.svg", names)
         self.assertNotIn("ExampleApp_192px_grayscale.png", names)
         self.assertNotIn("unrelated.png", names)
+
+    def test_preview_build_logos_and_non_square_artwork_come_after_the_icon(self):
+        wide = SVG.replace(b'width="64"', b'width="200"')
+        files = {
+            "icons/insider/example_app.svg": SVG.replace(b"39b3d7", b"ff8800"),
+            "icons/stable/example_app.svg": SVG,
+            "icons/corner_512.svg": wide,
+        }
+        result, *_ = self.discover(files)
+        self.assertEqual(
+            [icon.name for icon in result], ["icons/stable/example_app.svg", "icons/corner_512.svg"]
+        )
 
     def test_a_very_short_project_name_does_not_match_everything_containing_it(self):
         short = {f"images/{n}.png": SVG for n in ("app", "happy", "map", "icon")}
