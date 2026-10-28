@@ -785,7 +785,10 @@ class LibraryTests(unittest.TestCase):
         self.library.refresh_autostart([sys.executable, "-O", "-m", "appglider"], packaged=False)
         self.library.refresh_autostart([str(other)], packaged=True)
         self.assertEqual(self.library.autostart_file.read_text(), entry)
-        os.utime(other)  # now newer: a newer packaged image takes over
+        # Now newer: a newer packaged image takes over. Set the time outright, since two
+        # files written in quick succession can share a coarse file timestamp.
+        later = current.stat().st_mtime_ns + 1_000_000_000
+        os.utime(other, ns=(later, later))
         self.library.refresh_autostart([str(other)], packaged=True)
         self.assertIn(f'Exec="{other}" "--tray"', self.library.autostart_file.read_text())
 
