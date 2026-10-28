@@ -15,3 +15,9 @@ The source projects' MIT notices are distributed in `src/appglider/assets/licens
 Paths in this table are relative to `src/appglider/`. App names identify the managed
 projects and do not imply endorsement. The example catalog's factual names and repository locations
 were checked against the upstream repositories; GUI implementation is original to this project.
+
+## Nix flake
+
+`flake.nix` was originally contributed by NAX LAB under the MIT licence; the permission
+notice is in `src/appglider/assets/licenses/nax-lab-MIT.txt`. It is distributed with AppGlider, which is
+otherwise GPL-3.0-or-later.

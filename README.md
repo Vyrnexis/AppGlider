@@ -4,6 +4,8 @@
 
 **AppGlider installs, updates and launches AppImage apps on Linux, from one window.**
 
+Website: [appglider.org](https://appglider.org/)
+
 An AppImage is an app packed into a single file that runs on most Linux distributions
 without being installed the usual way. They are handy, but they do not update themselves
 or appear in your menu. AppGlider takes care of that: it downloads apps from their GitHub
@@ -102,7 +104,14 @@ AppImage, [GitHub Actions](docs/builds.md) covers automated builds and releases,
 
 ## Licence and credits
 
-AppGlider's own code is licensed under [GPL-3.0-or-later](LICENSE).
+Copyright (C) 2026 Vyrnexis
+
+AppGlider is free software: you can redistribute and/or modify it under the terms of the
+GNU General Public License version 3, or (at your option) any later version. It is
+distributed WITHOUT ANY WARRANTY. See [LICENSE](LICENSE) for details.
+
+Releases up to and including 0.9.2 were published under the MIT licence and remain so.
+Later releases are GPL-3.0-or-later.
 
 The interface is original to this project. Application icons belong to their projects; see
 [ATTRIBUTION.md](ATTRIBUTION.md) for their sources and licences. The libraries bundled in

@@ -2209,12 +2209,13 @@ class LibraryTests(unittest.TestCase):
     def test_about_links_open_the_project_pages(self) -> None:
         page = self.window.settings_page
         self.window.open_settings("About")
+        names = ("Visit appglider.org", "View AppGlider on GitHub", "Report an issue")
         captions = {
             button.text(): button
             for button in page.findChildren(QPushButton)
-            if button.text() in ("View AppGlider on GitHub", "Report an issue")
+            if button.text() in names
         }
-        self.assertEqual(set(captions), {"View AppGlider on GitHub", "Report an issue"})
+        self.assertEqual(set(captions), set(names))
         opened: list[str] = []
         with patch(
             "appglider.ui.pages.settings_page.QDesktopServices.openUrl",
@@ -2225,6 +2226,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(
             opened,
             [
+                "https://appglider.org/",
                 "https://github.com/Vyrnexis/AppGlider",
                 "https://github.com/Vyrnexis/AppGlider/issues",
             ],
@@ -2232,6 +2234,20 @@ class LibraryTests(unittest.TestCase):
         self.assertIn(
             f"AppGlider {APP_VERSION}", [label.text() for label in page.findChildren(QLabel)]
         )
+
+    def test_about_states_the_licence_and_links_to_it(self) -> None:
+        page = self.window.settings_page
+        self.window.open_settings("About")
+        self.assertEqual(
+            page.licence_note.text(), "Free software under GPL-3.0-or-later, with no warranty."
+        )
+        opened: list[str] = []
+        with patch(
+            "appglider.ui.pages.settings_page.QDesktopServices.openUrl",
+            side_effect=lambda url: opened.append(url.toString()),
+        ):
+            page.licence_link.click()
+        self.assertEqual(opened, ["https://github.com/Vyrnexis/AppGlider/blob/main/LICENSE"])
 
     def test_legacy_section_numbers_still_open_the_matching_section(self) -> None:
         for number, name in ((0, "General"), (3, "GitHub"), (4, "About")):

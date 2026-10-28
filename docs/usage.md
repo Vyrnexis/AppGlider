@@ -363,7 +363,9 @@ page says "Changes save automatically".
 - **Catalogs**: import a catalog, add the example catalog, or export your own.
 - **Storage**: the folder new apps are installed into, and the space your apps use.
 - **GitHub**: how many requests GitHub reports as remaining (no requests are made).
-- **About**: the version, **Check now** for a new AppGlider version, and project links.
+- **About**: the version, **Check now** for a new AppGlider version, a note on
+  the licence (GPL-3.0-or-later, no warranty) with a link to it, and links to the website,
+  the source and the issue tracker.
 
 ![Settings, General section](previews/appglider-settings.png)
 

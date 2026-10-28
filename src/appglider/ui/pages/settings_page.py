@@ -42,7 +42,13 @@ from appglider.github.http import github_request_status
 from appglider.install import self_update
 from appglider.install.library import previous_copy
 from appglider.ui.controls import Segmented, SpaceBar, SpaceSwatch, Switch
-from appglider.ui.pages.app_page import SettingRow, add_setting_rows, format_size, panel
+from appglider.ui.pages.app_page import (
+    SettingRow,
+    add_setting_rows,
+    format_size,
+    link_button,
+    panel,
+)
 from appglider.ui.pages.catalog_preview import CatalogPreviewDialog
 from appglider.ui.rows import ElidedLabel
 
@@ -50,7 +56,9 @@ if TYPE_CHECKING:
     from appglider.ui.window import LauncherWindow
 
 SECTIONS = ("General", "Updates", "Catalogs", "Storage", "GitHub", "About")
+LICENCE_URL = "https://github.com/Vyrnexis/AppGlider/blob/main/LICENSE"
 LINKS = (
+    ("Visit appglider.org", "https://appglider.org/"),
     ("View AppGlider on GitHub", "https://github.com/Vyrnexis/AppGlider"),
     ("Report an issue", "https://github.com/Vyrnexis/AppGlider/issues"),
 )
@@ -570,6 +578,17 @@ class SettingsPage(QWidget):
         text = QLabel("A home for your Linux AppImages.\nWritten in Python with Qt.")
         text.setWordWrap(True)
         layout.addWidget(text)
+        licence = QHBoxLayout()
+        licence.setSpacing(4)
+        self.licence_note = QLabel("Free software under GPL-3.0-or-later, with no warranty.")
+        self.licence_note.setObjectName("settingHint")
+        self.licence_note.setWordWrap(True)
+        self.licence_link = link_button("Read the licence")
+        self.licence_link.setAccessibleName("Read the AppGlider licence")
+        self.licence_link.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(LICENCE_URL)))
+        licence.addWidget(self.licence_note, stretch=1)
+        licence.addWidget(self.licence_link)
+        layout.addLayout(licence)
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
         for caption, url in LINKS:
