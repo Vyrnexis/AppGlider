@@ -21,6 +21,7 @@ BUILD = ROOT / "build" / "appimage"
 CACHE = ROOT / "build" / "downloads"
 METAINFO = "io.github.vyrnexis.AppGlider.appdata.xml"
 UPDATE_INFORMATION = "gh-releases-zsync|Vyrnexis|AppGlider|latest|AppGlider-*x86_64.AppImage.zsync"
+RUNTIME_VARIABLES = ("APPDIR", "APPIMAGE", "ARGV0", "OWD")
 
 
 def run(*args: str, cwd: Path = ROOT) -> None:
@@ -29,11 +30,7 @@ def run(*args: str, cwd: Path = ROOT) -> None:
 
 def installed_update_information(image: Path) -> str:
     """Ask the image runtime for the update information embedded in it."""
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in {"APPDIR", "APPIMAGE", "OWD", "ARGV0"}
-    }
+    environment = {key: value for key, value in os.environ.items() if key not in RUNTIME_VARIABLES}
     result = subprocess.run(
         [str(image), "--appimage-updateinformation"],
         capture_output=True,
@@ -65,6 +62,10 @@ def download(item: dict[str, str]) -> Path:
 def main() -> None:
     if sys.platform != "linux" or platform.machine() != "x86_64":
         raise SystemExit("Build on Linux x86_64 with Python 3.11 or newer.")
+    # A terminal inside another AppImage passes on its variables. The Python base image
+    # and appimagetool would then run from that image's folder or change into $OWD.
+    for key in RUNTIME_VARIABLES:
+        os.environ.pop(key, None)
     BUILD.mkdir(parents=True, exist_ok=True)
     CACHE.mkdir(parents=True, exist_ok=True)
     downloads = json.loads((PACKAGING / "downloads.json").read_text())
@@ -136,8 +137,6 @@ def main() -> None:
         zsync = image.with_name(image.name + ".zsync")
         # Never ship a .zsync that does not belong to this build.
         zsync.unlink(missing_ok=True)
-        # appimagetool's extract-and-run mode would otherwise change into $OWD.
-        os.environ.pop("OWD", None)
         os.environ["ARCH"] = "x86_64"
         os.environ["VERSION"] = version
         run(
