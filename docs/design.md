@@ -62,7 +62,7 @@ confirmations, file pickers and choices that block an action (such as choosing a
   Remove from library once it is not, never both, and Forget missing copy when the
   installed file has gone. A row that does not apply is hidden, not disabled; a running
   task disables what is shown. Hold and Menu shortcut show once the app is installed.
-- **Settings page**: a secondary list (General, Updates, Catalogs, Storage, GitHub, About)
+- **Settings page**: a secondary list (General, Updates, Catalogs, Storage, About)
   and panels of setting rows. Changes apply immediately; there is no Save or Cancel.
   Storage also has a read-only Space used panel: the total, one bar split into the versions
   in use and the copies kept for roll back, and every installed app largest first with its

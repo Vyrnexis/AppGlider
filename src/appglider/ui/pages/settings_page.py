@@ -39,7 +39,6 @@ from appglider.core.preferences import (
     check_interval_hours,
 )
 from appglider.core.storage import atomic_bytes
-from appglider.github.http import github_request_status
 from appglider.install import self_update
 from appglider.install.library import appimagelauncher_folder, previous_copy
 from appglider.ui.controls import Segmented, SpaceBar, SpaceSwatch, Switch
@@ -56,7 +55,7 @@ from appglider.ui.rows import ElidedLabel
 if TYPE_CHECKING:
     from appglider.ui.window import LauncherWindow
 
-SECTIONS = ("General", "Updates", "Catalogs", "Storage", "GitHub", "About")
+SECTIONS = ("General", "Updates", "Catalogs", "Storage", "About")
 LICENCE_URL = "https://github.com/Vyrnexis/AppGlider/blob/main/LICENSE"
 LINKS = (
     ("Visit appglider.org", "https://appglider.org/"),
@@ -159,7 +158,6 @@ class SettingsPage(QWidget):
             self.build_updates,
             self.build_catalogs,
             self.build_storage,
-            self.build_github,
             self.build_about,
         )
         for build in builders:
@@ -553,25 +551,6 @@ class SettingsPage(QWidget):
             if item is not None and (widget := item.widget()) is not None:
                 widget.deleteLater()
 
-    def build_github(self, column: QVBoxLayout) -> None:
-        frame, layout, _ = panel("GitHub")
-        self.github_details = QLabel()
-        self.github_details.setTextFormat(Qt.TextFormat.PlainText)
-        self.github_details.setWordWrap(True)
-        self.github_details.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
-        self.github_details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.github_details.setAccessibleName("GitHub request status")
-        layout.addWidget(self.github_details)
-        note = QLabel(
-            "Status updates from existing requests; opening Settings makes no requests. "
-            "Other applications on your network may share the request allowance."
-        )
-        note.setObjectName("settingHint")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        column.addWidget(frame)
-        self.update_github_status()
-
     def build_about(self, column: QVBoxLayout) -> None:
         frame, layout, _ = panel("About")
         self.self_check_button = QPushButton("Check now")
@@ -657,12 +636,8 @@ class SettingsPage(QWidget):
         if self.isVisible() and self.current_section() == "Storage":
             self.update_space_used()
 
-    def update_github_status(self) -> None:
-        self.github_details.setText(github_request_status()[1])
-
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
-        self.update_github_status()
         enabled = self.launcher.library.autostart_enabled()  # the file is the setting
         if enabled != self.autostart.isChecked():
             with QSignalBlocker(self.autostart):

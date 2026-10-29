@@ -1214,11 +1214,11 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             window.show_view("missing")
 
-    def test_sidebar_status_block_opens_github_settings(self) -> None:
+    def test_sidebar_status_block_opens_the_update_settings(self) -> None:
         self.assertIn(self.window.status_label.text().split()[0], ("Not", "Automatic", "Checked"))
         QTest.mouseClick(self.window.status_block, Qt.MouseButton.LeftButton)
         self.assertIs(self.window.pages.currentWidget(), self.window.settings_page)
-        self.assertEqual(self.window.settings_page.current_section(), "GitHub")
+        self.assertEqual(self.window.settings_page.current_section(), "Updates")
         self.assertTrue(self.window.nav_settings.isChecked())
         self.assertEqual(self.window.nav_add.accessibleName(), "Add app")
         self.assertEqual(self.window.check_button.accessibleName(), "Check for updates")
@@ -2263,7 +2263,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(opened, ["https://github.com/Vyrnexis/AppGlider/blob/main/LICENSE"])
 
     def test_legacy_section_numbers_still_open_the_matching_section(self) -> None:
-        for number, name in ((0, "General"), (3, "GitHub"), (4, "About")):
+        for number, name in ((0, "General"), (3, "Updates"), (4, "About")):
             self.window.open_settings(number)
             self.assertEqual(self.window.settings_page.current_section(), name)
         self.window.open_settings("Updates")
@@ -2287,14 +2287,13 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(page.current_section(), "About")
         self.assertEqual(
             [button.text() for button in page.sections],
-            ["General", "Updates", "Catalogs", "Storage", "GitHub", "About"],
+            ["General", "Updates", "Catalogs", "Storage", "About"],
         )
-        for section in range(6):
+        for section in range(5):
             page.sections[section].click()
             self.assertEqual(page.stack.currentIndex(), section)
 
-    def test_github_indicator_opens_live_status_without_network_requests(self) -> None:
-        observed = []
+    def test_github_status_shows_in_the_sidebar_without_network_requests(self) -> None:
         with (
             patch.object(github_status, "_status", github_status.GitHubStatus()),
             patch.object(github_status.time, "time", return_value=1000),
@@ -2306,10 +2305,7 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(
                 self.window.status_block.cursor().shape(), Qt.CursorShape.PointingHandCursor
             )
-            QTest.mouseClick(self.window.status_block, Qt.MouseButton.LeftButton)
-            page = self.window.settings_page
-            observed.append(page.current_section())
-            observed.append(page.github_details.text())
+            self.assertIn("unknown", self.window.status_block.toolTip())
             github_status.observe_headers(
                 {
                     "X-RateLimit-Remaining": "0",
@@ -2321,20 +2317,13 @@ class LibraryTests(unittest.TestCase):
             http._RETRY_AFTER["github.com"] = 1120
             self.window.github_timer.timeout.emit()
             self.qt.processEvents()
-            observed.append(page.github_details.text())
             self.assertEqual(self.window.github_label.text(), "GitHub: limited")
             self.assertTrue(self.window.status_block.property("limited"))
-            label = page.github_details
-            self.assertGreaterEqual(label.height(), label.heightForWidth(label.width()))
-            self.window.nav_library.click()  # hidden pages are not refreshed
-            http._RETRY_AFTER["github.com"] = 1500
-            self.window.github_timer.timeout.emit()
-            self.assertEqual(page.github_details.text(), observed[2])
+            tooltip = self.window.status_block.toolTip()
+            self.assertIn("0 of 60", tooltip)
+            self.assertIn("retry in 10 min", tooltip)
+            self.assertIn("how often to check", tooltip)
             request.assert_not_called()
-        self.assertEqual(observed[0], "GitHub")
-        self.assertIn("unknown", observed[1])
-        self.assertIn("0 of 60", observed[2])
-        self.assertIn("retry in 10 min", observed[2])
 
     def test_row_chip_describes_the_release_and_beta_waits_for_stable(self) -> None:
         card = self.window.cards["solidcraft"]

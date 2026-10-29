@@ -79,10 +79,11 @@ AppGlider needs no GitHub account or token. It uses GitHub's public API, which a
   while a download or another check is running, and when nothing is installed.
 - When the allowance runs out, AppGlider falls back to GitHub's public release pages for
   up to three pages of ten releases, applying the same selection rules.
-- The **GitHub** indicator in the sidebar's status block opens **Settings → GitHub**,
-  showing the last reported allowance, active retry countdowns and the most recent
-  successful result with its repository, source (GitHub API, public pages or cached) and
-  time. Opening it makes no network requests. Counts come from earlier GitHub responses and
+- The **GitHub** line in the sidebar's status block shows the last reported allowance. Its
+  tooltip adds the reset time, active retry countdowns and the most recent successful result
+  with its repository, source (GitHub API, public pages or cached) and time; clicking the
+  block opens **Settings → Updates**. None of this makes network requests. (Versions up to
+  0.9.4 also showed these details in a Settings → GitHub section.) Counts come from earlier GitHub responses and
   can also be affected by other programs on your network. After a request window expires the
   count becomes unknown until the next response; AppGlider does not assume the full
   allowance is available. Retry times survive restarts.

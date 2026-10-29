@@ -78,5 +78,5 @@ Roughly newest first. Where shown, the version is the release that first include
   SolidCraft are an example catalog you can import instead of being built in.
 - **Catalogs:** import and export plain text lists of apps, with a preview before anything
   is added.
-- **GitHub status:** a status block in the sidebar and a Settings → GitHub page show how many of GitHub's
+- **GitHub status:** a status block in the sidebar shows how many of GitHub's
   anonymous requests are left and when checks were last made.

@@ -91,8 +91,8 @@ when a new version is out.
    [app's page](#the-apps-page).
 8. **Settings** opens AppGlider's own [settings](#settings).
 9. **The status block** shows when updates were last checked, when the next check is due and
-   how much of GitHub's allowance is left. Click it for details. The version number below
-   it opens **Settings → About**.
+   how much of GitHub's allowance is left. Hover over it for details, or click it to choose
+   how often to check. The version number below it opens **Settings → About**.
 
 The bottom of the window stays empty until there is something to say: the result of
 something you did ("Updated 2 apps."), or a progress bar with **Cancel** while something
@@ -342,7 +342,6 @@ no Save button.
    - **Updates**: how often to check for updates, and notifications.
    - **Catalogs**: import a list of apps, add the example list, or export your own.
    - **Storage**: the folder new apps are installed in, and the space they use.
-   - **GitHub**: how much of GitHub's allowance is left. Looking here costs nothing.
    - **About**: the version, **Check now** for a new AppGlider, the licence
      (GPL-3.0-or-later, no warranty), and links to the website, the source code and the
      issue tracker.

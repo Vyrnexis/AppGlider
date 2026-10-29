@@ -96,7 +96,7 @@ from appglider.ui.theme import NAV_ICON_SIZE, THEMES, nav_icon, palette, refresh
 from appglider.ui.tray import TrayMixin
 
 SIDEBAR_WIDTH = 210
-LEGACY_SECTIONS = {0: "General", 1: "Catalogs", 2: "Storage", 3: "GitHub", 4: "About"}
+LEGACY_SECTIONS = {0: "General", 1: "Catalogs", 2: "Storage", 3: "Updates", 4: "About"}
 CHECK_TOOLTIP = "Check for updates"
 
 
@@ -315,7 +315,7 @@ class LauncherWindow(TrayMixin):
         self.status_block.setAccessibleName("GitHub request status")
         self.status_block.setCursor(Qt.CursorShape.PointingHandCursor)
         self.status_block.setFixedHeight(66)
-        self.status_block.clicked.connect(lambda: self.open_settings("GitHub"))
+        self.status_block.clicked.connect(lambda: self.open_settings("Updates"))
         status_layout = QVBoxLayout(self.status_block)
         status_layout.setContentsMargins(8, 8, 8, 6)
         status_layout.setSpacing(4)
@@ -621,9 +621,7 @@ class LauncherWindow(TrayMixin):
             self.github_meter.setRange(0, max(1, allowance[1]))
             self.github_meter.setValue(allowance[0])
         self.status_label.setText(self.check_summary())
-        if self.settings_page.isVisible():
-            self.settings_page.update_github_status()
-        self.status_block.setToolTip(details + "\nClick for details in Settings → GitHub.")
+        self.status_block.setToolTip(details + "\nClick to choose how often to check.")
         if self.status_block.property("limited") != limited:
             self.status_block.setProperty("limited", limited)
             for widget in (self.status_block, self.github_label, self.github_meter):
