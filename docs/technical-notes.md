@@ -348,7 +348,13 @@ either way `library/sort` is then removed.
 - `APPIMAGELAUNCHER_DISABLE=1` is set in the clean environment (so for Launch and for reading
   the `.desktop` file) and in every entry. AppImageLauncher's binfmt handler and launcher both
   check it and then run the AppImage directly, instead of offering to integrate it, which
-  would move the file out of AppGlider's folder. A launch option can override it.
+  would move the file out of AppGlider's folder. A launch option can override it. AppGlider's
+  own menu and login entries run `env APPIMAGELAUNCHER_DISABLE=1` too; an own entry that runs
+  the same image in an older format is rewritten at startup.
+- Settings → Storage warns when the install folder is inside AppImageLauncher's folder. It
+  counts as installed when `AppImageLauncher` or `appimagelauncherd` is on `PATH` or a
+  binfmt_misc entry names it; the folder is `destination` in
+  `$XDG_CONFIG_HOME/appimagelauncher.cfg`, else `~/Applications`.
 - Its own entry is rewritten only when it is missing, when its target no longer exists, or
   when a newer packaged AppImage takes over. A development run never repoints a working
   entry. The entry's icon copy is refreshed whenever a new release ships a different icon.

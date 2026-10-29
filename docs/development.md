@@ -180,7 +180,7 @@ plain language, no jargon, and what to try when something goes wrong. Update
 in `docs/previews/` after visible interface changes or a version change (the version shows in
 the sidebar). Take them in the Dark theme from a disposable library, with the window at
 1040×720; the app page (1040×1110) and the Add app page (1040×980) are taller so the whole
-form shows. Use neutral paths such as `/home/you/Applications`, never your own. The website
+form shows. Use neutral paths such as `/home/you/.local/share/appglider/apps`, never your own. The website
 keeps its own copies in `site/assets/`, so refresh those at the same time.
 
 The user guide uses annotated copies, `docs/previews/guide-*.png`: numbered pink outlines

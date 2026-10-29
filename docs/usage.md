@@ -353,8 +353,11 @@ no Save button.
 4. **Keep running in the tray** and **Start with my desktop**: see
    [The tray icon](#the-tray-icon) and [Starting with your desktop](#starting-with-your-desktop).
 
-**Storage.** Changing the install folder only affects apps you install afterwards; apps you
-already have stay where they are and keep updating there. The **Space used** panel shows how
+**Storage.** AppGlider installs apps in `~/.local/share/appglider/apps` unless you choose
+another folder. Changing it only affects apps you install afterwards; apps you already have
+stay where they are and keep updating there. If you use AppImageLauncher, do not choose its
+folder (usually `~/Applications`): it would treat AppGlider's apps as its own. AppGlider warns
+you if you do. The **Space used** panel shows how
 much your apps take and how much space is free. One bar splits the total into **In use**
 (solid, the versions you run) and **Kept for roll back** (striped, the earlier copies), and
 each app is listed below, largest first. There is nothing to clean up by hand: AppGlider
@@ -475,8 +478,9 @@ row looks like this:
 2. **Reinstall** downloads and checks the app again.
 
 The usual cause is **AppImageLauncher**, a separate program that, the first time an AppImage
-runs, offers to "integrate" it and moves the file into `~/Applications`. AppGlider now tells
-AppImageLauncher to leave its apps alone, but a file it moved earlier stays where it went.
+runs, offers to "integrate" it and moves the file into `~/Applications`. Since version 0.9.4,
+AppGlider tells AppImageLauncher to leave its apps, and AppGlider itself, alone. A file it
+moved earlier stays where it went.
 
 You have three choices:
 
