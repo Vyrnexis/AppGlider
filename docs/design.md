@@ -56,7 +56,8 @@ confirmations, file pickers and choices that block an action (such as choosing a
   in Updates; hidden apps keep their places. Pinned apps stay on top whatever the order.
 - **App page**: header (large icon, name, repository and description, status chips, Launch
   and the primary action), then two columns. Left: What's new (release notes of the
-  offered release) and Versions. Right: Preferences (release channel, hold, pin, build, icon,
+  offered release: the first five lines fading out, with Show all notes / Show less to
+  expand them in place, never a scroll area inside the page) and Versions. Right: Preferences (release channel, hold, pin, build, icon,
   menu shortcut, and the Arguments and Environment launch options), then Manage, styled as a
   danger area: Roll back when a copy is kept, then Uninstall while the app is installed or
   Remove from library once it is not, never both, and Forget missing copy when the
