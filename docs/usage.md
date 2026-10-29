@@ -512,6 +512,12 @@ and the log file AppGlider points you to.
 published checksum, and says which is missing. If a project only publishes test versions,
 set **Release channel** to **Preview** first.
 
+**A project renamed or moved its repository.** Nothing to do. When GitHub sends the old
+address to a new one, AppGlider follows it the next time it checks or installs the app,
+remembers the new address and says so at the bottom of the window ("LightCraft Classic moved
+to emmertex/chromaforge on GitHub"). The app keeps its install, preferences and icon. Adding an
+app by its old address adds it under the new one.
+
 **There is no tray icon.** Some desktops, such as GNOME, need an extension to show tray icons.
 AppGlider works without one; closing the window then quits it.
 

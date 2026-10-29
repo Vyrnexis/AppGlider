@@ -25,6 +25,7 @@ from appglider import APP_ICON
 from appglider.core.catalog import App, custom_app
 from appglider.github.assets import Release, variant_label
 from appglider.github.download import Progress, latest_release
+from appglider.github.http import RepositoryMoved
 from appglider.github.icons import (
     MAX_ICON_BYTES,
     IconCandidate,
@@ -326,12 +327,28 @@ class AddPage(QScrollArea):
         lookup_icons = not self.icon_options
         self.inspection_app = app
 
+        known = [known.repo.casefold() for known in self.library.apps]
+
         def operation(cancel: Event, progress: Progress) -> TaskResult:
-            release = latest_release(app, cancel, self.library.data_dir / "release-cache")
-            result = TaskResult("Release inspected.", {app.id: release})
+            target = app
+            try:
+                release = latest_release(target, cancel, self.library.data_dir / "release-cache")
+            except RepositoryMoved as moved:
+                # Add it under its new address, so the old name is never used again.
+                target = custom_app(moved.new, app.name, app.include_prereleases, app.build_variant)
+                if target.repo.casefold() in known:
+                    raise ValueError(
+                        f"{moved} It is already in your library under its new address."
+                    ) from moved
+                release = latest_release(target, cancel, self.library.data_dir / "release-cache")
+            result = TaskResult(
+                "Release inspected.",
+                {target.id: release},
+                moved=target if target is not app else None,
+            )
             try:
                 if lookup_icons:
-                    result.icons = discover_icons(app, cancel, lambda text: progress(text, 0, 0))
+                    result.icons = discover_icons(target, cancel, lambda text: progress(text, 0, 0))
             except (OSError, ValueError) as error:
                 result.errors[app.id] = f"Icon lookup unavailable: {error}"
             return result
@@ -366,6 +383,12 @@ class AddPage(QScrollArea):
             self.invalidate_preview()
             self.set_busy(False)
             return
+        moved, old = result.moved, self.inspection_app.repo if self.inspection_app else ""
+        if moved is not None:
+            self.candidate = self.icon_target = self.inspection_app = moved
+            self.url.blockSignals(True)  # a new address would otherwise discard this result
+            self.url.setText(moved.source_url)
+            self.url.blockSignals(False)
         target = self.inspection_app
         if result.build_choices and target:
             self.set_busy(False)
@@ -400,6 +423,11 @@ class AddPage(QScrollArea):
                 else "Ready to add with the default icon."
             )
             + (" " + result.errors[target.id] if target and target.id in result.errors else "")
+            + (
+                f" {old} moved to {moved.repo} on GitHub, so it is added under the new address."
+                if moved is not None
+                else ""
+            )
         )
         self.set_busy(False)
         QTimer.singleShot(0, self, lambda: self.ensureWidgetVisible(self.add_button))

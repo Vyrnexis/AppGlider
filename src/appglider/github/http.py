@@ -198,6 +198,43 @@ def redirect_location(url: str) -> str | None:
     return None
 
 
+REPOSITORY_PATH = re.compile(r"/([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9_.-]{1,100})/?")
+
+
+class RepositoryMoved(ValueError):
+    """GitHub redirects the repository to a new owner/name (a rename or a transfer)."""
+
+    def __init__(self, old: str, new: str) -> None:
+        self.old = old
+        self.new = new
+        super().__init__(f"{old} moved to {new} on GitHub.")
+
+
+def moved_to(repo: str) -> str | None:
+    """The owner/name GitHub now sends `repo` to, or None when it has not moved.
+
+    Only someone who controls a repository can rename or transfer it, and GitHub keeps the
+    old address redirecting until the name is taken again. Reading the redirect uses none
+    of the API allowance.
+    """
+    location = redirect_location(f"https://github.com/{repo}")
+    if not location:
+        return None
+    parsed = urlsplit(location)
+    if (
+        parsed.scheme not in ("", "https")
+        or parsed.netloc not in ("", "github.com")
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    match = REPOSITORY_PATH.fullmatch(parsed.path)
+    if match is None or match[2] in (".", ".."):
+        return None
+    new = f"{match[1]}/{match[2]}"
+    return new if new.casefold() != repo.casefold() else None
+
+
 MAX_LISTING = 3 * 1024 * 1024
 
 

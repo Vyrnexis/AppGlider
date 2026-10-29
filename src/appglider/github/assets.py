@@ -13,7 +13,7 @@ from urllib.parse import quote, unquote, urlsplit
 
 from appglider.core.catalog import App
 from appglider.github import http, versions
-from appglider.github.http import MissingResource
+from appglider.github.http import MissingResource, RepositoryMoved
 from appglider.github.versions import check_cancel, release_version, stems, version_key
 
 LISTING_PAGE_SIZE = 20
@@ -177,6 +177,28 @@ def select_asset(app: App, assets: list[Any], version: str, arch: str) -> dict[s
     return candidates[0]
 
 
+class RepositoryMismatch(ValueError):
+    """A release's files belong to another repository, perhaps the one this one moved to."""
+
+    def __init__(self, repo: str) -> None:
+        self.repo = repo
+        super().__init__("The release's AppImage URL does not match its repository.")
+
+
+DOWNLOAD_REPOSITORY = re.compile(
+    r"https://github\.com/([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100})/releases/download/"
+)
+
+
+def confirmed_move(app: App, mismatch: RepositoryMismatch) -> ValueError:
+    """A RepositoryMoved when GitHub redirects this repository to the files' one, else the
+    original mismatch: files from an unrelated repository are never accepted."""
+    new = http.moved_to(app.repo)
+    if new is not None and new.casefold() == mismatch.repo.casefold():
+        return RepositoryMoved(app.repo, new)
+    return mismatch
+
+
 def select_release(app: App, data: object, arch: str) -> Release:
     if not isinstance(data, dict) or data.get("draft"):
         raise ValueError("No published release is available.")
@@ -209,6 +231,9 @@ def select_release(app: App, data: object, arch: str) -> Release:
         or urlsplit(url).fragment
         or any(c.isspace() for c in url)
     ):
+        other = DOWNLOAD_REPOSITORY.match(url) if isinstance(url, str) else None
+        if other is not None and other[1].casefold() != app.repo.casefold():
+            raise RepositoryMismatch(other[1])
         raise ValueError("The release's AppImage URL does not match its repository.")
     size = asset.get("size")
     if type(size) is not int or not 0 < size <= MAX_DOWNLOAD:
@@ -332,5 +357,8 @@ def api_entries(app: App, cancel: Event) -> list[Any]:
 
 def api_release(app: App, cancel: Event) -> Release:
     data = newest_release(api_entries(app, cancel), app.include_prereleases)
-    release = select_release(app, data, versions.architecture())
+    try:
+        release = select_release(app, data, versions.architecture())
+    except RepositoryMismatch as mismatch:
+        raise confirmed_move(app, mismatch) from mismatch
     return with_checksum(app, str(data["tag_name"]), release, cancel)

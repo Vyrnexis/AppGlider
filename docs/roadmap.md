@@ -17,6 +17,9 @@ None of these are approved or scheduled.
 
 Roughly newest first. Where shown, the version is the release that first included the work.
 
+- **Renamed and moved repositories:** when a project renames its repository or moves it to
+  another owner, AppGlider follows GitHub's redirect, remembers the new address and keeps the
+  app's install and settings.
 - **Missing files and clearer menus (0.9.4):** an app whose file was moved or deleted outside
   AppGlider shows **⚠ File missing** with **Reinstall** and **Forget missing copy**, and can be
   removed from the library. AppImageLauncher is told to leave AppGlider's apps alone. Row menus

@@ -1007,7 +1007,9 @@ class AppPage(QScrollArea):
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             try:
-                outcome["release"] = latest_release(target, cancel, cache_dir)
+                outcome["release"] = self.launcher.library.following_moves(
+                    target, lambda app: latest_release(app, cancel, cache_dir)
+                )
             except BuildChoiceRequired as error:
                 outcome["choices"] = error
                 return TaskResult("Choose a build.")

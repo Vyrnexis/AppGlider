@@ -177,6 +177,10 @@ def page_release_asset(app: App, data: dict[str, Any], cancel: Event) -> Release
     )
     parser.close()
     if not parser.assets:
+        # A moved repository's listing links to the new address, which the parser rejects.
+        new = http.moved_to(app.repo)
+        if new is not None:
+            raise http.RepositoryMoved(app.repo, new)
         raise ValueError("Could not read GitHub's public asset listing; retry discovery later.")
     assets = [
         {**asset, "digest": parser.digests.get(name, "")} for name, asset in parser.assets.items()

@@ -29,7 +29,11 @@ def architecture() -> str:
 def stems(app: App) -> tuple[str, ...]:
     stem = app.asset_stem or app.id
     former = {"pdfcraft": "printcraft", "solidcraft": "solvecraft"}
-    return (stem, former[app.id]) if app.id in former else (stem,)
+    if app.id in former:
+        return (stem, former[app.id])
+    # A moved repository keeps its first id, whose name its files often still use.
+    first = app.id.partition("__")[2] if app.id.startswith("github-") else ""
+    return (stem, first) if first and first != stem else (stem,)
 
 
 def release_version(tag: object) -> str | None:

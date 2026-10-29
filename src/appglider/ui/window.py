@@ -193,6 +193,7 @@ class LauncherWindow(TrayMixin):
         )
         self.installed: dict[str, Installed] = {}
         self.missing: dict[str, Installed] = {}
+        self.move_notice = ""
         self.apps: tuple[App, ...] = ()
         self.pinned = pinned_apps(self.settings)
         self.releases: dict[str, Release] = {}
@@ -1195,8 +1196,11 @@ class LauncherWindow(TrayMixin):
             return
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
-            info = discover_releases(
-                app, cancel, self.library.data_dir / "release-cache", force=True
+            info = self.library.following_moves(
+                app,
+                lambda app: discover_releases(
+                    app, cancel, self.library.data_dir / "release-cache", force=True
+                ),
             )
             return TaskResult("Release checked.", release_infos={app.id: info})
 
@@ -1243,7 +1247,28 @@ class LauncherWindow(TrayMixin):
         self.cancel_button.hide()
         self.scan_installed()
 
+    def show_moves(self) -> None:
+        """Reload the catalog after a repository moved during a check, and note it."""
+        moves, self.library.moves = self.library.moves, []
+        if not moves:
+            return
+        self.scan_installed()
+        self.move_notice = " ".join(
+            [self.move_notice]
+            + [
+                f"{name} moved to {new} on GitHub; AppGlider now uses the new address."
+                for name, _, new in moves
+            ]
+        ).strip()
+        self.footer.setText(self.move_notice)
+
+    def with_move_notice(self, message: str) -> str:
+        """`message`, followed by any repository move not yet reported with a result."""
+        notice, self.move_notice = self.move_notice, ""
+        return f"{message} {notice}" if notice else message
+
     def task_finished(self, result: TaskResult) -> None:
+        self.show_moves()
         self.releases.update(result.releases)
         for app in self.apps:
             checked_info = result.release_infos.get(app.id)
@@ -1260,7 +1285,7 @@ class LauncherWindow(TrayMixin):
         for app_id in result.releases:
             self.check_errors.pop(app_id, None)
         self.reset_task()
-        self.footer.setText(result.message)
+        self.footer.setText(self.with_move_notice(result.message))
         if result.downloaded is not None:
             self.self_update_downloaded(result.downloaded)
         if result.build_choices and not self.close_after_task:
@@ -1272,8 +1297,9 @@ class LauncherWindow(TrayMixin):
             self.close()
 
     def task_failed(self, error: str) -> None:
+        self.show_moves()
         self.reset_task()
-        self.footer.setText(error)
+        self.footer.setText(self.with_move_notice(error))
         if self.close_after_task:
             self.close()
         else:
@@ -1507,8 +1533,11 @@ class LauncherWindow(TrayMixin):
 
     def release_operation(self, app: App, force: bool) -> Callable[[Event, Progress], TaskResult]:
         def operation(cancel: Event, progress: Progress) -> TaskResult:
-            info = discover_releases(
-                app, cancel, self.library.data_dir / "release-cache", force=force, cheap=True
+            info = self.library.following_moves(
+                app,
+                lambda app: discover_releases(
+                    app, cancel, self.library.data_dir / "release-cache", force=force, cheap=True
+                ),
             )
             return TaskResult("Release checked.", release_infos={app.id: info})
 
@@ -1528,6 +1557,7 @@ class LauncherWindow(TrayMixin):
     def release_check_done(
         self, app_id: str, variant: str, result: TaskResult | None, error: str
     ) -> None:
+        self.show_moves()
         if result is None:
             app = next((app for app in self.apps if app.id == app_id), None)
             if app and app.build_variant == variant:
@@ -1550,12 +1580,15 @@ class LauncherWindow(TrayMixin):
         self.refresh()
         self.notify_when_idle()
         if self.task is None:
+            failed = any(app_id in self.installed for app_id in self.release_errors)
             self.footer.setText(
-                "Update check finished."
-                + (
-                    " Some checks failed; rows keep previously known information."
-                    if any(app_id in self.installed for app_id in self.release_errors)
-                    else ""
+                self.with_move_notice(
+                    "Update check finished."
+                    + (
+                        " Some checks failed; rows keep previously known information."
+                        if failed
+                        else ""
+                    )
                 )
             )
 
@@ -1563,7 +1596,7 @@ class LauncherWindow(TrayMixin):
         app = next(app for app in self.apps if app.id == app_id)
         installed = self.installed.get(app_id)
 
-        def operation(cancel: Event, progress: Progress) -> TaskResult:
+        def install(app: App, cancel: Event, progress: Progress) -> TaskResult:
             progress(f"Checking {app.name} release…", 0, 0)
             release = latest_release(app, cancel, self.library.data_dir / "release-cache")
             if installed and not release.newer_than(installed.version):
@@ -1577,6 +1610,9 @@ class LauncherWindow(TrayMixin):
             return TaskResult(
                 f"{app.name} v{release.version} is ready to launch.", {app_id: release}
             )
+
+        def operation(cancel: Event, progress: Progress) -> TaskResult:
+            return self.library.following_moves(app, lambda app: install(app, cancel, progress))
 
         self.start_task(
             f"Preparing {app.name}…",
@@ -1595,6 +1631,17 @@ class LauncherWindow(TrayMixin):
 
         versions = {app.id: self.installed[app.id].version for app in apps}
 
+        def update(app: App, cancel: Event, progress: Progress) -> Release:
+            release = latest_release(app, cancel, self.library.data_dir / "release-cache")
+            if release.newer_than(versions[app.id]):
+                self.library.install(
+                    app,
+                    release,
+                    cancel,
+                    lambda message, done, total: progress(f"{app.name} · {message}", done, total),
+                )
+            return release
+
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             result = TaskResult("Updates finished.")
             updated: list[str] = []
@@ -1602,20 +1649,12 @@ class LauncherWindow(TrayMixin):
                 check_cancel(cancel)
                 progress(f"Checking {app.name}…", 0, 0)
                 try:
-                    release = latest_release(app, cancel, self.library.data_dir / "release-cache")
-                    if not release.newer_than(versions[app.id]):
-                        result.releases[app.id] = release
-                        continue
-                    self.library.install(
-                        app,
-                        release,
-                        cancel,
-                        lambda message, done, total: progress(
-                            f"{app.name} · {message}", done, total
-                        ),
+                    release = self.library.following_moves(
+                        app, lambda app: update(app, cancel, progress)
                     )
                     result.releases[app.id] = release
-                    updated.append(app.id)
+                    if release.newer_than(versions[app.id]):
+                        updated.append(app.id)
                 except BuildChoiceRequired as error:
                     result.build_choices[app.id] = error
                 except (OSError, ValueError) as error:

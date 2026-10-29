@@ -6,6 +6,7 @@ from threading import Event
 
 from PySide6.QtCore import QObject, QRunnable, Signal
 
+from appglider.core.catalog import App
 from appglider.github.assets import BuildChoiceRequired, Release
 from appglider.github.download import Progress
 from appglider.github.icons import IconCandidate
@@ -23,6 +24,7 @@ class TaskResult:
     release_infos: dict[str, ReleaseInfo] = field(default_factory=dict)
     build_choices: dict[str, BuildChoiceRequired] = field(default_factory=dict)
     downloaded: Downloaded | None = None
+    moved: App | None = None  # the app under its new address, when Add app found a move
 
 
 class TaskSignals(QObject):

@@ -11,16 +11,18 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Event
+from typing import TypeVar
 
 from appglider import APP_ICON
 from appglider.core.catalog import (
     App,
     custom_app,
     default_description,
+    default_id,
     load_apps,
     load_build_preferences,
     load_release_preferences,
@@ -31,7 +33,7 @@ from appglider.core.catalogfile import CatalogEntry, entry_for
 from appglider.core.storage import atomic_bytes, atomic_json
 from appglider.github.assets import Release
 from appglider.github.download import Progress, download
-from appglider.github.http import file_stamp
+from appglider.github.http import RepositoryMoved, file_stamp
 from appglider.github.icons import MAX_ICON_BYTES, normalise_icon
 from appglider.github.versions import VERSION, check_cancel, version_key
 from appglider.install.appimage import check_appimage, clean_environment
@@ -43,6 +45,8 @@ MAX_LOG_BYTES = 5 * 1024 * 1024
 STALE_STAGE_SECONDS = 24 * 60 * 60
 LOCK_WAIT_SECONDS = 3.0
 MAX_APPS = 100
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -206,6 +210,8 @@ class Library(ShortcutsMixin):
             autostart_dir if autostart_dir is not None else xdg_config / "autostart"
         )
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
+        # (app name, old repository, new repository) for each move not yet shown.
+        self.moves: list[tuple[str, str, str]] = []
         self._catalog: tuple[tuple[tuple[int, int, int] | None, ...], tuple[App, ...]] | None = None
 
     @property
@@ -457,6 +463,53 @@ class Library(ShortcutsMixin):
         if not stale.path.exists():
             self._remove_dangling_shortcuts([stale.path])
 
+    def move_repository(self, app_id: str, repo: str) -> App:
+        """Point an app at the address its repository moved to, keeping its id.
+
+        The install, preferences, icon and menu entries are all tied to the id, so they stay;
+        the ownership marker of its install folder is rewritten for the new address.
+        """
+        with self._lock():
+            apps = self.apps
+            current = next((app for app in apps if app.id == app_id), None)
+            if current is None:
+                raise ValueError("This repository is not in the library.")
+            moved = custom_app(
+                repo,
+                current.name,
+                current.include_prereleases,
+                current.build_variant,
+                ""
+                if current.description == default_description(current.repo)
+                else current.description,
+                app_id=current.id,
+            )
+            moved = replace(moved, hold_updates=current.hold_updates)
+            if moved.repo == current.repo:
+                return current
+            if any(app.repo.casefold() == moved.repo.casefold() for app in apps):
+                raise ValueError(
+                    f"{current.repo} moved to {moved.repo} on GitHub, which is already in "
+                    "your library. Remove one of them."
+                )
+            roots = {self.apps_dir.resolve() / app_id}
+            installed = self.records().get(app_id)
+            if installed is not None and installed.managed:
+                roots.add(installed.path.parent.parent)
+            for root in roots:
+                if not root.is_symlink() and self._has_marker(root, current):
+                    atomic_bytes(root / ".appglider", self._marker(moved).encode())
+            self._save_repositories(tuple(moved if app.id == app_id else app for app in apps))
+            self.moves.append((current.name, current.repo, moved.repo))
+            return moved
+
+    def following_moves(self, app: App, run: Callable[[App], _T]) -> _T:
+        """Run `run(app)`; if GitHub says the repository moved, record it and run once more."""
+        try:
+            return run(app)
+        except RepositoryMoved as moved:
+            return run(self.move_repository(app.id, moved.new))
+
     def _save_repositories(self, apps: tuple[App, ...]) -> None:
         if len(apps) > MAX_APPS:
             raise ValueError(f"The library supports up to {MAX_APPS} repositories.")
@@ -464,6 +517,7 @@ class Library(ShortcutsMixin):
             self.data_dir / "repositories.json",
             [
                 {"repo": app.repo, "name": app.name}
+                | ({} if app.id == default_id(app) else {"id": app.id})
                 | (
                     {}
                     if app.description == default_description(app.repo)

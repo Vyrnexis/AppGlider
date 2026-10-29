@@ -71,7 +71,10 @@ def custom_app(
     include_prereleases: bool = False,
     build_variant: str = "",
     description: str = "",
+    *,
+    app_id: str | None = None,
 ) -> App:
+    """An app for a GitHub repository. `app_id` keeps the id of a repository that moved."""
     if type(include_prereleases) is not bool:
         raise ValueError("The release preference must be true or false.")
     if not valid_build_variant(build_variant):
@@ -102,8 +105,10 @@ def custom_app(
         raise ValueError("Use an application name of 1–128 characters, without control characters.")
     if description and not valid_description(description):
         raise ValueError("Use a description of up to 200 plain characters.")
+    if app_id is not None and not valid_app_id(app_id):
+        raise ValueError("Invalid application id.")
     return App(
-        KNOWN_IDS.get(f"{owner}/{slug}", f"github-{owner}__{slug}"),
+        app_id or KNOWN_IDS.get(f"{owner}/{slug}", f"github-{owner}__{slug}"),
         title,
         description or default_description(f"{owner}/{slug}"),
         f"{owner}/{slug}",
@@ -111,6 +116,21 @@ def custom_app(
         include_prereleases,
         build_variant,
     )
+
+
+def valid_app_id(value: object) -> bool:
+    """An id AppGlider could have given an app: a bundled one or github-owner__name."""
+    if not isinstance(value, str):
+        return False
+    if value in KNOWN_IDS.values():
+        return True
+    match = re.fullmatch(r"github-[a-z0-9][a-z0-9-]{0,38}__([a-z0-9_.-]{1,100})", value)
+    return match is not None and match[1] not in (".", "..")
+
+
+def default_id(app: App) -> str:
+    """The id the app's current repository would get, which differs once it has moved."""
+    return custom_app(app.repo).id
 
 
 def valid_build_variant(value: object) -> bool:
@@ -205,9 +225,10 @@ def _load_apps(path: Path) -> tuple[App, ...]:
             ):
                 raise ValueError("Invalid repository entry.")
             description = item.get("description", "")
-            if not isinstance(description, str):
+            app_id = item.get("id")
+            if not isinstance(description, str) or not (app_id is None or isinstance(app_id, str)):
                 raise ValueError("Invalid repository entry.")
-            app = custom_app(item["repo"], item["name"], description=description)
+            app = custom_app(item["repo"], item["name"], description=description, app_id=app_id)
             if any(
                 known.repo.casefold() == app.repo.casefold() or known.id == app.id for known in apps
             ):

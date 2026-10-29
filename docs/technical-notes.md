@@ -20,6 +20,7 @@ who want to know exactly what AppGlider does with their system, and for contribu
 - [Menu entries](#menu-entries)
 - [Tray and single instance](#tray-and-single-instance)
 - [Names and identifiers](#names-and-identifiers)
+- [Renamed and moved repositories](#renamed-and-moved-repositories)
 - [Library recovery](#library-recovery)
 
 ## How release checks work
@@ -388,6 +389,23 @@ either way `library/sort` is then removed.
   `~/.config/autostart`), marked `X-AppGlider=true`, running the launcher command with
   `--tray`. Its existence is the setting; a symbolic link or unmarked file is never touched.
 - Paths are listed under [Files AppGlider keeps](#files-appglider-keeps).
+
+## Renamed and moved repositories
+
+A release whose download links belong to another repository is accepted only when
+`github.com/<old owner>/<old name>` redirects to exactly that repository (`http.moved_to`, a
+HEAD request outside the API allowance). Only someone with admin rights can rename or transfer
+a repository, so the redirect is the owner's own say-so. Files from any other repository are
+still refused.
+
+The move is then recorded (`Library.move_repository`): the new address replaces the old one in
+`repositories.json` together with the app's original `id`, so the install folder, its
+`.appglider` marker (rewritten for the new address), preferences, holds, launch options, icon,
+menu entry and release caches stay attached. The operation runs again with the new address
+(`Library.following_moves`), and the window reports the move. AppGlider never goes back to the
+old address: GitHub keeps redirecting only until someone takes the old name, and that someone
+could publish anything there. Add app with an old address adds the new one. The old name is
+still offered as a file-name stem, since moved projects often keep their file names.
 
 ## Library recovery
 

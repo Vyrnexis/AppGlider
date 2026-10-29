@@ -166,6 +166,8 @@ def inspect_entries(
                 release = assets.with_checksum(app, data["tag_name"], release, cancel)
         except http.RateLimited:
             raise
+        except assets.RepositoryMismatch as mismatch:
+            raise assets.confirmed_move(app, mismatch) from mismatch
         except assets.BuildChoiceRequired as error:
             options.append(ReleaseOption(version, None, str(error)[:4096], True))
         except ValueError as error:
