@@ -5,49 +5,29 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report this. The more of this form you fill in, the
-        quicker it can be fixed. Only the fields marked with a red star are required.
+        Thanks for taking the time to report this. Only the fields with a red star are
+        required; anything else you can add helps.
 
-        If the problem is with one particular app or repository (it will not add, install,
-        update or show its icon), the **A specific app or repository** form asks the right
-        questions for that.
+        If the problem is with one particular app (it will not add, install, update or show
+        its icon), the **A specific app or repository** form is a better fit.
 
   - type: input
     id: version
     attributes:
       label: AppGlider version
-      description: Shown at the bottom of the sidebar, and in Settings → About.
+      description: Shown at the bottom of AppGlider's sidebar.
       placeholder: "0.9.3"
     validations:
       required: true
 
-  - type: dropdown
-    id: install
+  - type: input
+    id: system
     attributes:
-      label: How do you run AppGlider?
-      options:
-        - The AppImage from the Releases page
-        - The Nix flake
-        - From the source code
-        - Another way (say below)
+      label: Your Linux system
+      description: The distribution and, if you know it, the desktop.
+      placeholder: "Fedora 41 with KDE Plasma, Ubuntu 24.04, Linux Mint…"
     validations:
       required: true
-
-  - type: input
-    id: distro
-    attributes:
-      label: Linux distribution and version
-      description: "If you are not sure, run `grep PRETTY_NAME /etc/os-release` in a terminal."
-      placeholder: "Fedora 41, Ubuntu 24.04, Arch, NixOS 24.11…"
-    validations:
-      required: true
-
-  - type: input
-    id: desktop
-    attributes:
-      label: Desktop and session
-      description: "Run `echo $XDG_CURRENT_DESKTOP $XDG_SESSION_TYPE` in a terminal."
-      placeholder: "KDE Plasma 6.2 on Wayland, GNOME 47 on X11…"
 
   - type: dropdown
     id: area
@@ -70,64 +50,37 @@ body:
     id: what
     attributes:
       label: What happened?
-      description: Describe what you saw. Copy any message AppGlider showed, word for word.
+      description: What you saw. If AppGlider showed a message, copy it word for word.
     validations:
       required: true
 
   - type: textarea
-    id: steps
-    attributes:
-      label: How can it be made to happen?
-      description: The steps, starting from opening AppGlider. Say if it happens every time.
-      placeholder: |
-        1. Open the app's page for …
-        2. Press …
-        3. …
-
-  - type: textarea
     id: expected
     attributes:
-      label: What did you expect instead?
+      label: What did you expect to happen?
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can it be made to happen again?
+      description: The steps you took, if you remember them, and whether it happens every time.
 
   - type: checkboxes
     id: tools
     attributes:
       label: Other AppImage tools
       description: >-
-        Some tools move or take over AppImages, which can confuse AppGlider. Tick any you
-        have installed.
+        Some programs move or take over AppImages, which can confuse AppGlider. Tick any you
+        use.
       options:
         - label: AppImageLauncher
         - label: Gear Lever
-        - label: appimaged or another AppImage daemon
-        - label: An AppImage integration built into my desktop or distribution
+        - label: Another AppImage manager
 
   - type: textarea
-    id: terminal
+    id: attachments
     attributes:
-      label: Terminal output
-      description: |
-        Start AppGlider from a terminal, make the problem happen, then paste what the terminal
-        printed. For example: `~/Applications/AppGlider-0.9.3-x86_64.AppImage`
-      render: shell
-
-  - type: textarea
-    id: log
-    attributes:
-      label: App log (if an app would not start)
+      label: Screenshots or files
       description: >-
-        AppGlider keeps a log for each app it launches in `~/.local/share/appglider/logs/`.
-        Paste the end of the one for the app concerned.
-      render: text
-
-  - type: textarea
-    id: screenshots
-    attributes:
-      label: Screenshots
-      description: Drag images here if they help show the problem.
-
-  - type: markdown
-    attributes:
-      value: |
-        Logs and terminal output can include your user name in file paths. You are welcome to
-        replace it with `you` before posting.
+        Drag a screenshot here if it helps. If an app would not start, AppGlider names a log
+        file you can drag in too.
