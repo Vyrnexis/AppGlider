@@ -1,0 +1,77 @@
+name: A specific app or repository
+description: An app will not add, install, update, launch or show its icon.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        AppGlider needs the project to publish a release with an AppImage file and a checksum.
+        When something is missing, the message usually says what. If it does not make sense,
+        or the app should work, tell us here.
+
+  - type: input
+    id: repository
+    attributes:
+      label: Repository address
+      description: The GitHub address you added, so the problem can be tried with the same app.
+      placeholder: "https://github.com/owner/project"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: AppGlider version
+      description: Shown at the bottom of the sidebar, and in Settings → About.
+      placeholder: "0.9.3"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: step
+    attributes:
+      label: Where does it go wrong?
+      options:
+        - Inspecting or adding the repository
+        - Installing
+        - Updating, or the update is not offered
+        - Launching
+        - The icon
+        - Choosing a build
+        - The menu entry
+        - The row shows ⚠ File missing
+        - Something else
+    validations:
+      required: true
+
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Release channel for this app
+      description: On the app's page, under Preferences.
+      options:
+        - Stable
+        - Preview
+        - Not sure
+
+  - type: textarea
+    id: message
+    attributes:
+      label: What happened?
+      description: Copy any message AppGlider showed, word for word, and say what you expected.
+    validations:
+      required: true
+
+  - type: input
+    id: distro
+    attributes:
+      label: Linux distribution and version
+      placeholder: "Fedora 41, Ubuntu 24.04, Arch…"
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: >-
+        A picture of the app's page (click its row) often shows the versions, channel and
+        build at a glance.

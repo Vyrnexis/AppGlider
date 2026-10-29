@@ -1,0 +1,29 @@
+name: An idea
+description: Suggest something AppGlider could do, or do better.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome. The [roadmap](https://github.com/Vyrnexis/AppGlider/blob/main/docs/roadmap.md)
+        lists what has been done and what is being considered, so have a quick look first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: Describe what you are trying to do and what gets in the way today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could AppGlider help?
+      description: Your idea of how it could work. Rough is fine.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: How do you manage today?
+      description: A workaround, or another program that does this.
