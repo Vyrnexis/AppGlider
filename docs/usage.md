@@ -343,7 +343,8 @@ no Save button.
    - **Updates**: how often to check for updates, and notifications.
    - **Catalogs**: import a list of apps, add the example list, or export your own.
    - **Storage**: the folder new apps are installed in, and the space they use.
-   - **About**: the version, **Check now** for a new AppGlider, the licence
+   - **About**: the version, **Check now** for a new AppGlider, **What's new in …** for the
+     notes of the version you are running, the licence
      (GPL-3.0-or-later, no warranty), and links to the website, the source code and the
      issue tracker.
 2. **Theme**: **System** follows your desktop's light or dark setting; or choose **Light** or

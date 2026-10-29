@@ -562,6 +562,12 @@ class SettingsPage(QWidget):
             f"{APP_NAME} {APP_VERSION}", "Not checked yet", self.self_check_button
         )
         layout.addWidget(self.self_row)
+        self.notes_link = link_button(f"What's new in {APP_VERSION} ↗")
+        self.notes_link.setAccessibleName(f"Release notes for AppGlider {APP_VERSION}")
+        self.notes_link.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(self_update.release_url(f"v{APP_VERSION}")))
+        )
+        layout.addWidget(self.notes_link, alignment=Qt.AlignmentFlag.AlignLeft)
         text = QLabel("A home for your Linux AppImages.\nWritten in Python with Qt.")
         text.setWordWrap(True)
         layout.addWidget(text)

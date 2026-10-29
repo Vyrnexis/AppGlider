@@ -2248,6 +2248,17 @@ class LibraryTests(unittest.TestCase):
             f"AppGlider {APP_VERSION}", [label.text() for label in page.findChildren(QLabel)]
         )
 
+    def test_about_links_to_the_notes_of_the_running_version(self) -> None:
+        page = self.window.settings_page
+        self.window.open_settings("About")
+        self.assertEqual(page.notes_link.text(), f"What's new in {APP_VERSION} ↗")
+        with patch("appglider.ui.pages.settings_page.QDesktopServices.openUrl") as opened:
+            page.notes_link.click()
+        self.assertEqual(
+            opened.call_args.args[0].toString(),
+            f"https://github.com/Vyrnexis/AppGlider/releases/tag/v{APP_VERSION}",
+        )
+
     def test_about_states_the_licence_and_links_to_it(self) -> None:
         page = self.window.settings_page
         self.window.open_settings("About")
