@@ -518,6 +518,14 @@ class LibraryTests(unittest.TestCase):
         card.set_state(installed, current, False, error="Offline", refresh_error="Offline")
         self.assert_chip(card, "failed", "Check failed", "Launch")
         self.assertIn("Offline", card.chip.toolTip())
+        # No network is not a failed check: the row keeps what was known before.
+        card.set_state(installed, current, False, refresh_error=http.UNREACHABLE)
+        self.assert_chip(card, "ok", "✓ Up to date", "Launch")
+        self.assertIn("Offline: could not reach GitHub", card.chip.toolTip())
+        card.set_state(installed, newer, False, refresh_error=http.UNREACHABLE)
+        self.assert_chip(card, "update", "↑ 1.1.0", "Update")
+        card.set_state(installed, None, False, refresh_error=http.UNREACHABLE)
+        self.assert_chip(card, "none", "Not checked", "Launch")
         card.set_state(installed, newer, False)
         self.assert_chip(card, "update", "↑ 1.1.0", "Update")
         self.assertEqual(card.action_button.objectName(), "primary")
@@ -990,6 +998,63 @@ class LibraryTests(unittest.TestCase):
         with patch.object(window, "show_launcher") as show:
             window.tray.messageClicked.emit()
         show.assert_called_once()
+
+    def test_checks_that_could_not_reach_github_retry_with_longer_waits(self) -> None:
+        window = self.window
+        self.addCleanup(window.offline_timer.stop)
+        self.waiting_update()
+        waits = []
+        for _ in range(6):
+            window.offline_timer.stop()
+            window.release_errors[APP.id] = http.UNREACHABLE
+            window.release_checks_drained()
+            if window.offline_timer.isActive():
+                waits.append(window.offline_timer.interval())
+                self.assertIn("Trying again in", window.footer.text())
+        self.assertEqual(waits, [15_000, 30_000, 60_000, 120_000, 300_000])
+        self.assertEqual(
+            window.footer.text(), "Could not reach GitHub. Rows show what was known before."
+        )
+        window.update_github_status()
+        self.assertEqual(window.github_label.text(), "GitHub: offline")
+        self.assertIn("Could not reach GitHub", window.status_block.toolTip())
+        with patch.object(window.checks, "add") as add:
+            window.offline_retry()
+        add.assert_called_once_with([APP.id])
+        window.release_errors.pop(APP.id)
+        window.release_checks_drained()  # a check got through: the next outage starts over
+        self.assertEqual(window.offline_attempts, 0)
+        window.update_github_status()
+        self.assertNotEqual(window.github_label.text(), "GitHub: offline")
+        window.release_errors[APP.id] = "GitHub answered HTTP 404."
+        window.release_checks_drained()
+        self.assertFalse(window.offline_timer.isActive())
+        self.assertIn("Some checks failed", window.footer.text())
+
+    def test_a_background_self_check_failure_retries_and_notifications_wait(self) -> None:
+        window = self.window
+        self.addCleanup(window.offline_timer.stop)
+        window.self_check_failed("Couldn't check")
+        self.assertTrue(window.offline_timer.isActive())
+        with patch.object(window, "start_self_check") as start:
+            window.offline_retry()
+        start.assert_called_once_with()
+        self.assertFalse(window.self_retry)
+        window.offline_timer.stop()
+        window.self_explicit = True
+        window.self_check_failed("Couldn't check")  # the user asked and sees the failure
+        self.assertFalse(window.offline_timer.isActive())
+        self.waiting_update()
+        window.notify_pending = True
+        window.release_errors[APP.id] = http.UNREACHABLE
+        with patch.object(window, "notify_updates") as notify:
+            window.release_checks_drained()
+            notify.assert_not_called()
+            self.assertTrue(window.notify_pending)
+            window.offline_timer.stop()
+            window.release_errors.pop(APP.id)
+            window.release_checks_drained()
+            notify.assert_called_once()
 
     def test_notification_setting_defaults_off_and_saves(self) -> None:
         page = self.window.settings_page

@@ -5,6 +5,7 @@ from datetime import datetime
 
 from appglider.core.catalog import App
 from appglider.github.assets import Release
+from appglider.github.http import UNREACHABLE
 from appglider.github.release_info import ReleaseInfo
 from appglider.github.versions import version_key
 from appglider.install.library import Installed
@@ -66,6 +67,8 @@ def app_status(
         mode = "launch"
     else:
         mode = "reinstall" if missing else "install"
+    # Offline is not a failed check: the row keeps what was known before.
+    offline = (refresh_error or error) == UNREACHABLE
     stamp = datetime.fromtimestamp(info.checked_at).strftime("%d %b, %H:%M") if info else ""
     details: list[str] = []
     if working:
@@ -90,7 +93,7 @@ def app_status(
     elif refreshing:
         state, text = "none", "Checking…"
         details.append("Checking for updates…")
-    elif installed and (refresh_error or (error and release is None)):
+    elif installed and not offline and (refresh_error or (error and release is None)):
         state, text = "failed", "Check failed"
     elif waiting:
         state, text = "preview", "Waiting for stable"
@@ -112,7 +115,9 @@ def app_status(
             details.append(f"v{release.version} is a pre-release.")
         elif release.is_latest:
             details.append(f"v{release.version} is GitHub's latest release.")
-    if refresh_error or error:
+    if offline:
+        details.append("Offline: could not reach GitHub. Showing what was known before.")
+    elif refresh_error or error:
         details.append(refresh_error or error)
     if not installed:
         details.append("Release checked when installing")

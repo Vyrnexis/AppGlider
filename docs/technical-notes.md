@@ -54,6 +54,13 @@ who want to know exactly what AppGlider does with their system, and for contribu
 - Checked information is kept across restarts and shown first, so a row can show what was
   known before the new check finishes. Rows and app pages show when the information was
   checked and whether a check failed. A failed check keeps the last known versions and badges.
+- An automatic check that could not reach GitHub at all (no network yet at login, or just
+  after a resume) tries again after 15 s, 30 s, 1, 2 and 5 minutes, and stops once a check
+  gets through. AppGlider's own background check does the same. Other failures wait for the
+  next scheduled check. Update notifications wait until the retries are over.
+- Being offline is not a failed check. Rows keep their last known chip, their tooltip says
+  the information is from before, and the sidebar shows **GitHub: offline** until a check
+  gets through.
 - Background checks run one app at a time, or up to three at once while GitHub reports at
   least 30 requests left. Launching apps and changing preferences stay available meanwhile.
 - Installing re-checks the release using your saved preference and the same five-minute

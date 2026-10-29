@@ -73,7 +73,12 @@ from appglider.core.preferences import (
 from appglider.github import status as github_status
 from appglider.github.assets import BuildChoiceRequired, Release
 from appglider.github.download import Progress, cached_release, latest_release, release_cache_path
-from appglider.github.http import file_stamp, github_request_status, restore_rate_limits
+from appglider.github.http import (
+    UNREACHABLE,
+    file_stamp,
+    github_request_status,
+    restore_rate_limits,
+)
 from appglider.github.icons import icon_pixmap
 from appglider.github.release_info import (
     ReleaseInfo,
@@ -98,6 +103,8 @@ from appglider.ui.tray import TrayMixin
 SIDEBAR_WIDTH = 210
 LEGACY_SECTIONS = {0: "General", 1: "Catalogs", 2: "Storage", 3: "Updates", 4: "About"}
 CHECK_TOOLTIP = "Check for updates"
+# Waits before automatic checks retry when GitHub was unreachable, e.g. at login.
+OFFLINE_RETRY_SECONDS = (15, 30, 60, 120, 300)
 
 
 class OrphansDialog(QDialog):
@@ -260,6 +267,12 @@ class LauncherWindow(TrayMixin):
         restore_rate_limits(self.library.data_dir / "release-cache")
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.scheduled_check)
+        # Automatic checks that found no network (at login, after a resume) try again soon.
+        self.offline_timer = QTimer(self)
+        self.offline_timer.setSingleShot(True)
+        self.offline_timer.timeout.connect(self.offline_retry)
+        self.offline_attempts = 0
+        self.self_retry = False
         self.github_timer = QTimer(self)
         self.github_timer.timeout.connect(self.update_github_status)
         self.github_timer.start(1000)
@@ -593,6 +606,7 @@ class LauncherWindow(TrayMixin):
 
     def scheduled_check(self) -> None:
         """Check installed apps on the chosen schedule, without disturbing a running task."""
+        self.offline_attempts = 0
         self.automatic_self_check(notify=True)
         if (
             self.task is None
@@ -609,14 +623,19 @@ class LauncherWindow(TrayMixin):
     def update_github_status(self) -> None:
         label, details, limited = github_request_status()
         allowance = github_status.allowance()
+        offline = not limited and bool(self.offline_apps())
+        if offline:
+            details = "Could not reach GitHub. Rows show what was known before.\n" + details
         self.github_label.setText(
             "GitHub: limited"
             if limited
+            else "GitHub: offline"
+            if offline
             else f"GitHub {allowance[0]} of {allowance[1]} left"
             if allowance
             else label
         )
-        self.github_meter.setVisible(allowance is not None)
+        self.github_meter.setVisible(allowance is not None and not offline)
         if allowance:
             self.github_meter.setRange(0, max(1, allowance[1]))
             self.github_meter.setValue(allowance[0])
@@ -1340,6 +1359,7 @@ class LauncherWindow(TrayMixin):
 
     def check_for_updates(self) -> None:
         """The toolbar and tray command: a full check of the apps and of AppGlider itself."""
+        self.offline_attempts = 0
         self.start_self_check(explicit=True)
         self.refresh_releases(force=True)
 
@@ -1383,6 +1403,7 @@ class LauncherWindow(TrayMixin):
         if self.quitting:
             return
         self.self_explicit = False
+        self.self_retry = False
         self.self_state = self_update.SelfUpdate(time.time(), tag if isinstance(tag, str) else "")
         self.finish_self_check()
 
@@ -1391,6 +1412,8 @@ class LauncherWindow(TrayMixin):
         if self.quitting:
             return
         explicit, self.self_explicit = self.self_explicit, False
+        # Offline, this reads "did not name a latest release", so any background failure retries.
+        self.self_retry = not explicit
         if explicit:
             # Background checks stay silent; only a check the user asked for reports failure.
             self.self_state = replace(self.self_state, checked_at=time.time(), failed=True)
@@ -1399,12 +1422,15 @@ class LauncherWindow(TrayMixin):
         self.finish_self_check()
 
     def finish_self_check(self) -> None:
+        self.retry_when_offline()
         self.refresh()
         self.settings_page.update_self_update()
         self.notify_when_idle()
 
     def notify_when_idle(self) -> None:
         """Announce waiting updates once the checks a scheduled run started have all finished."""
+        if self.offline_timer.isActive():
+            return
         if (self.notify_pending or self.self_notify) and self.self_task is None:
             if not self.checks.busy:
                 self.notify_pending = self.self_notify = False
@@ -1575,9 +1601,16 @@ class LauncherWindow(TrayMixin):
         if self.close_after_release:
             self.close()
             return
+        self.retry_when_offline()
         self.refresh()
         self.notify_when_idle()
-        if self.task is None:
+        offline = bool(self.offline_apps())
+        if self.task is None and self.offline_timer.isActive():
+            seconds = self.offline_timer.remainingTime() // 1000 + 1
+            self.footer.setText(f"Could not reach GitHub. Trying again in {seconds} seconds…")
+        elif self.task is None and offline:
+            self.footer.setText("Could not reach GitHub. Rows show what was known before.")
+        elif self.task is None:
             failed = any(app_id in self.installed for app_id in self.release_errors)
             self.footer.setText(
                 self.with_move_notice(
@@ -1589,6 +1622,38 @@ class LauncherWindow(TrayMixin):
                     )
                 )
             )
+
+    def offline_apps(self) -> list[str]:
+        errors = self.release_errors
+        return [
+            app_id
+            for app_id in self.installed
+            if errors.get(app_id) == UNREACHABLE and not self.checks.is_checking(app_id)
+        ]
+
+    def retry_when_offline(self) -> None:
+        """Try again shortly when only the network was missing, a few times with longer waits."""
+        if self.offline_timer.isActive() or self.quitting or self.close_after_release:
+            return
+        if not self.self_retry and not self.offline_apps():
+            if not self.checks.busy and self.self_task is None:
+                self.offline_attempts = 0
+            return
+        if self.offline_attempts < len(OFFLINE_RETRY_SECONDS):
+            self.offline_timer.start(OFFLINE_RETRY_SECONDS[self.offline_attempts] * 1000)
+            self.offline_attempts += 1
+
+    def offline_retry(self) -> None:
+        if self.quitting or self.close_after_release:
+            return
+        if self.self_retry:
+            self.self_retry = False
+            self.start_self_check()
+        offline = self.offline_apps()
+        if offline:
+            self.checks.add(offline)
+        else:
+            self.notify_when_idle()
 
     def install_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)

@@ -124,6 +124,10 @@ downloads. Results fade away after a while.
 
 Every chip has a word or symbol as well as a colour, and hovering over it explains it.
 
+Without an internet connection, rows keep showing what AppGlider knew from its last check, and
+the GitHub status at the bottom of the sidebar says **GitHub: offline**. Your apps still
+launch as usual.
+
 ### The ⋯ menu
 
 The menu only offers what makes sense for the app right now:
@@ -439,6 +443,8 @@ Turn on **Start with my desktop** in **Settings → General** and AppGlider star
 when you log in, so it can check for updates without a window. (Without a tray, or with
 **Keep running in the tray** off, it starts minimised.) It is off at first. It works by
 adding `~/.config/autostart/appglider.desktop`; deleting that file turns the setting off too.
+If your network isn't connected yet when AppGlider starts, it tries again a few times over
+the next few minutes.
 
 ## Menu shortcuts
 
