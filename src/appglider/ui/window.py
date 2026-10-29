@@ -68,6 +68,7 @@ from appglider.core.preferences import (
     appearance_choice,
     check_interval_hours,
     custom_order,
+    dismissed_versions,
     pinned_apps,
 )
 from appglider.github import status as github_status
@@ -178,6 +179,18 @@ def nav_entry(text: str, *, badge: bool = False) -> tuple[QPushButton, QLabel]:
         count.setMinimumWidth(18)
     layout.addWidget(count, alignment=Qt.AlignmentFlag.AlignVCenter)
     return button, count
+
+
+def banner_close(tooltip: str) -> QToolButton:
+    """The × that closes a banner until there is something new to show."""
+    button = QToolButton()
+    button.setText("×")
+    button.setObjectName("bannerClose")
+    button.setFixedSize(32, 32)
+    button.setToolTip(tooltip)
+    button.setAccessibleName("Close banner")
+    button.setAccessibleDescription(tooltip)
+    return button
 
 
 class LauncherWindow(TrayMixin):
@@ -439,6 +452,9 @@ class LauncherWindow(TrayMixin):
         self.self_update_button = QPushButton("Releases on GitHub ↗")
         self.self_update_button.clicked.connect(self.self_button_clicked)
         self_layout.addWidget(self.self_update_button)
+        self.self_close_button = banner_close("Hide until a newer AppGlider is out")
+        self.self_close_button.clicked.connect(self.dismiss_self_banner)
+        self_layout.addWidget(self.self_close_button)
         self.self_banner.hide()
         layout.addWidget(self.self_banner)
         self.banner = QFrame()
@@ -458,6 +474,9 @@ class LauncherWindow(TrayMixin):
         self.review_button.setToolTip("Show only the apps that have updates")
         self.review_button.clicked.connect(lambda: self.show_view("updates"))
         banner_layout.addWidget(self.review_button)
+        self.banner_close_button = banner_close("Hide until another update is out")
+        self.banner_close_button.clicked.connect(self.dismiss_banner)
+        banner_layout.addWidget(self.banner_close_button)
         self.banner.hide()
         layout.addWidget(self.banner)
         self.search.setFocus()
@@ -899,8 +918,10 @@ class LauncherWindow(TrayMixin):
         )
         self.update_all_button.setEnabled(self.task is None)
         self.review_button.setVisible(not updates_view)
+        self.banner_close_button.setVisible(not updates_view)
         self.show_self_banner()
-        self.banner.setVisible(update_count > 0)
+        # Updates always keeps it, with Update all; a closed one returns for something new.
+        self.banner.setVisible(update_count > 0 and (updates_view or self.new_updates()))
         if update_count > 0:
             self.banner_label.setText(self.banner_text())
         self.app_list.set_rows(shown)
@@ -912,8 +933,10 @@ class LauncherWindow(TrayMixin):
             self.check_button,
             self.self_notes_button,
             self.self_update_button,
+            self.self_close_button,
             self.update_all_button,
             self.review_button,
+            self.banner_close_button,
         ]
         for row in shown:
             order += [row.name_button, row.action_button, row.more_button]
@@ -961,6 +984,35 @@ class LauncherWindow(TrayMixin):
         self.page_title.setText("Updates" if view == "updates" else "Library")
         self.filters.setVisible(view == "library")
         self.refresh()
+
+    def waiting_versions(self) -> dict[str, str]:
+        return {
+            app.id: self.releases[app.id].version
+            for app in self.apps
+            if self.has_update(app.id) and app.id in self.releases
+        }
+
+    def new_updates(self) -> bool:
+        """Whether an update is waiting that was not on the banner when it was closed."""
+        dismissed = dismissed_versions(self.settings)
+        return any(dismissed.get(key) != value for key, value in self.waiting_versions().items())
+
+    def dismiss_banner(self) -> None:
+        dismissed = dismissed_versions(self.settings)
+        own = dismissed.get(self_update.NOTIFY_KEY)
+        dismissed = self.waiting_versions() | ({self_update.NOTIFY_KEY: own} if own else {})
+        self.settings.setValue("banners/dismissed", json.dumps(dismissed))
+        self.refresh()
+        self.search.setFocus()
+
+    def dismiss_self_banner(self) -> None:
+        version = self.self_banner_version()
+        if version:
+            dismissed = dismissed_versions(self.settings)
+            dismissed[self_update.NOTIFY_KEY] = version
+            self.settings.setValue("banners/dismissed", json.dumps(dismissed))
+        self.refresh()
+        self.search.setFocus()
 
     def banner_text(self) -> str:
         """Summarise the waiting updates, shortened the way the tray notification is."""
@@ -1377,6 +1429,10 @@ class LauncherWindow(TrayMixin):
         if self.quitting or self.close_after_release:
             return
         self.self_explicit = self.self_explicit or explicit
+        if explicit:
+            dismissed = dismissed_versions(self.settings)
+            if dismissed.pop(self_update.NOTIFY_KEY, None) is not None:
+                self.settings.setValue("banners/dismissed", json.dumps(dismissed))
         self.self_notify = self.self_notify or notify
         if self.self_task is None:
             task = self.self_task = Lookup(self_update.check)
@@ -1436,11 +1492,16 @@ class LauncherWindow(TrayMixin):
                 self.notify_pending = self.self_notify = False
                 self.notify_updates()
 
+    def self_banner_version(self) -> str:
+        ready = self.self_ready
+        return ready.version if ready else self.self_state.version
+
     def show_self_banner(self) -> None:
         ready = self.self_ready
-        version = ready.version if ready else self.self_state.version
-        self.self_banner.setVisible(bool(version))
-        if not version:
+        version = self.self_banner_version()
+        closed = dismissed_versions(self.settings).get(self_update.NOTIFY_KEY) == version
+        self.self_banner.setVisible(bool(version) and not closed)
+        if not version or closed:
             return
         shown = html.escape(version)
         if ready:

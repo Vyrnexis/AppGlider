@@ -331,6 +331,10 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
             QToolButton#rowMenu {{ border: 2px solid transparent; background: transparent;
                 font-size: 20px; padding: 0; }}
             QToolButton#rowMenu:focus {{ border: 2px solid {accent}; }}
+            QToolButton#bannerClose {{ border: 2px solid transparent; background: transparent;
+                color: {muted}; font-size: 20px; padding: 0; }}
+            QToolButton#bannerClose:hover {{ color: {foreground}; }}
+            QToolButton#bannerClose:focus {{ border: 2px solid {accent}; }}
             QToolButton::menu-indicator {{ image: none; }}
             QLabel#status {{ color: {muted}; font-size: 12px; }}
             QLabel#releaseBadge {{ border: 1px solid; border-radius: 9px;

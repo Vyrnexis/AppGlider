@@ -86,7 +86,7 @@ when a new version is out.
 4. **Library options** (**⋯**) holds **Sort A–Z**.
 5. **Check for updates** looks for new versions of your installed apps now.
 6. **The updates banner** appears when updates are waiting. **Update all** installs them
-   all; **Review** opens the Updates page.
+   all; **Review** opens the Updates page; **×** closes it until another update comes out.
 7. **A row** for each app. Click anywhere on it (except its buttons) to open the
    [app's page](#the-apps-page).
 8. **Settings** opens AppGlider's own [settings](#settings).
@@ -207,6 +207,10 @@ When an update is waiting:
 - the row shows the new version and an **Update** button,
 - the banner at the top offers **Update all**,
 - **Updates** in the sidebar and the tray icon get an amber badge.
+
+If you'd rather not see the banner, press its **×**. It stays closed until a newer version
+or another app's update comes out. The rows and the sidebar count still show what's waiting,
+and the **Updates** page always keeps the banner with **Update all**.
 
 **Read before you update.** An app's page shows **What's new**, the project's notes for the
 new version.
@@ -422,6 +426,9 @@ files you keep in that folder are never touched.
 
 If AppGlider cannot write to its folder, or was not started from its AppImage, the button
 says **Releases on GitHub ↗** instead and opens the download page in your browser.
+
+The banner's **×** closes it until a newer AppGlider comes out. To bring it back sooner,
+press **Check now** under **Settings → About**.
 The exact rules are in the [technical notes](technical-notes.md#appgliders-own-updates).
 
 ## The tray icon

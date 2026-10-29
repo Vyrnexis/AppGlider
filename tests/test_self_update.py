@@ -17,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from catalog_fixture import stock
 from gui_helpers import close_window
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from test_library import APP, appimage_bytes, release_for
@@ -816,6 +816,20 @@ class WindowTests(unittest.TestCase):
         with patch("appglider.install.self_update.can_replace", return_value=False):
             self.check("v0.9.1")
         self.assertEqual(self.window.self_update_button.text(), "Releases on GitHub ↗")
+
+    def test_a_closed_banner_returns_for_a_newer_version_or_a_check_now(self) -> None:
+        window = self.window
+        self.check("v0.9.1")
+        QTest.mouseClick(window.self_close_button, Qt.MouseButton.LeftButton)
+        self.assertTrue(window.self_banner.isHidden())
+        self.assertEqual(self.hint(), "Version 0.9.1 is available")  # About still says so
+        self.check("v0.9.1")  # a background check finds the same version
+        self.assertTrue(window.self_banner.isHidden())
+        self.check("v0.9.2")
+        self.assertTrue(window.self_banner.isVisibleTo(window.list_page))
+        window.self_close_button.click()
+        self.check("v0.9.2", explicit=True)  # Check now: the way to update stays reachable
+        self.assertTrue(window.self_banner.isVisibleTo(window.list_page))
 
     def test_banner_goes_away_when_no_newer_release_remains(self) -> None:
         self.check("v0.9.1")

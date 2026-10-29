@@ -60,6 +60,7 @@ from appglider.core.preferences import (
     appearance_choice,
     check_interval_hours,
     custom_order,
+    dismissed_versions,
     notified_versions,
     pinned_apps,
 )
@@ -1224,6 +1225,36 @@ class LibraryTests(unittest.TestCase):
         self.window.show_view("library")
         self.window.filter_all.click()
         self.assertEqual(len(self.visible_ids()), 14)
+
+    def test_a_closed_updates_banner_returns_only_for_something_new(self) -> None:
+        window = self.window
+        path = Path(self.temp.name) / "app.AppImage"
+        for app_id, version in (("solidcraft", "0.16.2"), ("photocraft", "1.4.0")):
+            window.installed[app_id] = Installed(path, "0.1.0", True)
+            window.releases[app_id] = Release(version, "a", "u", 1, "0" * 64)
+        window.refresh()
+        self.assertTrue(window.banner_close_button.isVisibleTo(window))
+        self.assertEqual(window.banner_close_button.accessibleName(), "Close banner")
+        QTest.mouseClick(window.banner_close_button, Qt.MouseButton.LeftButton)
+        self.assertTrue(window.banner.isHidden())
+        self.assertEqual(window.updates_count.text(), "2")  # the rows and count still say so
+        window.show_view("updates")  # where Update all lives, the banner always stays
+        self.assertTrue(window.banner.isVisibleTo(window))
+        self.assertTrue(window.banner_close_button.isHidden())
+        window.show_view("library")
+        self.assertTrue(window.banner.isHidden())
+        del window.installed["photocraft"]  # one fewer update is nothing new
+        window.refresh()
+        self.assertTrue(window.banner.isHidden())
+        window.releases["solidcraft"] = Release("0.16.3", "a", "u", 1, "0" * 64)
+        window.refresh()
+        self.assertTrue(window.banner.isVisibleTo(window))
+        window.dismiss_banner()
+        window.installed["gridcraft"] = Installed(path, "0.1.0", True)
+        window.releases["gridcraft"] = Release("1.0.0", "a", "u", 1, "0" * 64)
+        window.refresh()
+        self.assertTrue(window.banner.isVisibleTo(window))
+        self.assertEqual(dismissed_versions(self.settings), {"solidcraft": "0.16.3"})
 
     def test_updates_banner_badge_and_review_switch_views(self) -> None:
         window = self.window

@@ -80,8 +80,17 @@ def custom_order(settings: QSettings) -> list[str]:
 
 def notified_versions(settings: QSettings) -> dict[str, str]:
     """Update versions the user was already told about, keyed by app id."""
+    return _versions(settings, "notifications/seen")
+
+
+def dismissed_versions(settings: QSettings) -> dict[str, str]:
+    """Update versions whose banner the user closed, keyed by app id."""
+    return _versions(settings, "banners/dismissed")
+
+
+def _versions(settings: QSettings, key: str) -> dict[str, str]:
     try:
-        data = json.loads(str(settings.value("notifications/seen", "{}")))
+        data = json.loads(str(settings.value(key, "{}")))
     except ValueError:
         return {}
     if not isinstance(data, dict):
