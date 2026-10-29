@@ -231,8 +231,9 @@ class AppPageTests(unittest.TestCase):
     def test_hold_and_pin_switches_use_the_window_actions(self) -> None:
         window = self.window
         window.open_app(APP.id)
-        self.assertFalse(self.page.hold_switch.isEnabled())  # not a managed install
+        self.assertFalse(self.page.hold_row.isVisibleTo(self.page))  # not installed
         self.install("1.0.0")
+        self.assertTrue(self.page.hold_row.isVisibleTo(self.page))
         self.assertTrue(self.page.hold_switch.isEnabled())
         self.page.hold_switch.click()
         self.assertTrue(next(a for a in self.library.apps if a.id == APP.id).hold_updates)
@@ -521,13 +522,14 @@ class AppPageTests(unittest.TestCase):
     def test_shortcut_rollback_and_uninstall_use_the_window_actions(self) -> None:
         window = self.window
         window.open_app(APP.id)
-        self.assertFalse(self.page.shortcut_button.isEnabled())
-        self.assertFalse(self.page.rollback_button.isEnabled())
+        self.assertTrue(self.page.shortcut_row.isHidden())
+        self.assertTrue(self.page.rollback_row.isHidden())
         self.assertTrue(self.page.uninstall_row.isHidden())
         self.install("1.0.0")
-        self.assertFalse(self.page.rollback_button.isEnabled())
-        self.assertEqual(self.page.rollback_row.label.text(), "Roll back")
+        self.assertFalse(self.page.shortcut_row.isHidden())
+        self.assertTrue(self.page.rollback_row.isHidden())  # nothing kept to roll back to
         self.install("1.1.0")
+        self.assertFalse(self.page.rollback_row.isHidden())
         self.assertEqual(self.page.rollback_row.label.text(), "Roll back to v1.0.0")
         for button, handler in (
             (self.page.shortcut_button, "create_shortcut"),
@@ -565,11 +567,85 @@ class AppPageTests(unittest.TestCase):
     def test_an_installed_app_cannot_be_removed_from_the_library(self) -> None:
         self.install("1.0.0")
         self.window.open_app(APP.id)
-        self.assertFalse(self.page.remove_button.isEnabled())
+        self.assertTrue(self.page.remove_row.isHidden())
         with patch("appglider.ui.pages.app_page.QMessageBox.question") as ask:
             self.page.remove_from_library()
         ask.assert_not_called()
         self.assertIn(APP.id, [app.id for app in self.library.apps])
+
+    def menu_shown(self) -> list[str]:
+        menu = self.window.cards[APP.id].more_button.menu()
+        return [a.text() for a in menu.actions() if a.isVisible() and not a.isSeparator()]
+
+    def test_the_row_menu_offers_only_what_fits_the_app_state(self) -> None:
+        common = ["Open details", "Open repository", "Pin to top", "Move up", "Move down"]
+        self.assertEqual(self.menu_shown(), [*common, "Remove from library…"])
+        self.install("1.0.0")
+        self.assertEqual(
+            self.menu_shown(),
+            [
+                "Open details",
+                "Launch",
+                *common[1:],
+                "Hold at current version",
+                "Create/repair menu shortcut",
+                "Uninstall…",
+            ],
+        )
+        self.install("1.1.0")
+        self.assertIn("Roll back to previous version", self.menu_shown())
+        card = self.window.cards[APP.id]
+        with patch.object(self.window, "task", object()):
+            self.window.refresh()
+        self.assertFalse(card.remove_action.isEnabled())
+        self.assertTrue(card.launch_action.isEnabled())
+
+    def test_a_moved_appimage_shows_as_missing_and_can_be_reinstalled_or_forgotten(self) -> None:
+        window, page = self.window, self.page
+        self.install("1.0.0")
+        path = self.library.scan()[APP.id].path
+        path.rename(path.with_name("moved.AppImage"))
+        window.scan_installed()
+        card = window.cards[APP.id]
+        self.assertEqual(card.chip.text(), "⚠ File missing")
+        self.assertIn(str(path), card.chip.toolTip())
+        self.assertEqual(card.action_button.text(), "Reinstall")
+        self.assertEqual(window.filter_installed.text(), "Installed (0)")
+        self.assertIn("Forget missing copy…", self.menu_shown())
+        self.assertIn("Remove from library…", self.menu_shown())
+        self.assertNotIn("Uninstall…", self.menu_shown())
+        window.open_app(APP.id)
+        self.assertEqual(page.action_button.text(), "Reinstall")
+        self.assertEqual(page.versions["installed"].text.text(), "v1.0.0 · file missing")
+        self.assertTrue(page.forget_row.isVisibleTo(page))
+        self.assertTrue(page.remove_row.isVisibleTo(page))
+        self.assertFalse(page.uninstall_row.isVisibleTo(page))
+        with patch.object(window, "install_app") as install:
+            page.action_button.click()
+            card.action_button.click()
+        self.assertEqual(install.call_count, 2)
+        with patch(
+            "appglider.ui.window.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as ask:
+            page.forget_button.click()
+        self.assertIn(str(path), ask.call_args.args[2])
+        self.assertEqual(self.library.missing(), {})
+        self.assertEqual(card.chip.text(), "Not installed")
+        self.assertEqual(card.action_button.text(), "Install")
+        self.assertFalse(page.forget_row.isVisibleTo(page))
+        self.assertIn("Forgot", window.footer.text())
+        self.assertTrue(path.with_name("moved.AppImage").is_file())
+
+    def test_the_row_menu_removes_an_uninstalled_app_from_the_library(self) -> None:
+        card = self.window.cards[APP.id]
+        with patch(
+            "appglider.ui.window.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            card.unlist_action.trigger()
+        self.assertNotIn(APP.id, [app.id for app in self.library.apps])
+        self.assertNotIn(APP.id, self.window.cards)
 
     def manage_dividers_shown(self) -> int:
         return sum(not d.isHidden() for d in self.page.manage_dividers.values())
@@ -580,14 +656,19 @@ class AppPageTests(unittest.TestCase):
         self.assertTrue(page.remove_row.isVisibleTo(page))
         self.assertTrue(page.remove_button.isEnabled())
         self.assertFalse(page.uninstall_row.isVisibleTo(page))
-        self.assertEqual(self.manage_dividers_shown(), 1)
+        self.assertFalse(page.rollback_row.isVisibleTo(page))
+        self.assertFalse(page.forget_row.isVisibleTo(page))
+        self.assertEqual(self.manage_dividers_shown(), 0)
         self.assertEqual(page.remove_row.hint.text(), "No application files are deleted")
         self.install("1.0.0")
         self.assertTrue(page.uninstall_row.isVisibleTo(page))
         self.assertTrue(page.uninstall_button.isEnabled())
         self.assertFalse(page.remove_row.isVisibleTo(page))
-        self.assertEqual(self.manage_dividers_shown(), 1)
+        self.assertFalse(page.rollback_row.isVisibleTo(page))
+        self.assertEqual(self.manage_dividers_shown(), 0)
+        self.install("1.1.0")
         self.assertTrue(page.rollback_row.isVisibleTo(page))
+        self.assertEqual(self.manage_dividers_shown(), 1)
 
     def test_manage_busy_state_disables_the_visible_button(self) -> None:
         self.install("1.0.0")

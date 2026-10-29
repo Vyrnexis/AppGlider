@@ -234,15 +234,21 @@ class SettingRow(QWidget):
             layout.addWidget(control, alignment=Qt.AlignmentFlag.AlignVCenter)
 
 
-def add_setting_rows(layout: QVBoxLayout, rows: Iterable[QWidget]) -> None:
-    """Stack setting rows in a panel with a divider between neighbours."""
+def add_setting_rows(layout: QVBoxLayout, rows: Iterable[QWidget]) -> dict[QWidget, QFrame]:
+    """Stack setting rows in a panel with a divider between neighbours.
+
+    Returns each row's divider (the one above it), to hide along with the row.
+    """
+    dividers: dict[QWidget, QFrame] = {}
     for index, row in enumerate(rows):
         if index:
             divider = QFrame()
             divider.setObjectName("rowDivider")
             divider.setFixedHeight(1)
             layout.addWidget(divider)
+            dividers[row] = divider
         layout.addWidget(row)
+    return dividers
 
 
 class AppPage(QScrollArea):
@@ -520,7 +526,7 @@ class AppPage(QScrollArea):
             self.environment_edit,
             below=True,
         )
-        add_setting_rows(
+        self.preference_dividers = add_setting_rows(
             layout,
             (
                 self.channel_row,
@@ -551,25 +557,32 @@ class AppPage(QScrollArea):
         self.rollback_button.clicked.connect(self.rollback)
         self.uninstall_button = QPushButton("Uninstall…")
         self.uninstall_button.clicked.connect(self.uninstall)
+        self.forget_button = QPushButton("Forget…")
+        self.forget_button.setAccessibleName("Forget missing copy")
+        self.forget_button.clicked.connect(self.forget_missing)
         self.remove_button = QPushButton("Remove…")
         self.remove_button.setAccessibleName("Remove from library")
         self.remove_button.clicked.connect(self.remove_from_library)
-        for button in (self.uninstall_button, self.remove_button):
+        for button in (self.uninstall_button, self.forget_button, self.remove_button):
             button.setObjectName("danger")
         self.rollback_row = SettingRow("Roll back", "Restore the kept copy", self.rollback_button)
         self.uninstall_row = SettingRow("Uninstall", "Your data is kept", self.uninstall_button)
+        self.forget_row = SettingRow(
+            "Forget missing copy", "No files are deleted", self.forget_button
+        )
         self.remove_row = SettingRow(
             "Remove from library", "No application files are deleted", self.remove_button
         )
-        layout.addWidget(self.rollback_row)
-        # Each divider belongs to the row below it and is shown with that row.
+        # Each divider sits above its row and shows only when a shown row comes before it.
         self.manage_dividers: dict[SettingRow, QFrame] = {}
-        for row in (self.uninstall_row, self.remove_row):
-            divider = QFrame()
-            divider.setObjectName("rowDivider")
-            divider.setFixedHeight(1)
-            self.manage_dividers[row] = divider
-            layout.addWidget(divider)
+        rows = (self.rollback_row, self.uninstall_row, self.forget_row, self.remove_row)
+        for index, row in enumerate(rows):
+            if index:
+                divider = QFrame()
+                divider.setObjectName("rowDivider")
+                divider.setFixedHeight(1)
+                self.manage_dividers[row] = divider
+                layout.addWidget(divider)
             layout.addWidget(row)
         column.addWidget(frame)
 
@@ -612,6 +625,7 @@ class AppPage(QScrollArea):
             launcher.checks.is_checking(app.id),
             launcher.release_errors.get(app.id, ""),
             launcher.working.get(app.id, ""),
+            launcher.missing.get(app.id),
         )
         self.refresh_header(app, status.mode, status.state, status.text, status.tooltip, busy)
         self.refresh_notes(app, release, info, installed is not None)
@@ -621,19 +635,25 @@ class AppPage(QScrollArea):
         self.rollback_row.label.setText(
             f"Roll back to {version_text(previous.version)}" if previous else "Roll back"
         )
-        self.rollback_button.setEnabled(bool(not busy and managed and previous))
-        self.uninstall_button.setEnabled(bool(not busy and managed))
-        self.remove_button.setEnabled(not busy and installed is None)
-        for row, visible in (
-            (self.uninstall_row, installed is not None),
-            (self.remove_row, installed is None),
-        ):
+        missing = launcher.missing.get(app.id) if installed is None else None
+        rows = (
+            (self.rollback_row, self.rollback_button, managed and previous is not None),
+            (self.uninstall_row, self.uninstall_button, installed is not None),
+            (self.forget_row, self.forget_button, missing is not None),
+            (self.remove_row, self.remove_button, installed is None),
+        )
+        earlier = False
+        for row, button, visible in rows:
             row.setVisible(visible)
-            self.manage_dividers[row].setVisible(visible)
+            button.setEnabled(not busy)
+            if row in self.manage_dividers:
+                self.manage_dividers[row].setVisible(visible and earlier)
+            earlier = earlier or visible
         if focused is not None and self.isAncestorOf(focused) and not focused.isVisibleTo(self):
             # Keep keyboard focus in the Manage panel when its button disappears.
             shown = self.uninstall_button if installed is not None else self.remove_button
-            (shown if shown.isEnabled() else self.rollback_button).setFocus()
+            if shown.isEnabled():
+                shown.setFocus()
 
     def refresh_header(
         self, app: App, mode: str, state: str, text: str, tooltip: str, busy: bool
@@ -686,6 +706,11 @@ class AppPage(QScrollArea):
                 "Install",
                 f"Install {app.name}",
                 "Check the eligible release, then download and verify its AppImage",
+            ),
+            "reinstall": (
+                "Reinstall",
+                f"Reinstall {app.name}",
+                "The AppImage was moved or deleted; download and verify it again",
             ),
         }[mode]
         self.action_button.setText(text)
@@ -759,8 +784,13 @@ class AppPage(QScrollArea):
             )
             installed_value.setToolTip(f"Installed with AppGlider\n{installed.path}")
         else:
-            installed_value.set_version("Not installed")
-            installed_value.setToolTip("")
+            missing = self.launcher.missing.get(app.id)
+            if missing is not None:
+                installed_value.set_version(f"{version_text(missing.version)} · file missing")
+                installed_value.setToolTip(f"No longer at\n{missing.path}")
+            else:
+                installed_value.set_version("Not installed")
+                installed_value.setToolTip("")
         installed_value.text.setToolTip(installed_value.toolTip())
         self.set_row_visible("previous", previous is not None)
         if previous:
@@ -814,7 +844,12 @@ class AppPage(QScrollArea):
         self.channel.setEnabled(not busy)
         held = app.hold_updates
         self.hold_switch.setChecked(held)
-        self.hold_switch.setEnabled(bool(not busy and (held or (installed and installed.managed))))
+        managed = bool(installed and installed.managed)
+        # Holding and the menu shortcut need an installed copy; a stale hold can still go.
+        for row, visible in ((self.hold_row, managed or held), (self.shortcut_row, managed)):
+            row.setVisible(visible)
+            self.preference_dividers[row].setVisible(visible)
+        self.hold_switch.setEnabled(not busy)
         self.hold_hint.setText(self.hold_text(app, installed))
         self.pin_switch.setChecked(app.id in launcher.pinned)
         self.build_hint.setText(
@@ -822,7 +857,7 @@ class AppPage(QScrollArea):
         )
         self.build_button.setEnabled(not busy)
         self.icon_button.setEnabled(not busy)
-        self.shortcut_button.setEnabled(bool(not busy and installed and installed.managed))
+        self.shortcut_button.setEnabled(not busy)
         self.refresh_launch_options(app)
 
     def refresh_launch_options(self, app: App) -> None:
@@ -868,7 +903,7 @@ class AppPage(QScrollArea):
     def activate(self) -> None:
         if self.app_id is None:
             return
-        if self.mode in ("install", "update"):
+        if self.mode in ("install", "reinstall", "update"):
             self.launcher.install_app(self.app_id)
         elif self.mode == "build":
             self.choose_build()
@@ -935,25 +970,12 @@ class AppPage(QScrollArea):
         self.launcher.footer.setText(self.message)
 
     def remove_from_library(self) -> None:
-        app = self.current_app()
-        if app is None or self.launcher.task is not None or app.id in self.launcher.installed:
-            return
-        answer = QMessageBox.question(
-            self,
-            f"Remove {app.name} from the library?",
-            f"{app.name} will no longer be listed. No application files are deleted.",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            self.launcher.library.remove_repository(app.id)
-        except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot remove the app", str(error))
-            return
-        self.launcher.catalog_changed()
-        self.launcher.footer.setText(
-            f"Removed {app.name} from the library. No application files were deleted."
-        )
+        if self.app_id:
+            self.launcher.remove_from_library(self.app_id)
+
+    def forget_missing(self) -> None:
+        if self.app_id:
+            self.launcher.forget_missing(self.app_id)
 
     # Background work
 

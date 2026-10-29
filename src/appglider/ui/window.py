@@ -192,6 +192,7 @@ class LauncherWindow(TrayMixin):
             )
         )
         self.installed: dict[str, Installed] = {}
+        self.missing: dict[str, Installed] = {}
         self.apps: tuple[App, ...] = ()
         self.pinned = pinned_apps(self.settings)
         self.releases: dict[str, Release] = {}
@@ -649,6 +650,8 @@ class LauncherWindow(TrayMixin):
         card.shortcut_requested.connect(self.create_shortcut)
         card.rollback_requested.connect(self.rollback_app)
         card.remove_requested.connect(self.remove_app)
+        card.forget_requested.connect(self.forget_missing)
+        card.unlist_requested.connect(self.remove_from_library)
         card.pin_requested.connect(self.toggle_pin)
         card.hold_requested.connect(self.toggle_hold)
         card.build_requested.connect(self.choose_build)
@@ -841,16 +844,20 @@ class LauncherWindow(TrayMixin):
                 self.checks.is_checking(app_id),
                 self.release_errors.get(app_id, ""),
                 self.working.get(app_id, ""),
+                self.missing.get(app_id),
             )
             card.setVisible(app_id in ids)
             card.draggable = False
-            card.move_up_action.setEnabled(False)
-            card.move_down_action.setEnabled(False)
+            for action in (card.move_up_action, card.move_down_action):
+                action.setVisible(False)
+                action.setEnabled(False)
         shown = [self.cards[app.id] for app in visible]
         reorder = self.reorder_enabled()
         self.app_list.reorderable = reorder
         for index, row in enumerate(shown):
             row.draggable = reorder and len(shown) > 1
+            row.move_up_action.setVisible(row.draggable)
+            row.move_down_action.setVisible(row.draggable)
             row.move_up_action.setEnabled(
                 reorder and index > 0 and shown[index - 1].pinned == row.pinned
             )
@@ -1063,6 +1070,7 @@ class LauncherWindow(TrayMixin):
         try:
             apps = self.library.apps
             installed = self.library.scan()
+            missing = self.library.missing()
             orphans = self.library.orphans()
             self.library.reap_processes()
         except (OSError, ValueError) as error:
@@ -1122,6 +1130,7 @@ class LauncherWindow(TrayMixin):
                     if release is not None:
                         self.releases[app.id] = release
             self.installed = installed
+            self.missing = missing
             self.migrate_legacy_sort()
         self.refresh()
 
@@ -1648,6 +1657,49 @@ class LauncherWindow(TrayMixin):
             return TaskResult(f"Removed the managed {app.name} installation.")
 
         self.start_task(f"Removing {app.name}…", operation)
+
+    def forget_missing(self, app_id: str) -> None:
+        app = next(app for app in self.apps if app.id == app_id)
+        missing = self.missing.get(app_id)
+        if self.task is not None or missing is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            f"Forget the missing {app.name} copy?",
+            f"AppGlider will stop tracking the AppImage it installed at\n{missing.path}\n"
+            "No files are deleted. You can install the app again afterwards.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.library.forget_missing(app_id)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Cannot forget the copy", str(error))
+            return
+        self.scan_installed()
+        self.footer.setText(f"Forgot the missing {app.name} copy. No files were deleted.")
+
+    def remove_from_library(self, app_id: str) -> None:
+        """Remove a repository whose app is not installed, after a confirmation."""
+        app = next((app for app in self.apps if app.id == app_id), None)
+        if app is None or self.task is not None or app_id in self.installed:
+            return
+        answer = QMessageBox.question(
+            self,
+            f"Remove {app.name} from the library?",
+            f"{app.name} will no longer be listed. No application files are deleted.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.library.remove_repository(app_id)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Cannot remove the app", str(error))
+            return
+        self.catalog_changed()
+        self.footer.setText(
+            f"Removed {app.name} from the library. No application files were deleted."
+        )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.settings.setValue("window/geometry", self.saveGeometry())

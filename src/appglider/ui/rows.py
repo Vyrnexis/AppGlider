@@ -45,7 +45,7 @@ from appglider.core.catalog import App
 from appglider.github.assets import Release
 from appglider.github.icons import icon_pixmap
 from appglider.github.release_info import ReleaseInfo
-from appglider.install.library import Installed
+from appglider.install.library import Installed, previous_copy
 from appglider.ui.app_status import app_status
 from appglider.ui.controls import repolish
 
@@ -58,7 +58,7 @@ def icon_label(app: App, size: int, path: Path | None = None) -> QLabel:
     return label
 
 
-CHIP_STATES = ("busy", "update", "build", "held", "preview", "ok", "failed", "none")
+CHIP_STATES = ("busy", "update", "build", "held", "preview", "ok", "failed", "missing", "none")
 ROW_HEIGHT = 60
 ORDER_MIME = "application/x-appglider-app"
 DRAG_SCROLL_MARGIN = 28
@@ -186,6 +186,8 @@ class AppRow(QFrame):
     rollback_requested = Signal(str)
     hold_requested = Signal(str)
     remove_requested = Signal(str)
+    forget_requested = Signal(str)
+    unlist_requested = Signal(str)
     pin_requested = Signal(str)
     build_requested = Signal(str)
     cancel_requested = Signal(str)
@@ -304,6 +306,10 @@ class AppRow(QFrame):
         self.rollback_action.triggered.connect(lambda: self.rollback_requested.emit(app.id))
         self.remove_action = menu.addAction("Uninstall…")
         self.remove_action.triggered.connect(lambda: self.remove_requested.emit(app.id))
+        self.forget_action = menu.addAction("Forget missing copy…")
+        self.forget_action.triggered.connect(lambda: self.forget_requested.emit(app.id))
+        self.unlist_action = menu.addAction("Remove from library…")
+        self.unlist_action.triggered.connect(lambda: self.unlist_requested.emit(app.id))
         more.setMenu(menu)
         content.addWidget(more)
         self.set_state(None, None, False)
@@ -313,6 +319,7 @@ class AppRow(QFrame):
             "launch": self.launch_requested,
             "install": self.install_requested,
             "update": self.install_requested,
+            "reinstall": self.install_requested,
             "build": self.build_requested,
             "cancel": self.cancel_requested,
         }[self.mode]
@@ -354,31 +361,32 @@ class AppRow(QFrame):
         refreshing: bool = False,
         refresh_error: str = "",
         working: str = "",
+        missing: Installed | None = None,
     ) -> None:
         self.installed = installed
         status = app_status(
-            self.app, installed, release, error, info, refreshing, refresh_error, working
+            self.app, installed, release, error, info, refreshing, refresh_error, working, missing
         )
         self.build_required = status.build_required
         self.mode = status.mode
-        self.rollback_action.setEnabled(
-            bool(
-                not busy
-                and installed
-                and installed.managed
-                and installed.previous
-                and installed.previous.is_file()
-            )
+        # The menu offers only what fits the app's state; a running task disables the rest.
+        managed = bool(installed and installed.managed)
+        shown = (
+            (self.launch_action, installed is not None),
+            (self.hold_action, managed or self.app.hold_updates),
+            (self.shortcut_action, managed),
+            (self.rollback_action, managed and previous_copy(installed) is not None),
+            (self.remove_action, managed),
+            (self.forget_action, installed is None and missing is not None),
+            (self.unlist_action, installed is None),
         )
-        self.remove_action.setEnabled(bool(not busy and installed and installed.managed))
+        for action, visible in shown:
+            action.setVisible(visible)
+            action.setEnabled(not busy)
+        self.launch_action.setEnabled(True)
         self.hold_action.setText(
             "Release hold" if self.app.hold_updates else "Hold at current version"
         )
-        self.hold_action.setEnabled(
-            bool(not busy and (self.app.hold_updates or (installed and installed.managed)))
-        )
-        self.shortcut_action.setEnabled(bool(not busy and installed and installed.managed))
-        self.launch_action.setEnabled(installed is not None)
         self.set_action(release)
         self.action_button.setEnabled(self.mode in ("cancel", "launch") or not busy)
         self.set_chip(status.state, status.text, status.tooltip)
@@ -413,6 +421,11 @@ class AppRow(QFrame):
                 "Install",
                 f"Install {name}",
                 "Check the eligible release, then download and verify its AppImage",
+            ),
+            "reinstall": (
+                "Reinstall",
+                f"Reinstall {name}",
+                "The AppImage was moved or deleted; download and verify it again",
             ),
         }[self.mode]
         self.action_button.setText(text)

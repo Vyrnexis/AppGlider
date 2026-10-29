@@ -276,7 +276,8 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
                 color: {warn}; background: {tint(warn, 0.14)}; }}
             QLabel#chip[state="held"] {{ color: {held}; background: {tint(held, 0.14)}; }}
             QLabel#chip[state="ok"] {{ color: {ok}; background: {tint(ok, 0.14)}; }}
-            QLabel#chip[state="failed"] {{ color: {danger}; background: {tint(danger, 0.14)}; }}
+            QLabel#chip[state="failed"], QLabel#chip[state="missing"] {{
+                color: {danger}; background: {tint(danger, 0.14)}; }}
             QPushButton[rowAction="true"] {{ padding: 0; font-size: 13px; }}
             QPushButton, QToolButton {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; border-radius: 7px; padding: 9px 14px; }}

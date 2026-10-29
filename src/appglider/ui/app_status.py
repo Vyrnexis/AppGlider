@@ -30,7 +30,9 @@ def app_status(
     refreshing: bool = False,
     refresh_error: str = "",
     working: str = "",
+    missing: Installed | None = None,
 ) -> AppStatus:
+    """`missing` is AppGlider's record of an installation whose file has since gone."""
     held = bool(installed and app.hold_updates)
     newer_release = bool(installed and release and release.newer_than(installed.version))
     newer = newer_release and not held
@@ -60,8 +62,10 @@ def app_status(
         mode = "build"
     elif newer:
         mode = "update"
+    elif installed:
+        mode = "launch"
     else:
-        mode = "launch" if installed else "install"
+        mode = "reinstall" if missing else "install"
     stamp = datetime.fromtimestamp(info.checked_at).strftime("%d %b, %H:%M") if info else ""
     details: list[str] = []
     if working:
@@ -79,6 +83,10 @@ def app_status(
             if pending
             else f"Held at v{installed.version}"
         )
+    elif missing and not installed:
+        state, text = "missing", "⚠ File missing"
+        details.append(f"The AppImage is no longer at {missing.path}")
+        details.append("Reinstall it, or forget the missing copy from its page")
     elif refreshing:
         state, text = "none", "Checking…"
         details.append("Checking for updates…")
