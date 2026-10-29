@@ -385,10 +385,16 @@ class Library(ShortcutsMixin):
             apps = self.apps
             if app_id not in {app.id for app in apps}:
                 raise ValueError("This repository is not in the library.")
-            if app_id in self.records():
+            records = self.records()
+            stale = records.get(app_id)
+            if stale is not None and stale.managed and stale.path.is_file():
                 raise ValueError(
                     "Uninstall this application's managed copy before removing its repository."
                 )
+            if stale is not None:
+                # The file was moved or deleted outside AppGlider, so the app already shows
+                # as not installed and there is nothing to uninstall: forget the record.
+                self._forget(app_id, records)
             self._save_repositories(tuple(app for app in apps if app.id != app_id))
             # An orphan preference is harmless: adding this repository resets it.
             with contextlib.suppress(OSError):
@@ -403,6 +409,27 @@ class Library(ShortcutsMixin):
                 icon = self.data_dir / "icons" / f"{app_id}.png"
                 if not icon.parent.is_symlink():
                     icon.unlink(missing_ok=True)
+
+    def forget_missing(self, app_id: str) -> None:
+        """Stop tracking an installation whose AppImage is gone; no file is deleted."""
+        with self._lock():
+            records = self.records()
+            if app_id not in self.missing(records):
+                raise ValueError("Only an installation whose file is missing can be forgotten.")
+            self._forget(app_id, records)
+
+    def _forget(self, app_id: str, records: dict[str, Installed]) -> None:
+        # Called with the lock held. Only the record and AppGlider's own files about it go.
+        stale = records.pop(app_id)
+        self._save(records)
+        with contextlib.suppress(OSError):
+            (self.data_dir / "desktop" / f"{app_id}.json").unlink(missing_ok=True)
+        shortcut = self.desktop_dir / f"appglider-{app_id}.desktop"
+        with contextlib.suppress(OSError):
+            if self._owned_shortcut(shortcut):
+                shortcut.unlink()
+        if not stale.path.exists():
+            self._remove_dangling_shortcuts([stale.path])
 
     def _save_repositories(self, apps: tuple[App, ...]) -> None:
         if len(apps) > MAX_APPS:
@@ -546,6 +573,14 @@ class Library(ShortcutsMixin):
             key: value
             for key, value in self.records().items()
             if value.managed and value.path.is_file()
+        }
+
+    def missing(self, records: dict[str, Installed] | None = None) -> dict[str, Installed]:
+        """Installations AppGlider made whose AppImage was since moved or deleted."""
+        return {
+            key: value
+            for key, value in (self.records() if records is None else records).items()
+            if value.managed and not value.path.is_file()
         }
 
     def launch(self, app: App, installed: Installed) -> Path:

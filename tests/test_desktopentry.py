@@ -268,9 +268,9 @@ class EntryTextTests(unittest.TestCase):
     def test_without_metadata_the_entry_is_plain_but_marked(self) -> None:
         text = shortcut_text(APP, Path("/apps/a b.AppImage"), Path("/i.png"), None, LaunchOptions())
         self.assertIn("Name=PhotoCraft (AppGlider)\n", text)
-        self.assertIn('Exec="/apps/a b.AppImage" %F\n', text)
+        self.assertIn('Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "/apps/a b.AppImage" %F\n', text)
         self.assertIn("Categories=Utility;\n", text)
-        self.assertIn("X-AppGlider=true\nX-AppGlider-Metadata=1\n", text)
+        self.assertIn("X-AppGlider=true\nX-AppGlider-Metadata=2\n", text)
         self.assertNotIn("MimeType", text)
         self.assertNotIn("Graphics", text)
 
@@ -287,7 +287,7 @@ class EntryTextTests(unittest.TestCase):
         for line in (
             "Name=PhotoCraft (AppGlider)",
             "Comment=Edit photos",
-            'Exec="/apps/p.AppImage" %U',
+            'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "/apps/p.AppImage" %U',
             "Icon=/i.png",
             "Terminal=false",
             "Categories=Graphics;2DGraphics;",
@@ -298,7 +298,7 @@ class EntryTextTests(unittest.TestCase):
             "Actions=new;",
             "[Desktop Action new]",
             "Name=New image",
-            'Exec="/apps/p.AppImage" "--new"',
+            'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "/apps/p.AppImage" "--new"',
         ):
             self.assertIn(line + "\n", text)
         for unwanted in ("TryExec", "DBusActivatable", "NoDisplay", "X-Custom", "Path="):
@@ -312,10 +312,15 @@ class EntryTextTests(unittest.TestCase):
             APP, Path("/apps/p.AppImage"), Path("/i.png"), metadata_from_groups(groups), options
         )
         self.assertIn(
-            'Exec="env" "GTK_THEME=Adwaita:dark" "/apps/p.AppImage" "--profile" "a b" "50%%" %U\n',
+            'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "GTK_THEME=Adwaita:dark" '
+            '"/apps/p.AppImage" "--profile" "a b" "50%%" %U\n',
             text,
         )
-        self.assertIn('Exec="env" "GTK_THEME=Adwaita:dark" "/apps/p.AppImage" "--new"\n', text)
+        self.assertIn(
+            'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "GTK_THEME=Adwaita:dark" '
+            '"/apps/p.AppImage" "--new"\n',
+            text,
+        )
 
 
 if __name__ == "__main__":

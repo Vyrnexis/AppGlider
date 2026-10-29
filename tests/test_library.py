@@ -876,13 +876,16 @@ class LibraryTests(unittest.TestCase):
 
         own_app = entry("ai.storyteller.photocraft.desktop", f'Exec="{second.path}" %F')
         old_version = entry("old-version.desktop", f"Exec={first.path} %U")
+        with_env = entry("with-env.desktop", f'Exec=env A=1 "{second.path}" %F')
         other_app = entry("other.desktop", 'Exec="/usr/bin/other" %F')
+        other_env = entry("other-env.desktop", "Exec=env A=1 /usr/bin/other %F")
         no_command = entry("none.desktop", "Terminal=false")
         broken = entry("broken.desktop", 'Exec="unterminated')
         self.library.remove(APP)
         self.assertFalse(own_app.exists())
         self.assertFalse(old_version.exists())
-        for kept in (other_app, no_command, broken):
+        self.assertFalse(with_env.exists())
+        for kept in (other_app, other_env, no_command, broken):
             self.assertTrue(kept.exists())
 
     def test_shortcut_repair_preserves_existing_and_dangling_symlink_targets(self) -> None:

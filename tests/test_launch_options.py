@@ -130,6 +130,7 @@ class LaunchOptionsTests(LibraryCase):
         environment = spawn.call_args.kwargs["env"]
         self.assertEqual(environment["MY_VAR"], "x y")
         self.assertEqual(environment["KEEP"], "1")
+        self.assertEqual(environment["APPIMAGELAUNCHER_DISABLE"], "1")
         self.assertNotIn("shell", spawn.call_args.kwargs)
 
     def test_launch_without_options_is_unchanged(self) -> None:
@@ -146,7 +147,10 @@ class LaunchOptionsTests(LibraryCase):
         line = next(
             line for line in self.shortcut.read_text().splitlines() if line.startswith("Exec=")
         )
-        self.assertEqual(shlex.split(line[5:]), ["env", "A=b", str(installed.path), "--x", "%F"])
+        self.assertEqual(
+            shlex.split(line[5:]),
+            ["env", "APPIMAGELAUNCHER_DISABLE=1", "A=b", str(installed.path), "--x", "%F"],
+        )
         self.shortcut.unlink()
         self.library.set_launch_options(APP.id, LaunchOptions(("--y",), ()))
         self.assertFalse(self.shortcut.exists())
@@ -197,14 +201,14 @@ class MenuMetadataTests(LibraryCase):
         self.assertIn("Categories=Office;\n", text)
         self.assertIn("MimeType=application/pdf;\n", text)
         self.assertIn("Actions=new;\n", text)
-        self.assertIn("X-AppGlider-Metadata=1\n", text)
+        self.assertIn("X-AppGlider-Metadata=2\n", text)
         self.assertNotIn("Graphics", text)
 
     def test_without_details_the_entry_is_a_working_utility_entry(self) -> None:
         installed = self.install("1.0.0")
         text = self.shortcut.read_text()
         self.assertIn("Categories=Utility;\n", text)
-        self.assertIn(f'Exec="{installed.path}" %F\n', text)
+        self.assertIn(f'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "{installed.path}" %F\n', text)
 
     def test_failed_activation_keeps_the_cache_of_the_active_version(self) -> None:
         installed = self.install("1.0.0")
@@ -331,6 +335,19 @@ class StartupRefreshTests(LibraryCase):
             self.assertEqual(self.library.refresh_shortcuts(), 0)
         read.assert_not_called()
         self.assertFalse(self.shortcut.exists())
+
+    def test_entries_from_the_previous_marker_gain_the_launcher_bypass(self) -> None:
+        installed = self.install("1.0.0")
+        self.shortcut.write_text(
+            OLD_ENTRY.replace("Exec=x %F", f'Exec="{installed.path}" %F')
+            + "X-AppGlider-Metadata=1\n"
+        )
+        with patch("appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS):
+            self.assertEqual(self.library.refresh_shortcuts(), 1)
+        self.assertIn(
+            f'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "{installed.path}" %F\n',
+            self.shortcut.read_text(),
+        )
 
     def test_foreign_and_symlinked_entries_are_not_touched(self) -> None:
         self.install("1.0.0")

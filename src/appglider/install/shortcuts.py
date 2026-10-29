@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from appglider import APP_TASKBAR_ICON
 from appglider.core.catalog import App
 from appglider.core.storage import atomic_bytes, atomic_json
-from appglider.install.appimage import check_appimage, clean_environment
+from appglider.install.appimage import NO_INTEGRATION, check_appimage, clean_environment
 from appglider.install.desktopentry import (
     DesktopMetadata,
     Groups,
@@ -26,7 +26,8 @@ if TYPE_CHECKING:
     from appglider.install.library import Installed
 
 AUTOSTART_FLAG = "--tray"
-METADATA_MARKER = "X-AppGlider-Metadata=1"
+# Raised when entries change, so refresh_shortcuts rewrites the older ones.
+METADATA_MARKER = "X-AppGlider-Metadata=2"
 DATABASE_SECONDS = 10
 
 
@@ -84,7 +85,7 @@ class ShortcutsMixin:
                 command = next(shlex.split(line[5:]) for line in lines if line.startswith("Exec="))
             except (OSError, ValueError, StopIteration):
                 continue
-            if command and command[0] in targets:
+            if exec_target(command) in targets:
                 try:
                     entry.unlink()
                 except OSError as error:
@@ -107,7 +108,7 @@ class ShortcutsMixin:
         self.update_desktop_database()
 
     def refresh_shortcuts(self, cancel: Event | None = None) -> int:
-        """Give menu entries written before app metadata was read their app's own details.
+        """Rewrite menu entries from older versions: the app's own details, current Exec.
 
         Only entries AppGlider wrote for apps it manages are touched, and none is created.
         Run it away from the Qt thread: it starts each app's runtime to read the entry.
@@ -386,6 +387,15 @@ class ShortcutsMixin:
         atomic_bytes(shortcut, text.encode())
 
 
+def exec_target(command: list[str]) -> str:
+    """The program a menu entry runs, past an `env NAME=value` prefix."""
+    if command[:1] == ["env"]:
+        command = command[1:]
+        while command and "=" in command[0] and not command[0].startswith("/"):
+            command = command[1:]
+    return command[0] if command else ""
+
+
 def shortcut_text(
     app: App,
     path: Path,
@@ -395,11 +405,8 @@ def shortcut_text(
 ) -> str:
     """The menu entry for an installed app, using the app's own details when it gave any."""
     metadata = metadata or DesktopMetadata()
-    prefix = (
-        ["env", *(f"{name}={value}" for name, value in options.environment)]
-        if options.environment
-        else []
-    )
+    environment = NO_INTEGRATION | dict(options.environment)
+    prefix = ["env", *(f"{name}={value}" for name, value in environment.items())]
     code = "%U" if metadata.urls else "%F"
     lines = [
         "[Desktop Entry]",

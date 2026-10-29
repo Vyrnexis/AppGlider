@@ -5,6 +5,10 @@ from pathlib import Path
 
 from appglider.github.versions import architecture
 
+# AppImageLauncher otherwise offers to "integrate" an AppImage it sees start, which moves
+# the file into ~/Applications and out of the folder AppGlider manages.
+NO_INTEGRATION = {"APPIMAGELAUNCHER_DISABLE": "1"}
+
 
 def check_appimage(path: Path) -> None:
     with path.open("rb") as source:
@@ -49,4 +53,4 @@ def clean_environment() -> dict[str, str]:
         "QML_IMPORT_PATH",
     ):
         environment.pop(name, None)
-    return environment
+    return environment | NO_INTEGRATION

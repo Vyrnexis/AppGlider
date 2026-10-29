@@ -203,6 +203,37 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(reopened.apps, ())
         self.assertFalse(shortcut.exists())
 
+    def test_a_record_whose_file_was_moved_away_does_not_block_removal(self):
+        self.library.add_repository(CUSTOM)
+        installed = self.install("0.9.4")
+        shortcut = self.library.desktop_dir / f"appglider-{CUSTOM.id}.desktop"
+        self.assertTrue(shortcut.is_file())
+        # AppImageLauncher, for one, moves an AppImage it integrates into ~/Applications.
+        moved = self.root / "Applications" / installed.path.name
+        moved.parent.mkdir()
+        installed.path.rename(moved)
+        self.assertEqual(self.library.scan(), {})
+        self.library.remove_repository(CUSTOM.id)
+        self.assertEqual(self.library.apps, ())
+        self.assertEqual(json.loads((self.library.data_dir / "library.json").read_text()), {})
+        self.assertFalse(shortcut.exists())
+        self.assertTrue(moved.is_file())
+        self.library.add_repository(CUSTOM)
+        self.assertEqual(self.install("0.9.4").path, installed.path)
+
+    def test_only_a_missing_copy_can_be_forgotten(self):
+        self.library.add_repository(CUSTOM)
+        installed = self.install("0.9.4")
+        self.assertEqual(self.library.missing(), {})
+        with self.assertRaisesRegex(ValueError, "missing"):
+            self.library.forget_missing(CUSTOM.id)
+        installed.path.unlink()
+        self.assertEqual(list(self.library.missing()), [CUSTOM.id])
+        self.library.forget_missing(CUSTOM.id)
+        self.assertEqual(self.library.missing(), {})
+        self.assertIn(CUSTOM, self.library.apps)
+        self.assertFalse((self.library.desktop_dir / f"appglider-{CUSTOM.id}.desktop").exists())
+
     def test_custom_filename_matching_is_separate_from_storage_id(self):
         release = custom_release()
         data = {
@@ -924,7 +955,6 @@ class RepositoryGuiTests(unittest.TestCase):
             CUSTOM.name, [action.text() for action in self.window.tray_apps_menu.actions()]
         )
         self.window.open_app(CUSTOM.id)
-        self.assertFalse(self.window.app_page.remove_button.isEnabled())
         self.assertTrue(self.window.app_page.remove_row.isHidden())
         self.assertIn(CUSTOM, self.library.apps)
         self.window.app_page.back_button.click()
