@@ -104,6 +104,9 @@ Status chips, one per row, in priority order:
 | File missing | ⚠ File missing | danger | Reinstall |
 | Not installed | Not installed | neutral | Install |
 
+When GitHub cannot be reached at all, rows keep their last known chip (Check failed is for
+real failures) and the sidebar GitHub status reads **GitHub: offline** instead.
+
 Chips always pair colour with a symbol or word; colour is never the only signal. The ⋯ menu
 holds quick actions only: Open details, Launch, Open repository, Pin to top, Move up and
 Move down, Hold, Create/repair menu shortcut, Roll back, Uninstall; or, for an app that is
