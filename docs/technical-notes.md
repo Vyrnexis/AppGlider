@@ -334,16 +334,21 @@ either way `library/sort` is then removed.
   kept copy first. The sanitised result is cached in `desktop/<app>.json`, tied to the file's
   path, size and modification time, and checked again when used. Writing an entry only uses the
   cache.
-- Entries carry `X-AppGlider-Metadata=1`. At startup, one background pass rewrites owned
-  entries of installed apps that lack it, never creating a missing entry, then
+- Entries carry `X-AppGlider-Metadata=2` (raised from `=1` when entries gained the
+  AppImageLauncher variable below). At startup, one background pass rewrites owned entries of
+  installed apps that lack the current marker, never creating a missing entry, then
   `update-desktop-database` runs once on the folder if it is installed.
 - Launch options (`launch-options.json`, app id to `args` and `env`) are separate from the
   catalog and its export. Launching adds the arguments after the AppImage path and merges the
-  variables over the clean environment. The entry's `Exec` becomes
-  `"env" "NAME=value" "/path/app.AppImage" "arg" %F` (`%U` if the app's own entry took URLs),
-  each word quoted as the desktop entry specification requires; without variables there is no
-  `env`. Actions get the variables but not the arguments. Saving the options rewrites an
-  existing owned entry.
+  variables over the clean environment. The entry's `Exec` is
+  `"env" "APPIMAGELAUNCHER_DISABLE=1" "NAME=value" "/path/app.AppImage" "arg" %F` (`%U` if the
+  app's own entry took URLs), each word quoted as the desktop entry specification requires.
+  Actions get the variables but not the arguments. Saving the options rewrites an existing
+  owned entry. When removing entries, the command is read past an `env NAME=value` prefix.
+- `APPIMAGELAUNCHER_DISABLE=1` is set in the clean environment (so for Launch and for reading
+  the `.desktop` file) and in every entry. AppImageLauncher's binfmt handler and launcher both
+  check it and then run the AppImage directly, instead of offering to integrate it, which
+  would move the file out of AppGlider's folder. A launch option can override it.
 - Its own entry is rewritten only when it is missing, when its target no longer exists, or
   when a newer packaged AppImage takes over. A development run never repoints a working
   entry. The entry's icon copy is refreshed whenever a new release ships a different icon.
@@ -385,3 +390,11 @@ repository, or apps installed before you imported the example catalog), the entr
 untouched and a **Review N unrecognised entries…** button appears at the bottom of the window. Tick entries to
 forget them. Nothing is forgotten without confirmation, and files on disk are never deleted.
 Unreadable or malformed library files are preserved and reported.
+
+A managed entry whose AppImage is no longer a file (moved or deleted outside AppGlider) is
+not counted as installed: the row shows **⚠ File missing** and offers **Reinstall**, which
+installs normally and reuses the entry's ownership-marked folder. **Forget missing copy**
+drops only that entry, AppGlider's own `appglider-<app>.desktop` and the cached menu details,
+plus any entry whose command is the missing path. **Remove from library** does the same as
+part of removing the repository; it still refuses while the managed file exists. Neither
+touches files elsewhere, such as a copy moved to `~/Applications`.

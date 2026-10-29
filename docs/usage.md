@@ -1,474 +1,527 @@
 # AppGlider user guide
 
-AppGlider keeps your AppImage apps in one place. It downloads them from their GitHub
-pages, checks they arrived intact, adds them to your application menu and tells you when a
-newer version is out. If you want the "how does it actually work" details, see the
+AppGlider keeps your AppImage apps in one place. It downloads them from their GitHub pages,
+checks that each download arrived intact, adds them to your application menu and tells you
+when a new version is out.
+
+New to AppGlider? Start with the [quick start](#quick-start), then come back to the other
+sections when you need them. Behind-the-scenes details are in the
 [technical notes](technical-notes.md).
 
 ## Contents
 
-- [The window](#the-window)
-- [Keyboard](#keyboard)
+**Getting started**
+
+- [Quick start](#quick-start)
+- [A tour of the window](#a-tour-of-the-window)
 - [Adding apps](#adding-apps)
 - [Installing and launching](#installing-and-launching)
-- [Updates](#updates)
-- [Updating AppGlider](#updating-appglider)
-- [Stable versions and previews](#stable-versions-and-previews)
+
+**Everyday use**
+
+- [Keeping apps up to date](#keeping-apps-up-to-date)
 - [The app's page](#the-apps-page)
+- [Uninstalling, forgetting and removing](#uninstalling-forgetting-and-removing)
+
+**Choices for each app**
+
+- [Stable versions and previews](#stable-versions-and-previews)
 - [Choosing a build](#choosing-a-build)
 - [Holding a version](#holding-a-version)
 - [Icons](#icons)
 - [Launch options](#launch-options)
-- [Catalogs: sharing a list of apps](#catalogs-sharing-a-list-of-apps)
+
+**AppGlider itself**
+
 - [Settings](#settings)
+- [Catalogs: sharing a list of apps](#catalogs-sharing-a-list-of-apps)
+- [Updating AppGlider](#updating-appglider)
 - [The tray icon](#the-tray-icon)
 - [Starting with your desktop](#starting-with-your-desktop)
 - [Menu shortcuts](#menu-shortcuts)
-- [Uninstalling](#uninstalling)
+- [Keyboard](#keyboard)
+
+**Help**
+
+- [When an app's file goes missing](#when-an-apps-file-goes-missing)
 - [If something goes wrong](#if-something-goes-wrong)
 
-## The window
+## Quick start
 
-A new library is empty. You will see a welcome message with **+ Add app**, **Import
-catalog…** and **Example catalog**.
+1. **Get AppGlider.** Download `AppGlider-…-x86_64.AppImage` from the
+   [Releases page](https://github.com/Vyrnexis/AppGlider/releases/latest) and keep it
+   somewhere permanent, such as `~/Applications`.
+2. **Make it runnable.** Right-click the file, open **Properties → Permissions** and tick
+   **Allow executing as a program**, or run `chmod +x AppGlider-*.AppImage` in a terminal.
+   Then double-click it.
+3. **Add some apps.** A new library is empty, so AppGlider shows a welcome screen:
 
-![AppGlider's Library page with two updates waiting](previews/appglider-library.png)
+   ![The welcome screen of an empty library](previews/guide-welcome.png)
 
-**The sidebar** on the left is always there:
+   1. **+ Add app** adds one app from its GitHub address. See [Adding apps](#adding-apps).
+   2. **Import catalog…** adds a whole list of apps from a file. See
+      [Catalogs](#catalogs-sharing-a-list-of-apps).
+   3. **Example catalog** adds a ready-made list of the ArtCraft apps and SolidCraft, a
+      good way to try AppGlider.
 
-- **Library** lists every app, with the number of apps you have.
-- **Updates** lists only the apps with an update waiting. An amber badge shows how many.
-- **Add app** opens the page for adding a repository.
-- **Settings** opens AppGlider's own settings. It sits at the bottom, above two small status
-  lines: when updates were last checked (and when the next scheduled check is due), and how
-  much of GitHub's request allowance is left. Clicking that block opens
-  **Settings → GitHub**; the version number below it opens **Settings → About**.
+   Adding an app only puts it on your list. Nothing is downloaded yet.
+4. **Install.** Press **Install** on an app's row. AppGlider downloads it, checks it and
+   adds it to your application menu.
+5. **Launch.** Press **Launch** on the row, or start the app from your application menu like
+   any other program. Its menu entry is named like **PhotoCraft (AppGlider)**.
 
-**The Library page** has a search box (it matches names, descriptions and repository names),
-an **All / Installed (N)** switch, a **⋯ Library options** menu and a round-arrow button that
-checks for updates. When updates are waiting, a banner offers **Update all** and **Review**, which
-opens the Updates page. The Updates page is the same list limited to apps with an update,
-with the same banner and **Update all**.
+That is all you need. AppGlider checks for updates by itself and shows an **Update** button
+when a new version is out.
 
-![The Updates page](previews/appglider-updates.png)
+## A tour of the window
 
-**Rows.** Each app is a row: its icon, name and a one-line description, the installed
-version, a status chip, one main button and a **⋯** menu. Clicking anywhere on a row (or
-its name) opens the app's page. The chip says what is going on:
+![The Library page, with numbered parts](previews/guide-library.png)
 
-| Chip | Main button | Meaning |
+1. **Library, Updates and Add app.** **Library** lists every app (the number is how many
+   you have). **Updates** lists only the apps with an update waiting; the amber badge says
+   how many. **Add app** opens the page for adding an app.
+2. **Search** matches app names, descriptions and repository names. **Ctrl+F** jumps here
+   from any page.
+3. **All / Installed** shows every app, or only the ones you have installed.
+4. **Library options** (**⋯**) holds **Sort A–Z**.
+5. **Check for updates** looks for new versions of your installed apps now.
+6. **The updates banner** appears when updates are waiting. **Update all** installs them
+   all; **Review** opens the Updates page.
+7. **A row** for each app. Click anywhere on it (except its buttons) to open the
+   [app's page](#the-apps-page).
+8. **Settings** opens AppGlider's own [settings](#settings).
+9. **The status block** shows when updates were last checked, when the next check is due and
+   how much of GitHub's allowance is left. Click it for details. The version number below
+   it opens **Settings → About**.
+
+The bottom of the window stays empty until there is something to say: the result of
+something you did ("Updated 2 apps."), or a progress bar with **Cancel** while something
+downloads. Results fade away after a while.
+
+### Rows
+
+![One row, with numbered parts](previews/guide-row.png)
+
+1. **Drag handle.** Drag the row up or down to put your apps in your own order.
+2. **Icon.**
+3. **Name and description.** A gold ★ beside the name means the app is pinned to the top.
+4. **Installed version**, or **—** when it is not installed.
+5. **Status chip**: what is going on with the app (see the table below).
+6. **Main button**: the thing you most likely want to do next.
+7. **⋯ menu**: more actions for this app.
+
+| Chip | Main button | What it means |
 | --- | --- | --- |
-| ✓ Up to date | Launch | You have the newest eligible version |
+| ✓ Up to date | Launch | You have the newest version on offer |
 | ↑ 1.4.0 | Update | A newer version is waiting |
-| Choose build | Choose build | Several builds fit; see [Choosing a build](#choosing-a-build) |
-| ‖ Held · 2.3.0 out, or ‖ Held | Launch | The app is [held](#holding-a-version) |
-| Preview channel | Launch | The installed copy is a preview |
-| Check failed | Launch | The last check failed; the last known information is kept |
-| Not installed | Install | In your library but not downloaded yet |
+| Choose build | Choose build | Several downloads fit; see [Choosing a build](#choosing-a-build) |
+| ‖ Held, or ‖ Held · 2.3.0 out | Launch | The app is [held](#holding-a-version) at its version |
+| Preview channel | Launch | The installed copy is a preview version |
+| Check failed | Launch | The last check failed; what was known before is kept |
+| ⚠ File missing | Reinstall | The app's file was moved or deleted; see [below](#when-an-apps-file-goes-missing) |
+| Not installed | Install | On your list but not downloaded yet |
 | Installing… / Updating… | Cancel | Work is in progress |
 
-Colour is never the only signal: every chip also has a word or symbol, and hovering over it
-explains it. The **⋯** menu has quick actions: Open details, Launch, Open repository, Pin to
-top, Move up and Move down (see below), Hold at current version, Create/repair menu
-shortcut, Roll back to previous version and Uninstall…. Everything else is on the app's
-page.
+Every chip has a word or symbol as well as a colour, and hovering over it explains it.
 
-**Order, pinning and your own order.** There is one order: yours. Until you change it the
-apps are A–Z by name, and an app you add later appears at the end. **⋯ → Pin to top** puts an
-app at the front (it gets a gold ★ beside its name), and **Unpin** puts it back. To reorder,
-drag a row up or down by the dotted handle at its left edge; a line shows where it will land.
-**⋯ → Move up** and **Move down** do the same without a mouse. Reordering works on the Library
-page with **All** or **Installed** selected and an empty search, never on Updates. With
-**Installed** selected, an app moves relative to the rows you can see and the apps not shown
-keep their places. Pinned apps always stay above the others. **⋯ → Sort A–Z** in the toolbar
-(next to the update check button) replaces your order with A–Z after you confirm; pinned apps
-stay on top. The tray menu's list of installed apps follows the same order.
+### The ⋯ menu
 
-**Messages.** The bottom of the window stays empty until there is something to say: a result
-("Updated 1 apps."), a progress bar with **Cancel** while something downloads, or a
-**Review N unrecognised entries…** button. Results fade away after a while.
+The menu only offers what makes sense for the app right now:
 
-## Keyboard
+| An installed app | An app that is not installed |
+| --- | --- |
+| ![The menu of an installed app](previews/guide-menu-installed.png) | ![The menu of an app that is not installed](previews/guide-menu-not-installed.png) |
 
-Everything can be done from the keyboard. **Tab** moves through the sidebar, the toolbar,
-the banner and then the rows; the focused control has an outline in the accent colour.
-**Enter** or **Space** on an app's name opens its page, **Ctrl+F** jumps to the search box
-from any page, and **Esc** goes back from an app's page or the Add app page.
+**Roll back to previous version** appears when AppGlider kept an earlier copy, and **Move
+up** and **Move down** appear while the list can be reordered. An app whose file went
+missing also offers **Forget missing copy…**. While AppGlider is busy installing or updating
+something, the menu's actions are greyed out until it finishes.
+
+### Your own order and pinning
+
+There is one order, and it is yours. At first the apps are sorted A–Z, and an app you add
+later goes to the end.
+
+- **Drag a row** by its handle to move it; a line shows where it will land. **⋯ → Move up**
+  and **Move down** do the same from the keyboard.
+- **⋯ → Pin to top** keeps an app above all the others; **Unpin** puts it back.
+- **⋯ → Sort A–Z** in the toolbar puts everything back in A–Z order, after asking. Pinned
+  apps stay on top.
+
+Reordering works on the Library page with an empty search box, not on the Updates page.
+With **Installed** selected, an app moves among the rows you can see and the hidden ones keep
+their places. The tray menu lists your installed apps in the same order.
 
 ## Adding apps
 
-AppGlider installs apps from public GitHub repositories. There are two ways to fill your
-library.
+AppGlider installs apps from public GitHub repositories. To add one:
 
-**One at a time**
+![The Add app page after inspecting a repository](previews/guide-add-app.png)
 
-1. Choose **Add app** in the sidebar.
-2. Paste the repository's address, such as `https://github.com/owner/project`, and give it
-   a name if you like.
-3. Leave **Release channel** on **Stable** unless you want to try previews.
-4. Choose **Inspect repository** (or press Enter). AppGlider looks at the latest release and
-   shows what it found: the version, the file it would download, whether a checksum is
-   published, and a choice of icons. If several builds fit, a **Build variant** box asks
-   which one you want.
-5. Choose **Add to library**. This only creates a row. It does not install anything yet.
-   AppGlider then opens the new app's page.
-
-![The Add app page after inspecting a repository](previews/appglider-add-app.png)
-
-Leaving the page while a search runs cancels it.
+1. Choose **Add app** in the sidebar and paste the repository's address, such as
+   `https://github.com/owner/project`. You can change the **Name** it gets in your library.
+2. Leave **Release channel** on **Stable** unless you want to try test versions
+   ([previews](#stable-versions-and-previews)).
+3. Choose **Inspect repository** (or press **Enter**).
+4. AppGlider shows what it found: the version, the file it would download and whether the
+   project published a checksum to check it with. Below that you can pick an icon. If
+   several downloads fit, a **Build variant** box asks which one you want.
+5. Choose **Add to library**. This puts the app on your list and opens its page. It does not
+   download anything yet.
 
 The project needs a published release with an AppImage file and a published checksum. If
-something is missing, AppGlider tells you what.
+something is missing, AppGlider tells you what. Leaving the page while it is still looking
+cancels the search.
 
-**From a catalog**: see [Catalogs](#catalogs-sharing-a-list-of-apps) below.
+To add many apps at once, use a [catalog](#catalogs-sharing-a-list-of-apps).
 
 ## Installing and launching
 
-Press **Install** on an app's row (or on its page). AppGlider downloads the version that matches your
-processor, checks it against the checksum the project published, makes sure it is a proper
-AppImage, and adds an entry to your application menu such as **PhotoCraft (AppGlider)**.
-After that the row shows **Launch**.
+Press **Install** on an app's row or its page. AppGlider:
 
-Installed apps work offline. If an app fails to start, AppGlider shows where its log file
-is.
+1. downloads the version that matches your computer,
+2. checks it against the checksum the project published, and that it really is an AppImage,
+3. adds an entry to your application menu, named like **PhotoCraft (AppGlider)**.
 
-AppGlider only manages apps it installed itself. AppImages you downloaded some other way,
-or installed with another launcher, are left alone.
+The row then shows **Launch**. A download that fails or that you cancel leaves nothing
+behind. Installed apps work offline. If an app fails to start, AppGlider tells you where to
+find its log file.
 
-## Updates
+AppGlider only manages the apps it installed itself. AppImages you downloaded some other way,
+or installed with another program, are left alone.
 
-The round-arrow button (**Check for updates**) on the Library and Updates pages, and
-**Check for updates** in the tray menu, check the apps you have installed to see whether
-newer versions exist. They do not download anything. When an update is available, the row
-shows the new version with an **Update** button, and the banner offers **Update all**. Held
-apps are left out.
+## Keeping apps up to date
 
-An app's page shows **What's new**, the release notes of the version on offer, so you can
-read them before updating. If the project published none, a link opens its releases on
-GitHub.
+**How you find out.** AppGlider checks your installed apps for new versions when it starts,
+and then every 6 hours while it is running (also while it sits in the tray). You can change
+how often under **Settings → Updates**, or choose **Only when I choose**. To check right now,
+press the round arrow in the toolbar, or **Check for updates** in the tray menu. Checking
+never downloads anything.
 
-AppGlider also checks by itself:
+When an update is waiting:
 
-- when it starts, and
-- on a schedule while it is running, including while it sits in the tray. Choose how often
-  under **Settings → Updates → Check for updates**: every hour, 3, 6 (the default), 12 or 24
-  hours, or **Only when I choose** if you would rather do it yourself.
+- the row shows the new version and an **Update** button,
+- the banner at the top offers **Update all**,
+- **Updates** in the sidebar and the tray icon get an amber badge.
 
-Checks only happen while AppGlider is running. When at least one update is waiting, the
-tray icon gets an amber badge with an up arrow, and its tooltip says how many ("AppGlider ·
-Updates: 2").
+**Read before you update.** An app's page shows **What's new**, the project's notes for the
+new version.
 
-**Desktop notifications (optional).** Turn on **Settings → Updates → Notify me about new
-updates** and AppGlider also pops up a message when a
-scheduled check finds an update you have not been told about yet, such as "PhotoCraft 1.1.0
-is available." Several updates are combined into one message, you are told once for each new
-version, and nothing appears while you are looking at the AppGlider window or when you press
-**Check for updates** yourself. Clicking the message opens AppGlider. It is off by default,
-and it needs a system tray; whether and how your desktop shows the message is up to your
-desktop.
+**Notifications (optional).** Turn on **Settings → Updates → Notify me about new updates** to
+get a desktop notification when a scheduled check finds something new. You are told once per
+new version, several updates share one message, and nothing pops up while you are looking at
+AppGlider. It needs a system tray.
 
-GitHub lets programs make about 60 anonymous requests an hour. AppGlider is careful with
-them: to find out whether an installed app has a newer version, it first looks at the app's
-ordinary GitHub release page, which does not use up that allowance, and only uses the allowance
-when a new version has really appeared or when you install, add or inspect an app. Scheduled
-checks are skipped when GitHub says few requests are left. The status block at the bottom of
-the sidebar shows how many remain. No GitHub account or token is needed. The details are in
-the [technical notes](technical-notes.md#how-release-checks-work).
+**Roll back.** AppGlider keeps the previous version of each app. If a new version misbehaves,
+use **⋯ → Roll back to previous version**, or **Roll back** under **Manage** on the app's page.
 
-**Roll back.** AppGlider normally keeps the previous version of each app. If a new version
-misbehaves, use **⋯ → Roll back to previous version**, or **Roll back** under **Manage** on the app's page, which also shows the size of the kept copy. A download that fails or is
-cancelled never replaces the version you already have.
-
-## Updating AppGlider
-
-AppGlider also looks for a newer version of itself. When one is out, a banner in your accent
-colour appears above the list on the Library and Updates pages: "**AppGlider 0.9.3** is
-available", with a **What's new ↗** link to that release on GitHub and a button. AppGlider
-itself is not a row in the list and is not counted in the Updates number or in **Update
-all**.
-
-**Update AppGlider** appears when AppGlider was started from its AppImage and that file sits in
-a folder AppGlider can write to. Pressing it:
-
-1. Downloads the new AppImage into the same folder as the one you are running, named like
-   `AppGlider-0.9.3-x86_64.AppImage`. The footer shows the progress and **Cancel** stops it.
-   The file is checked like an app you install (published checksum, size and the file's own
-   header) and only gets its final name once it passes, so a failed or cancelled download
-   leaves nothing behind. The banner stays so you can try again.
-2. Points AppGlider's menu entry at the new file, and the login entry too if you turned on
-   **Start with my desktop**. Your running AppGlider and its file are not touched.
-3. Changes the banner to "**AppGlider 0.9.3** is ready. It starts the next time you open
-   AppGlider." with a **Restart now** button. **Settings → About** says "Version 0.9.3 is
-   ready · restart to use it".
-
-**Restart now** opens the new AppGlider and closes this one. It is greyed out while an
-install, update or release check is running; wait for it or cancel it first. You do not have
-to restart: the menu entry already opens the new version, so the next time you start AppGlider
-you get it. If you run the old file again before then, the "ready" banner shows instead of a
-second download.
-
-The old file is removed for you. The first time the new version starts, it deletes the file it
-replaced, but only when that file is in the same folder, is named like `AppGlider-….AppImage`,
-is a real AppImage (not a link) and is not running. Any other AppGlider files in that folder,
-such as older versions you downloaded yourself, are never touched. If the old version is still
-closing, it is removed on a later start. The exact rules are in the
-[technical notes](technical-notes.md#appgliders-own-updates).
-
-When AppGlider was not started from an AppImage (for example when you run it from source), or
-its folder cannot be written, the button is **Releases on GitHub ↗** and opens the release
-page in your browser, where you can download the new AppImage yourself.
-
-It looks only for stable releases, and checking uses none of GitHub's request allowance
-(pressing **Update AppGlider** does a normal release check first, like installing an app,
-which uses a couple of requests). It checks shortly after AppGlider starts, on your schedule
-from **Settings → Updates → Check for updates**, when you press **Check for updates**, and
-when you press **Check now** under **Settings → About**, which also shows when it last looked
-("Up to date · checked 14:05", "Version 0.9.3 is available" or "Couldn't check"). With **Only
-when I choose**, nothing is checked at startup or on a schedule. It works even when you have
-no apps installed. A failed automatic check is silent; a check you asked for says so. There is
-no setting to turn the check off.
-
-When an update is waiting, the tray icon gets the same badge as for app updates. If you turned
-on **Notify me about new updates**, a scheduled check also tells you once for each new
-AppGlider version.
-
-## Stable versions and previews
-
-Projects often publish test versions ("beta", "preview") ahead of the real thing. By
-default AppGlider only offers **stable** releases. To include previews for an app, open its
-page and set **Release channel** to **Preview** under **Preferences**. The page's **Check
-now** (under **Versions**) shows what that would give you without installing anything.
-
-![An app's page: release notes, versions, preferences and Manage](previews/appglider-app-page.png)
-
-- Green **Latest** badges mark the project's latest stable release. Amber **Pre-release**
-  badges mark previews.
-- If you turn previews off again, an installed preview keeps working, and AppGlider waits
-  for a newer stable release. It never silently downgrades you. **Roll back** is the way
-  to go back on purpose.
+**GitHub's allowance.** GitHub lets programs without an account make about 60 requests an
+hour. AppGlider is careful with them: a routine check reads the project's ordinary release
+page first, which costs nothing, and only uses the allowance when a new version has really
+appeared, or when you add, inspect or install an app. If few requests remain, scheduled
+checks wait until GitHub resets the allowance. The status block in the sidebar shows what is
+left. You do not need a GitHub account. The details are in the
+[technical notes](technical-notes.md#how-release-checks-work).
 
 ## The app's page
 
-Click an app's row to open its page; **‹ Library** (or **Esc**) returns to the list as you
-left it. The header has the icon, name, repository, description, status chips and the
-buttons **Launch** and the main action (Install, Update, Choose build or Cancel). Below it:
+Click an app's row to open its page. **‹ Library** (or **Esc**) takes you back to the list as
+you left it.
 
-- **What's new**: the release notes of the offered version, with its date and size.
-- **Versions**: the installed version, the previous copy kept for rolling back (with its
-  size), the latest stable and preview versions, and when they were last checked
-  (**Check now** looks again).
-- **Preferences**: **Release channel**, **Hold at this version**, **Pin to top**, **Build**,
-  **Icon**, **Menu shortcut** (**Repair**), and the launch options **Arguments** and
-  **Environment** (see [Launch options](#launch-options)). Changes apply immediately.
-- **Manage** (in red): **Roll back** when there is a kept copy, then **Uninstall…** while the
-  app is installed or **Remove…** from the library once it is not. Each asks before it does
-  anything. Uninstalling keeps your documents and the app's own settings. Removing an app
-  from the library deletes no files.
+![An app's page, with numbered parts](previews/guide-app-page.png)
+
+1. **Launch**, and the main action: Install, Update, Choose build, Reinstall or Cancel.
+2. **Status chips**: the app's state and its release channel.
+3. **What's new**: the release notes of the version on offer, with its date and size, and a
+   link to the full notes on GitHub.
+4. **Versions**: the installed version, the earlier copy kept for rolling back, the newest
+   stable and preview versions, and when they were last checked. **Check now** looks again.
+5. **Preferences** for this app. Changes apply straight away.
+   - **Release channel**: see [Stable versions and previews](#stable-versions-and-previews).
+   - **Hold at this version**: see [Holding a version](#holding-a-version).
+   - **Pin to top**: keep the app at the top of the list.
+   - **Build**: see [Choosing a build](#choosing-a-build).
+   - **Icon**: see [Icons](#icons).
+   - **Menu shortcut → Repair**: recreate the app's menu entry.
+   - **Arguments** and **Environment**: see [Launch options](#launch-options).
+
+   **Hold at this version** and **Menu shortcut** appear once the app is installed.
+6. **Manage** (in red): **Roll back** when an earlier copy is kept, and **Uninstall…**,
+   **Forget…** or **Remove…** depending on the app's state. Each asks first. See
+   [Uninstalling, forgetting and removing](#uninstalling-forgetting-and-removing).
+
+## Uninstalling, forgetting and removing
+
+There are three ways to let go of an app. Each asks before it does anything, and none of them
+touches your documents or the app's own settings.
+
+| Action | Offered when | What it does | The app stays on your list |
+| --- | --- | --- | --- |
+| **Uninstall…** | The app is installed | Deletes the app's file, the earlier copy kept for rolling back, and its menu entries | Yes, as Not installed |
+| **Forget missing copy…** | The app shows ⚠ File missing | Stops tracking the missing file and removes its menu entry. Deletes no files | Yes, as Not installed |
+| **Remove from library…** | The app is not installed, or its file is missing | Takes the app off your list, with its preferences and icon. Deletes no app files | No |
+
+All three are in the row's **⋯** menu and under **Manage** on the app's page.
+
+- **To get rid of an app completely:** **Uninstall…** it, then **Remove from library…**.
+- **Forget or Remove?** **Forget** keeps the app on your list so you can install it again
+  later. **Remove** takes it off the list altogether, and forgets a missing file too.
+
+You cannot uninstall an app while it is running. Uninstalling also releases a
+[hold](#holding-a-version).
+
+## Stable versions and previews
+
+Projects often publish test versions ("beta", "preview") before the finished one. AppGlider
+offers only **stable** versions unless you ask for more. To include previews for one app,
+open its page and set **Release channel** to **Preview**. **Check now** under **Versions**
+shows what that would offer, without installing anything.
+
+- A green **Latest** badge marks the project's newest stable version. An amber
+  **Pre-release** badge marks a preview.
+- If you switch previews off again, an installed preview keeps working, and AppGlider waits
+  for a newer stable version. It never downgrades an app by itself; **Roll back** is the way
+  to go back on purpose.
 
 ## Choosing a build
 
-Some projects publish several AppImages for the same version, for example one for Ubuntu
-22.04 and one for 24.04. When AppGlider cannot tell which one you need, a **Build variant**
-choice appears when you add the app. Pick the one that suits your system, following that
-project's own advice. AppGlider cannot tell which distribution you run. Your choice is
-remembered for later updates. To change it, open the app's page and use **Preferences →
-Build → Change…**.
+Some projects publish several files for the same version, for example one for Ubuntu 22.04
+and one for 24.04. When AppGlider cannot tell which one you need, it asks you to choose when
+you add the app. Pick the one that suits your system, following the project's own advice.
+AppGlider remembers your choice for later updates. To change it, use **Build → Change…** on
+the app's page.
 
-If the project later renames its files so AppGlider can no longer tell which build you
-meant, the row shows **Choose build**. Your installed copy keeps working, and nothing
-changes until you choose.
+If the project later renames its files so AppGlider can no longer tell which one you meant,
+the row shows **Choose build**. Your installed copy keeps working, and nothing changes until
+you choose.
 
 ## Holding a version
 
-To keep an installed app where it is, switch on **Hold at this version** on its page (or
-use **⋯ → Hold at current version**). AppGlider still checks a held app, but it never
-offers an update, counts it, notifies you or includes it in **Update all**; the row says
-"Held" and shows which version is waiting. Switch the hold off (or choose **Release
-hold**) to update again. The hold is removed when you uninstall the app.
+To keep an installed app at the version it has, switch on **Hold at this version** on its
+page, or use **⋯ → Hold at current version**. AppGlider still checks a held app, but never
+offers to update it, counts it, notifies you about it or includes it in **Update all**. The
+row says **‖ Held**, and shows which version is waiting. Switch the hold off (or choose
+**⋯ → Release hold**) to update it again.
 
 ## Icons
 
-AppGlider looks for an icon in the project's repository when you add it. This normally takes
-a second or two. If GitHub's request allowance is low it browses the project's web pages
-instead, which uses none of the allowance and usually takes 5 to 10 seconds (up to about 20 for
-some big projects). While it works you will see a moving bar and a message such as "Looking
-through OrcaSlicer's folders… 7 pages so far", so you can tell it has not stopped. To stop it,
-leave the page. You can pick one
-of the candidates it finds, or **Choose file…** to use your own PNG or SVG file. To change
-an app's icon later, open its page and use **Preferences → Icon → Change…**, then **Find
-online**, **Choose file…** or **Use the default icon**. Icons are saved on your computer and work offline.
-If there is no icon, AppGlider's own is used. Apps from the example catalog come with their
-icons.
+When you add an app, AppGlider looks for icons in the project's repository and lets you pick
+one, or use **Choose file…** to pick your own PNG or SVG file. Looking usually takes a second
+or two. When GitHub's allowance is low it browses the project's web pages instead, which can
+take 5 to 20 seconds; a message such as "Looking through OrcaSlicer's folders… 7 pages so
+far" shows it is still working. Leave the page to stop it.
+
+To change an icon later, use **Icon → Change…** on the app's page, then **Find online**,
+**Choose file…** or **Use the default icon**. Icons are saved on your computer. Apps from the
+example catalog come with their icons, and an app without one gets AppGlider's.
 
 ## Launch options
 
-On an app's page, **Arguments** and **Environment** change how AppGlider starts that app. Both
-are optional and saved when you press Enter or leave the field.
+**Arguments** and **Environment** on an app's page change how that app is started. Both are
+optional, and are saved when you press **Enter** or leave the box.
 
-- **Arguments** is one line, read like a shell would: `--profile "work files" --safe-mode`.
-- **Environment** is a list of `NAME=value` pairs separated by spaces. Quote a value that
-  contains spaces: `GTK_THEME=Adwaita:dark LANG="de_DE.UTF-8"`. A name uses letters, digits
-  and underscores and does not start with a digit.
+- **Arguments**: extra options for the app, written as you would in a terminal, for example
+  `--profile "work files" --safe-mode`.
+- **Environment**: variables as `NAME=value` pairs separated by spaces, for example
+  `GTK_THEME=Adwaita:dark LANG="de_DE.UTF-8"`. Put quotes around a value with spaces in it.
 
-They apply when you press **Launch** and in the app's menu entry (the menu entry runs the
-app through `env` when there are variables). The app's extra menu actions get the variables
-but not the arguments. Text that cannot be read is not saved; the page says why. The options
-stay when you uninstall the app and are never part of an exported catalog, because a variable
-can hold a password or token. They are kept in `launch-options.json` in the data folder.
+They are used by **Launch** and by the app's menu entry. The app's extra menu actions (such
+as "New window") get the variables but not the arguments. If AppGlider cannot read what you
+typed, it does not save it and says why. The options are kept when you uninstall the app,
+and are never included when you export a catalog, because a variable can hold a password.
+
+## Settings
+
+Open **Settings** at the bottom of the sidebar. Everything saves as you change it; there is
+no Save button.
+
+![Settings, with numbered parts](previews/guide-settings.png)
+
+1. **Sections**:
+   - **General**: theme, accent colour and how the window behaves.
+   - **Updates**: how often to check for updates, and notifications.
+   - **Catalogs**: import a list of apps, add the example list, or export your own.
+   - **Storage**: the folder new apps are installed in, and the space they use.
+   - **GitHub**: how much of GitHub's allowance is left. Looking here costs nothing.
+   - **About**: the version, **Check now** for a new AppGlider, the licence
+     (GPL-3.0-or-later, no warranty), and links to the website, the source code and the
+     issue tracker.
+2. **Theme**: **System** follows your desktop's light or dark setting; or choose **Light** or
+   **Dark**. The window changes as you pick, so you can try them out. (The older Forest,
+   Earthy and Sandstone themes now show as Dark with a matching accent.)
+3. **Accent**: the colour of buttons and highlights: blue, green, amber or teal.
+4. **Keep running in the tray** and **Start with my desktop**: see
+   [The tray icon](#the-tray-icon) and [Starting with your desktop](#starting-with-your-desktop).
+
+**Storage.** Changing the install folder only affects apps you install afterwards; apps you
+already have stay where they are and keep updating there. The **Space used** panel shows how
+much your apps take and how much space is free. One bar splits the total into **In use**
+(solid, the versions you run) and **Kept for roll back** (striped, the earlier copies), and
+each app is listed below, largest first. There is nothing to clean up by hand: AppGlider
+keeps only one earlier copy of each app, and each update replaces it. The sizes count the app
+files only, not the documents or settings the apps keep.
+
+![Settings, Storage section with the space used by each app](previews/appglider-storage.png)
 
 ## Catalogs: sharing a list of apps
 
-A catalog is a plain text file that lists apps. Open **Settings → Catalogs**, then use **Import
-catalog…** to add everyone on a list at once, or **Export catalog…** to save your own list,
-perhaps to back it up or share it.
+A catalog is a plain text file that lists apps. Use it to add many apps at once, to back up
+your list, or to share it with a friend. Under **Settings → Catalogs**:
 
-A ready-made example list of the ArtCraft apps and SolidCraft is built in: choose **Example
-catalog** on the welcome screen, or **Example catalog** in **Settings → Catalogs**. The same file is [`catalogs/artcraft.toml`](catalogs/artcraft.toml), also
-attached to each release, if you want to read it or use it as a model for your own.
+- **Import catalog…** adds the apps from a catalog file. It first shows what it would add,
+  and adds nothing until you confirm.
+- **Export catalog…** saves your own list to a file.
+- **Example catalog** adds the built-in list of the ArtCraft apps and SolidCraft. The same
+  file is [`catalogs/artcraft.toml`](catalogs/artcraft.toml), also attached to each
+  release.
 
-- **You see a preview first.** Importing only adds apps to your library as rows. Nothing
-  is installed or downloaded until you press **Install**.
-- **Your existing apps are never changed.** If a catalog lists something you already have,
-  it is left exactly as it is.
-- **It is just a text file.** You can open one in any text editor to see what it does, or
-  write your own. Here is the whole format:
+Importing only adds apps to your list; nothing is downloaded until you press **Install**.
+Apps you already have are never changed. If some entries have a problem, AppGlider skips
+them, says why, and imports the rest.
+
+A catalog is easy to read and to write yourself. This is the whole format:
 
 ```toml
-# lines starting with # are notes for humans
+# lines starting with # are notes for people
 format = 1
 name = "My catalog"
 
 [[app]]
 repo = "owner/project"            # required: owner/project or the full GitHub address
-name = "Project"                  # optional: the name shown in the library
+name = "Project"                  # optional: the name shown in your library
 description = "What it does"      # optional: up to 200 characters
 stable_only = true                # optional: false also offers previews
 build = "Project-x86_64.AppImage" # optional: the exact AppImage file to prefer
 ```
 
-If a catalog has a problem, AppGlider tells you which entries it skipped and why, and
-imports the rest. A file that is not a proper catalog adds nothing at all.
+## Updating AppGlider
 
-## Settings
+AppGlider also checks for new versions of itself, at the same times it checks your apps,
+and when you press **Check now** under **Settings → About**. It only looks for stable
+versions. When one is out, a banner in your accent colour appears above the list:
+"**AppGlider 0.9.4** is available", with a **What's new ↗** link.
 
-Open **Settings** (bottom of the sidebar). It is a page in the main window with a list of
-sections on the left. Everything saves as you change it, so there is no Save or Cancel; the
-page says "Changes save automatically".
+**Update AppGlider** on the banner:
 
-- **General**: **Theme** (System, Light or Dark), **Accent** (Blue, Green, Amber or Teal),
-  whether closing the window keeps AppGlider running in the tray, and whether AppGlider
-  starts with your desktop.
-- **Updates**: how often to check for updates, and whether to **Notify me about new
-  updates**.
-- **Catalogs**: import a catalog, add the example catalog, or export your own.
-- **Storage**: the folder new apps are installed into, and the space your apps use.
-- **GitHub**: how many requests GitHub reports as remaining (no requests are made).
-- **About**: the version, **Check now** for a new AppGlider version, a note on
-  the licence (GPL-3.0-or-later, no warranty) with a link to it, and links to the website,
-  the source and the issue tracker.
+1. downloads the new version into the same folder as the one you are running, and checks it
+   the same way as an app you install (a failed or cancelled download leaves nothing behind),
+2. points AppGlider's menu entry, and its login entry if you use one, at the new file,
+3. changes the banner to say the new version is ready, with a **Restart now** button.
 
-![Settings, General section](previews/appglider-settings.png)
+You do not have to restart straight away: the next time you open AppGlider, you get the new
+version. The first time it starts, it deletes the old file it replaced. Other AppGlider
+files you keep in that folder are never touched.
 
-**Theme** System (the default) follows your desktop's light or dark setting. The window
-changes as you pick, so you can try them out. If you used the older Forest, Earthy or
-Sandstone themes, AppGlider now shows them as Dark with a Green or Amber accent.
-
-Changing the install folder (under **Storage**) only affects new installs. Apps you already
-installed stay where they are and keep updating there. The new folder is used once you finish
-typing it or choose it with **Browse…**.
-
-**Space used.** Below the folder, **Storage** shows how much disk space your installed apps
-take, and how much is free on that drive. One bar splits the total into **In use**, the
-versions you run (solid), and **Kept for roll back**, the earlier copies (striped). Below it
-every installed app is listed, largest first, with its own bar. The panel only shows
-numbers. It has no delete buttons: each app keeps just one earlier version, and an update
-replaces it, so the space does not keep growing. The sizes are the app files themselves, not
-the documents or settings the apps keep for themselves.
-
-![Settings, Storage section with the space used by each app](previews/appglider-storage.png)
+If AppGlider cannot write to its folder, or was not started from its AppImage, the button
+says **Releases on GitHub ↗** instead and opens the download page in your browser.
+The exact rules are in the [technical notes](technical-notes.md#appgliders-own-updates).
 
 ## The tray icon
 
-If your desktop has a system tray, AppGlider sits in it. Click the icon to bring back the
-window. Right-click for **Open AppGlider**, **Check for updates**, an **Installed apps** submenu
-that launches an app, and **Quit AppGlider**.
+If your desktop has a system tray, AppGlider sits in it. Click the icon to show the window.
+Right-click it for **Open AppGlider**, **Check for updates**, an **Installed apps** menu to
+launch an app, and **Quit AppGlider**.
 
-Closing the window hides it to the tray and downloads carry on in the background. If you
-would rather closing quit the program, turn off **Keep running in the tray** in **Settings → General**. Without a
-working tray, closing the window just quits. To really exit while it is in the tray, use
-**Quit AppGlider**.
+Closing the window hides AppGlider in the tray, so update checks and downloads carry on. To
+make closing quit instead, turn off **Keep running in the tray** in **Settings → General**.
+To quit while it is in the tray, use **Quit AppGlider**. Without a tray, closing the window
+quits.
 
-Only one AppGlider window runs at a time. Starting it again just shows the one that is
-already open.
+Only one AppGlider runs at a time. Starting it again shows the window that is already open.
 
 ## Starting with your desktop
 
-Turn on **Start with my desktop** in **Settings → General** and AppGlider opens in the tray
-when you log in, so scheduled update checks and notifications run without a window. If there
-is no tray, or **Keep running in the tray** is off, it opens minimised instead. It is off by
-default. The setting is a small file, `~/.config/autostart/appglider.desktop` (respecting
-`XDG_CONFIG_HOME`), so deleting it by hand turns the setting off too. AppGlider only ever
-changes or removes that file when it wrote it; another program's file with the same name is
-left alone and the switch reports the problem. If you move the AppImage, the next start
-repairs the entry. Starting AppGlider with `--tray` while it is already running does nothing.
+Turn on **Start with my desktop** in **Settings → General** and AppGlider starts in the tray
+when you log in, so it can check for updates without a window. (Without a tray, or with
+**Keep running in the tray** off, it starts minimised.) It is off at first. It works by
+adding `~/.config/autostart/appglider.desktop`; deleting that file turns the setting off too.
 
 ## Menu shortcuts
 
-AppGlider adds an entry to your application menu for itself and for every app it installs,
+AppGlider adds an entry to your application menu for itself and for each app it installs,
 named like **PhotoCraft (AppGlider)**. If one goes missing, use **⋯ → Create/repair menu
-shortcut** (or **Repair** on its page).
+shortcut**, or **Repair** on the app's page.
 
-Each entry uses what the app says about itself in the `.desktop` file inside its AppImage:
-its menu category, short description, the file types it opens, search keywords, window class
-and any extra actions it lists (such as "New window"). AppGlider reads that file once, when it
-installs or restores a version, by asking the AppImage to extract only that file. If an app
-has none, or it cannot be read, the entry is plain and goes under **Utility**. The name, the
-command and the icon are always AppGlider's own, and an entry that was made by an older
-AppGlider is brought up to date the next time AppGlider starts. Entries you or another
-program made are never changed.
+Each entry uses what the app says about itself: its menu category, description, the file
+types it opens and any extra actions (such as "New window"). An app that says nothing goes
+under **Utility**. Entries you or other programs made are never changed.
 
-Some apps add their own menu entry the first time you run them, without "(AppGlider)" in the
-name. That is the app's doing, not AppGlider's, so such an app can appear twice in your
-menu. They both start the same program. When you uninstall the app through AppGlider, its
-own entry is removed too, so no dead entry is left behind.
+Some apps add a menu entry of their own the first time they run, without "(AppGlider)" in the
+name, so the app can appear twice. Both start the same program. When you uninstall the app
+through AppGlider, that extra entry is removed too.
 
-## Uninstalling
+## Keyboard
 
-**⋯ → Uninstall…** removes the app and its menu entries. Your documents and the app's
-own settings stay. You cannot uninstall an app while it is running. To remove an app from
-the list as well, uninstall it first. Its page then offers **Remove…** under **Manage**.
+Everything works from the keyboard. **Tab** moves between controls, and the one you are on
+has an outline in your accent colour.
+
+| Key | What it does |
+| --- | --- |
+| **Tab** / **Shift+Tab** | Move to the next or previous control |
+| **Enter** or **Space** | Press the focused button; on an app's name, open its page |
+| **Ctrl+F** | Jump to the search box from any page |
+| **Esc** | Go back from an app's page or the Add app page |
+
+## When an app's file goes missing
+
+AppGlider keeps each app's file in its own folder (see **Settings → Storage**). If something
+else moves or deletes that file, AppGlider can no longer launch or update the app, and its
+row looks like this:
+
+![A row whose file is missing](previews/guide-file-missing.png)
+
+1. The **⚠ File missing** chip. Hover over it to see where the file used to be. The app's
+   page shows the same under **Versions**.
+2. **Reinstall** downloads and checks the app again.
+
+The usual cause is **AppImageLauncher**, a separate program that, the first time an AppImage
+runs, offers to "integrate" it and moves the file into `~/Applications`. AppGlider now tells
+AppImageLauncher to leave its apps alone, but a file it moved earlier stays where it went.
+
+You have three choices:
+
+| Choose | If you want to | What happens |
+| --- | --- | --- |
+| **Reinstall** | keep using the app through AppGlider | A fresh copy is downloaded into AppGlider's folder |
+| **⋯ → Forget missing copy…** | look after the moved file yourself | The app stays on your list, as not installed |
+| **⋯ → Remove from library…** | stop using the app | The app is taken off your list |
+
+None of these touches the moved file. If you no longer need it, delete it yourself, for
+example from `~/Applications`.
 
 ## If something goes wrong
 
-**AppGlider will not start, and the message mentions FUSE.** Run it with
+**AppGlider will not start, and the message mentions FUSE.** Start it with
 `--appimage-extract-and-run` added, for example
 `./AppGlider-*.AppImage --appimage-extract-and-run`.
 
-**The menu entry stopped working.** You probably moved the AppImage file. Start AppGlider
-from its new location once and it repairs the entry.
+**AppGlider's own menu entry stopped working.** You probably moved AppGlider's file. Start it
+once from its new place and the entry is repaired.
 
-**There is no tray icon.** Some desktops need an extension for tray icons (GNOME is the
-usual example). AppGlider still works without one; closing the window then just quits it.
+**An app shows ⚠ File missing.** See [When an app's file goes missing](#when-an-apps-file-goes-missing).
 
-**"Review N unrecognised entries…" appears at the bottom.** AppGlider found installed apps
-that are not in your repository list, for example apps installed before you imported the
-example catalog. Importing the catalog usually makes them match again. You can also tick the
-ones you want AppGlider to forget. Nothing on your disk is deleted.
+**An app will not run.** Apps installed through AppGlider are the projects' own AppImages, and
+some need libraries your system does not have. Check the project's page for what it needs,
+and the log file AppGlider points you to.
 
-**A project cannot be added.** AppGlider needs a published release with an AppImage file
-and a published checksum, and it will say which is missing. Projects that only publish
-test versions need previews turned on first.
+**A project cannot be added.** AppGlider needs a published release with an AppImage file and a
+published checksum, and says which is missing. If a project only publishes test versions,
+set **Release channel** to **Preview** first.
 
-**The GitHub status in the sidebar says few requests remain.** You have used up most of GitHub's anonymous
-allowance for the hour. It resets on its own. Scheduled checks pause meanwhile.
+**There is no tray icon.** Some desktops, such as GNOME, need an extension to show tray icons.
+AppGlider works without one; closing the window then quits it.
 
-**An app will not run.** Apps installed through AppGlider are the project's own AppImages,
-and they may need libraries your system lacks. Check the project's page for its
-requirements.
+**The sidebar says few GitHub requests remain.** You have used most of GitHub's hourly
+allowance. It resets by itself, and scheduled checks wait until then.
+
+**"Review N unrecognised entries…" appears at the bottom.** AppGlider found apps it installed
+that are no longer on your list, for example from before you imported a catalog. Importing the
+catalog again usually matches them up. You can also tick the ones AppGlider should forget.
+Nothing on your disk is deleted.
 
 **On NixOS, no app will start.** NixOS cannot run AppImages until its AppImage support is
-turned on; AppGlider says so when you press Launch. Add this to your NixOS configuration and
-run `sudo nixos-rebuild switch`:
+turned on; AppGlider says so when you press **Launch**. Add this to your NixOS configuration
+and run `sudo nixos-rebuild switch`:
 
 ```nix
 programs.appimage = {

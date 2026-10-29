@@ -183,6 +183,12 @@ the sidebar). Take them in the Dark theme from a disposable library, with the wi
 form shows. Use neutral paths such as `/home/you/Applications`, never your own. The website
 keeps its own copies in `site/assets/`, so refresh those at the same time.
 
+The user guide uses annotated copies, `docs/previews/guide-*.png`: numbered pink outlines
+(`#ff4d8d`, a colour the interface never uses) drawn at the live widgets' positions, with
+the badge just outside each outline, and a numbered key under each picture in the guide.
+Draw them from the same disposable library as the plain screenshots, so the two match, and
+keep the numbers in the guide's keys in step with the pictures.
+
 ## Website
 
 `site/` is the website at [appglider.org](https://appglider.org/). Cloudflare Pages
