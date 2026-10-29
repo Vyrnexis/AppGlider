@@ -17,7 +17,11 @@ None of these are approved or scheduled.
 
 Roughly newest first. Where shown, the version is the release that first included the work.
 
-- **Renamed and moved repositories:** when a project renames its repository or moves it to
+- **Offline and quieter banners (0.9.5):** with no network, rows keep what was known before
+  and the sidebar says **GitHub: offline**; checks at login try again once the network is up.
+  Both banners can be closed until something new is out. Release notes open as a short
+  preview that expands in place.
+- **Renamed and moved repositories (0.9.5):** when a project renames its repository or moves it to
   another owner, AppGlider follows GitHub's redirect, remembers the new address and keeps the
   app's install and settings.
 - **Missing files and clearer menus (0.9.4):** an app whose file was moved or deleted outside

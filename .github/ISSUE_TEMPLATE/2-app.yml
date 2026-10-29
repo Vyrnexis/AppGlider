@@ -23,7 +23,7 @@ body:
     attributes:
       label: AppGlider version
       description: Shown at the bottom of the sidebar, and in Settings → About.
-      placeholder: "0.9.4"
+      placeholder: "0.9.5"
     validations:
       required: true
 
