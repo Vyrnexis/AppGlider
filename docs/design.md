@@ -58,8 +58,10 @@ confirmations, file pickers and choices that block an action (such as choosing a
   and the primary action), then two columns. Left: What's new (release notes of the
   offered release) and Versions. Right: Preferences (release channel, hold, pin, build, icon,
   menu shortcut, and the Arguments and Environment launch options), then Manage, styled as a
-  danger area: Roll back, then Uninstall while the app is installed or Remove from library
-  once it is not, never both.
+  danger area: Roll back when a copy is kept, then Uninstall while the app is installed or
+  Remove from library once it is not, never both, and Forget missing copy when the
+  installed file has gone. A row that does not apply is hidden, not disabled; a running
+  task disables what is shown. Hold and Menu shortcut show once the app is installed.
 - **Settings page**: a secondary list (General, Updates, Catalogs, Storage, GitHub, About)
   and panels of setting rows. Changes apply immediately; there is no Save or Cancel.
   Storage also has a read-only Space used panel: the total, one bar split into the versions
@@ -98,11 +100,15 @@ Status chips, one per row, in priority order:
 | Installed preview | Preview channel | accent | Launch |
 | Up to date | ✓ Up to date | ok | Launch |
 | Release check failed | Check failed | danger | Launch |
+| File missing | ⚠ File missing | danger | Reinstall |
 | Not installed | Not installed | neutral | Install |
 
 Chips always pair colour with a symbol or word; colour is never the only signal. The ⋯ menu
 holds quick actions only: Open details, Launch, Open repository, Pin to top, Move up and
-Move down, Hold, Create/repair menu shortcut, Roll back, Uninstall. Everything else is on the App page. Clicking anywhere on a row except its
+Move down, Hold, Create/repair menu shortcut, Roll back, Uninstall; or, for an app that is
+not installed, Remove from library and (when its file has gone) Forget missing copy. It
+shows only the actions that fit the app's state: Move up and Move down only while the list
+can be reordered, Roll back only when a copy is kept. Everything else is on the App page. Clicking anywhere on a row except its
 buttons opens the App page.
 
 ## Visual tokens
