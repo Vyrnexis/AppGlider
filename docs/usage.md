@@ -232,8 +232,9 @@ you left it.
 
 1. **Launch**, and the main action: Install, Update, Choose build, Reinstall or Cancel.
 2. **Status chips**: the app's state and its release channel.
-3. **What's new**: the release notes of the version on offer, with its date and size, and a
-   link to the full notes on GitHub.
+3. **What's new**: the release notes of the version on offer, with its date and size. Long
+   notes start with the first few lines; **Show all notes** opens the rest right there, and
+   **On GitHub ↗** opens the release page.
 4. **Versions**: the installed version, the earlier copy kept for rolling back, the newest
    stable and preview versions, and when they were last checked. **Check now** looks again.
 5. **Preferences** for this app. Changes apply straight away.

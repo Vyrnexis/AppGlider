@@ -8,7 +8,18 @@ from threading import Event
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QEvent, QObject, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QFont, QResizeEvent, QShowEvent
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QLinearGradient,
+    QPainter,
+    QPaintEvent,
+    QPalette,
+    QResizeEvent,
+    QShowEvent,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QBoxLayout,
@@ -57,7 +68,7 @@ from appglider.ui.jobs import TaskResult
 if TYPE_CHECKING:
     from appglider.ui.window import LauncherWindow
 
-NOTES_MAX_HEIGHT = 260
+NOTES_PREVIEW_LINES = 5
 WEB_SCHEMES = ("http", "https")
 
 
@@ -92,6 +103,8 @@ def release_page_url(release: Release) -> str:
 class NotesBrowser(QTextBrowser):
     """Release notes as Markdown: read-only, never loading anything and opening web links only."""
 
+    fitted = Signal()  # the height, and whether the preview hides anything, may have changed
+
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("notes")
@@ -103,7 +116,9 @@ class NotesBrowser(QTextBrowser):
         self.setSearchPaths([])
         self.anchorClicked.connect(self.open_link)
         self.fitting = False
-        self.setFixedHeight(NOTES_MAX_HEIGHT)
+        self.expanded = False
+        self.overflows = False
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def loadResource(self, type: int, name: QUrl | str) -> Any:  # noqa: A002, N802
         """Notes come from the network: never fetch images or read local files for them."""
@@ -117,28 +132,52 @@ class NotesBrowser(QTextBrowser):
         self.setMarkdown(text)
         self.fit()
 
+    def preview_height(self) -> int:
+        return self.fontMetrics().lineSpacing() * NOTES_PREVIEW_LINES + 6
+
     def fit(self) -> None:
-        """Be as tall as the notes, up to a limit, then scroll."""
+        """Show the first lines, or all of them once expanded; the page scrolls, never this."""
         if self.fitting:
             return
         self.fitting = True
         try:
             document = self.document()
-            # The whole width: short notes need no scroll bar, which would take some of it.
             document.setTextWidth(max(1, self.width()))
-            height = int(document.size().height()) + 6
-            policy = (
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded
-                if height > NOTES_MAX_HEIGHT
-                else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-            )
-            if self.verticalScrollBarPolicy() != policy:
-                self.setVerticalScrollBarPolicy(policy)
-            height = max(24, min(height, NOTES_MAX_HEIGHT))
+            full = int(document.size().height()) + 6
+            # Hiding less than a line behind a button would only be in the way.
+            self.overflows = full > self.preview_height() + self.fontMetrics().lineSpacing()
+            height = max(24, full if self.expanded or not self.overflows else self.preview_height())
             if self.height() != height:
                 self.setFixedHeight(height)
+            self.verticalScrollBar().setValue(0)
         finally:
             self.fitting = False
+        self.fitted.emit()
+
+    def set_expanded(self, expanded: bool) -> None:
+        self.expanded = expanded
+        self.fit()
+        self.viewport().update()
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        event.ignore()  # the page scrolls; the notes never hold the wheel
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if self.expanded or not self.overflows:
+            return
+        # Fade the last lines into the panel, a hint that there is more.
+        viewport = self.viewport()
+        fade = min(viewport.height(), self.fontMetrics().lineSpacing() * 2)
+        surface = QApplication.palette().color(QPalette.ColorRole.Base)
+        clear = QColor(surface)
+        clear.setAlpha(0)
+        gradient = QLinearGradient(0, viewport.height() - fade, 0, viewport.height())
+        gradient.setColorAt(0, clear)
+        gradient.setColorAt(1, surface)
+        painter = QPainter(viewport)
+        painter.fillRect(0, viewport.height() - fade, viewport.width(), fade, gradient)
+        painter.end()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -403,9 +442,18 @@ class AppPage(QScrollArea):
         self.notes_empty.setObjectName("muted")
         self.notes_empty.setWordWrap(True)
         layout.addWidget(self.notes_empty)
-        self.notes_link = link_button("Full release notes on GitHub ↗")
+        links = QHBoxLayout()
+        links.setContentsMargins(0, 0, 0, 0)
+        self.notes_toggle = link_button("Show all notes ▾")
+        self.notes_toggle.clicked.connect(self.toggle_notes)
+        self.notes_view.fitted.connect(self.update_notes_toggle)
+        self.notes_link = link_button("On GitHub ↗")
+        self.notes_link.setAccessibleName("Full release notes on GitHub")
         self.notes_link.clicked.connect(self.open_release_page)
-        layout.addWidget(self.notes_link, alignment=Qt.AlignmentFlag.AlignLeft)
+        links.addWidget(self.notes_toggle)
+        links.addStretch()
+        links.addWidget(self.notes_link)
+        layout.addLayout(links)
         # The notes view sizes itself; spare height belongs below the panels, not inside.
         frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         column.addWidget(frame)
@@ -731,6 +779,7 @@ class AppPage(QScrollArea):
             self.release_meta.setText("Release notes appear after the releases have been checked.")
             self.notes_view.hide()
             self.notes_empty.hide()
+            self.notes_toggle.hide()
             self.notes_link.setText("Releases on GitHub ↗")
             self.release_url = f"{app.source_url}/releases"
             return
@@ -753,10 +802,12 @@ class AppPage(QScrollArea):
         notes = release.notes.strip()
         if notes != self.shown_notes:
             self.shown_notes = notes
+            self.notes_view.expanded = False  # each release starts as a preview
             self.notes_view.set_notes(notes)
         self.notes_view.setVisible(bool(notes))
         self.notes_empty.setVisible(not notes)
-        self.notes_link.setText("Full release notes on GitHub ↗")
+        self.notes_link.setText("On GitHub ↗")
+        self.update_notes_toggle()
         self.release_url = release_page_url(release)
 
     def refresh_versions(
@@ -909,6 +960,19 @@ class AppPage(QScrollArea):
             self.choose_build()
         elif self.mode == "cancel":
             self.launcher.cancel_task()
+
+    def toggle_notes(self) -> None:
+        self.notes_view.set_expanded(not self.notes_view.expanded)
+        self.update_notes_toggle()
+
+    def update_notes_toggle(self) -> None:
+        """Offer the toggle only when the preview hides part of the notes."""
+        view = self.notes_view
+        self.notes_toggle.setVisible(not view.isHidden() and view.overflows)
+        self.notes_toggle.setText("Show less ▴" if view.expanded else "Show all notes ▾")
+        self.notes_toggle.setAccessibleName(
+            "Show fewer release notes" if view.expanded else "Show all release notes"
+        )
 
     def open_release_page(self) -> None:
         QDesktopServices.openUrl(QUrl(self.release_url))

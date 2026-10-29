@@ -798,16 +798,40 @@ class AppPageTests(unittest.TestCase):
             ["https://example.com/page", "http://example.com/page"],
         )
 
-    def test_long_notes_scroll_inside_a_bounded_panel(self) -> None:
+    def test_long_notes_start_as_a_preview_and_expand_in_the_page(self) -> None:
         release = replace(
             release_for("1.4.0", appimage_bytes()),
-            notes="\n\n".join(f"- change number {n}" for n in range(200)),
+            notes="\n\n".join(f"- change number {n}" for n in range(60)),
         )
         self.window.releases[APP.id] = release
         self.window.open_app(APP.id)
         self.qt.processEvents()
-        self.assertLessEqual(self.page.notes_view.height(), 260)
-        self.assertGreater(self.page.notes_view.verticalScrollBar().maximum(), 0)
+        view, toggle = self.page.notes_view, self.page.notes_toggle
+        preview = view.preview_height()
+        self.assertEqual(view.height(), preview)
+        self.assertTrue(toggle.isVisibleTo(self.page))
+        self.assertEqual(toggle.text(), "Show all notes ▾")
+        toggle.click()
+        self.qt.processEvents()
+        self.assertGreater(view.height(), preview * 4)
+        self.assertEqual(view.verticalScrollBar().maximum(), 0)  # the page scrolls, not this
+        self.assertEqual(toggle.text(), "Show less ▴")
+        toggle.click()
+        self.assertEqual(view.height(), preview)
+        toggle.click()
+        self.window.open_app(APP.id)  # opening the page again starts with the preview
+        self.qt.processEvents()
+        self.assertEqual(view.height(), preview)
+        self.assertEqual(toggle.text(), "Show all notes ▾")
+
+    def test_short_notes_need_no_toggle(self) -> None:
+        self.window.releases[APP.id] = replace(
+            release_for("1.4.0", appimage_bytes()), notes="- one small fix"
+        )
+        self.window.open_app(APP.id)
+        self.qt.processEvents()
+        self.assertTrue(self.page.notes_toggle.isHidden())
+        self.assertLess(self.page.notes_view.height(), self.page.notes_view.preview_height())
 
     def test_the_page_needs_no_horizontal_scrolling_at_the_minimum_window_size(self) -> None:
         self.window.releases[APP.id] = replace(
