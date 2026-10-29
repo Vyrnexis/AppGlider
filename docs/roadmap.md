@@ -17,7 +17,7 @@ None of these are approved or scheduled.
 
 Roughly newest first. Where shown, the version is the release that first included the work.
 
-- **Missing files and clearer menus:** an app whose file was moved or deleted outside
+- **Missing files and clearer menus (0.9.4):** an app whose file was moved or deleted outside
   AppGlider shows **⚠ File missing** with **Reinstall** and **Forget missing copy**, and can be
   removed from the library. AppImageLauncher is told to leave AppGlider's apps alone. Row menus
   and the app page offer only the actions that fit the app's state.

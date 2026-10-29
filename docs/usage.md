@@ -402,7 +402,7 @@ build = "Project-x86_64.AppImage" # optional: the exact AppImage file to prefer
 AppGlider also checks for new versions of itself, at the same times it checks your apps,
 and when you press **Check now** under **Settings → About**. It only looks for stable
 versions. When one is out, a banner in your accent colour appears above the list:
-"**AppGlider 0.9.4** is available", with a **What's new ↗** link.
+"**AppGlider 0.9.5** is available", with a **What's new ↗** link.
 
 **Update AppGlider** on the banner:
 

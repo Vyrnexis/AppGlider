@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "appglider"
-version = "0.9.3"
+version = "0.9.4"
 description = "A Linux AppImage installer, updater and launcher"
 readme = "README.md"
 license = "GPL-3.0-or-later"

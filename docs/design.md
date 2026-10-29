@@ -29,7 +29,7 @@ confirmations, file pickers and choices that block an action (such as choosing a
 ┌──────────────┬─────────────────────────────────────────────┐
 │ ◢ AppGlider  │ Page title   [Search……………] [⋯] [⟳]           │
 │              │ ┌ AppGlider banner (new version, accent)  ┐ │
-│              │ │ AppGlider 0.9.3 is available [Update]   │ │
+│              │ │ AppGlider 0.9.4 is available [Update]   │ │
 │              │ └─────────────────────────────────────────┘ │
 │              │ ┌ updates banner (only when updates wait) ┐ │
 │ ▣ Library 12 │ │ 2 updates ready.        [Update all]    │ │

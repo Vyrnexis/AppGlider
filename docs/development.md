@@ -106,7 +106,7 @@ The version comes from `pyproject.toml`.
 Test the package without FUSE, using a disposable first-run home:
 
 ```sh
-python3 packaging/smoke_test.py dist/AppGlider-0.9.3-x86_64.AppImage
+python3 packaging/smoke_test.py dist/AppGlider-0.9.4-x86_64.AppImage
 ```
 
 The smoke test runs twice: once as an empty first run, and once with two sample repositories
