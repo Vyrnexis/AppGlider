@@ -72,6 +72,11 @@ confirmations, file pickers and choices that block an action (such as choosing a
 The AppGlider banner shows when a new version of AppGlider is out. It sits above the amber
 updates banner on Library and Updates, tinted in the accent colour, with a "What's new ↗"
 link and one normal-style button (Update AppGlider, Restart now or Releases on GitHub ↗).
+
+Both banners end with a muted **×** (32 px, no border until focused) that closes them until
+there is something new: a newer AppGlider, or an update that was not on the banner when it
+was closed. A closed updates banner stays on the Updates page, without the ×, so Update all
+is always reachable; an explicit check brings the AppGlider banner back.
 AppGlider is never a row. Settings → About has a row with the version, a hint with the result
 of the last check and a Check now button.
 
