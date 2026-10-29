@@ -43,6 +43,29 @@ def desktop_exec(arguments: list[str]) -> str:
     return " ".join(quoted)
 
 
+def launcher_exec(arguments: list[str]) -> str:
+    """The Exec line of AppGlider's own entries, kept away from AppImageLauncher too."""
+    return desktop_exec(
+        ["env", *(f"{name}={value}" for name, value in NO_INTEGRATION.items()), *arguments]
+    )
+
+
+def needs_rewrite(current: str, arguments: list[str], packaged: bool) -> bool:
+    """Whether an owned entry running `current` should be rewritten to run `arguments`.
+
+    The same target in an older format is rewritten; another target only when it is gone
+    or this is a packaged image newer than it.
+    """
+    try:
+        target = exec_target(shlex.split(current))
+        if target == arguments[0]:
+            return True
+        age = Path(target).stat().st_mtime_ns  # a missing target raises: repair it
+        return packaged and Path(arguments[0]).stat().st_mtime_ns > age
+    except (ValueError, IndexError, OSError):
+        return True
+
+
 class ShortcutsMixin:
     """Menu entry, launcher and autostart behaviour of `Library`.
 
@@ -157,14 +180,9 @@ class ShortcutsMixin:
             current = next((line[5:] for line in lines if line.startswith("Exec=")), "")
             if "X-AppGlider=true" in lines:
                 self._refresh_launcher_icon()
-                if current == desktop_exec(arguments):
-                    return shortcut
-                try:
-                    age = Path(shlex.split(current)[0]).stat().st_mtime_ns
-                    newer = packaged and Path(arguments[0]).stat().st_mtime_ns > age
-                except (ValueError, IndexError, OSError):
-                    newer = True
-                if not newer:
+                if current == launcher_exec(arguments) or not needs_rewrite(
+                    current, arguments, packaged
+                ):
                     return shortcut
         return self.create_launcher_shortcut(arguments)
 
@@ -205,7 +223,7 @@ class ShortcutsMixin:
 
     def enable_autostart(self, arguments: list[str]) -> Path:
         """Write the login entry that opens AppGlider in the tray."""
-        command = desktop_exec([*arguments, AUTOSTART_FLAG])
+        command = launcher_exec([*arguments, AUTOSTART_FLAG])
         path = self.autostart_file
         if (path.is_symlink() or path.exists()) and self._autostart_lines() is None:
             raise OSError(
@@ -242,18 +260,13 @@ class ShortcutsMixin:
         if lines is None:
             return
         current = next((line[5:] for line in lines if line.startswith("Exec=")), "")
-        if current == desktop_exec([*arguments, AUTOSTART_FLAG]):
-            return
-        try:
-            age = Path(shlex.split(current)[0]).stat().st_mtime_ns
-            newer = packaged and Path(arguments[0]).stat().st_mtime_ns > age
-        except (ValueError, IndexError, OSError):
-            newer = True
-        if newer:
+        if current != launcher_exec([*arguments, AUTOSTART_FLAG]) and needs_rewrite(
+            current, arguments, packaged
+        ):
             self.enable_autostart(arguments)
 
     def create_launcher_shortcut(self, arguments: list[str]) -> Path:
-        command = desktop_exec(arguments)
+        command = launcher_exec(arguments)
         self.desktop_dir.mkdir(parents=True, exist_ok=True)
         shortcut = self.desktop_dir / "appglider.desktop"
         if shortcut.is_symlink() or (

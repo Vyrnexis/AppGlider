@@ -26,6 +26,7 @@ from appglider.install.library import (
     Installed,
     Library,
     Orphan,
+    appimagelauncher_folder,
     previous_copy,
 )
 from appglider.install.shortcuts import desktop_exec
@@ -427,6 +428,29 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual((root / "user-data.txt").read_text(), "keep me")
         self.assertTrue((root / ".appglider").is_file())
 
+    def test_appimagelauncher_folder_comes_from_its_settings_once_it_is_found(self) -> None:
+        binfmt, config = self.root / "binfmt_misc", self.root / "config"
+        binfmt.mkdir()
+        config.mkdir()
+        (binfmt / "status").write_text("enabled\n")
+        home = {"HOME": str(self.root), "XDG_CONFIG_HOME": str(config)}
+        with (
+            patch("appglider.install.library.BINFMT_DIR", binfmt),
+            patch("appglider.install.library.shutil.which", return_value=None) as which,
+            patch.dict(os.environ, home),
+        ):
+            self.assertIsNone(appimagelauncher_folder())
+            (binfmt / "appimage").write_text(
+                "enabled\ninterpreter /usr/lib/appimagelauncher/binfmt-bypass\n"
+            )
+            self.assertEqual(appimagelauncher_folder(), self.root / "Applications")
+            (binfmt / "appimage").unlink()
+            which.side_effect = lambda name: "/usr/bin/x" if name == "AppImageLauncher" else None
+            (config / "appimagelauncher.cfg").write_text(
+                "[AppImageLauncher]\ndestination = ~/AppImages\n"
+            )
+            self.assertEqual(appimagelauncher_folder(), self.root / "AppImages")
+
     def test_nixos_without_appimage_support_explains_the_setting_instead_of_failing(
         self,
     ) -> None:
@@ -713,6 +737,29 @@ class LibraryTests(unittest.TestCase):
         self.library.refresh_launcher_shortcut(development, packaged=False)
         self.assertIn(desktop_exec(development), shortcut.read_text())
 
+    def test_entries_from_older_versions_gain_the_appimagelauncher_bypass(self) -> None:
+        image = Path(self.temp.name) / "AppGlider.AppImage"
+        image.write_bytes(b"image")
+        bypass = f'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "{image}"'
+        for path, write, refresh in (
+            (
+                self.library.desktop_dir / "appglider.desktop",
+                self.library.create_launcher_shortcut,
+                self.library.refresh_launcher_shortcut,
+            ),
+            (
+                self.library.autostart_file,
+                self.library.enable_autostart,
+                self.library.refresh_autostart,
+            ),
+        ):
+            with self.subTest(path=path.name):
+                write([str(image)])
+                old = path.read_text().replace('"env" "APPIMAGELAUNCHER_DISABLE=1" ', "")
+                path.write_text(old)
+                refresh([str(image)], packaged=True)
+                self.assertIn(bypass, path.read_text())
+
     def test_refresh_replaces_a_stale_icon_copy_without_rewriting_the_shortcut(self) -> None:
         image = Path(self.temp.name) / "glider.AppImage"
         image.write_bytes(b"image")
@@ -729,7 +776,9 @@ class LibraryTests(unittest.TestCase):
         path = self.library.enable_autostart(["/home/a b/AppGlider.AppImage"])
         self.assertEqual(path, self.root / "autostart" / "appglider.desktop")
         lines = path.read_text().splitlines()
-        self.assertIn('Exec="/home/a b/AppGlider.AppImage" "--tray"', lines)
+        self.assertIn(
+            'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "/home/a b/AppGlider.AppImage" "--tray"', lines
+        )
         for line in ("Type=Application", "Terminal=false", "X-AppGlider=true"):
             self.assertIn(line, lines)
         self.assertIn("X-GNOME-Autostart-enabled=true", lines)
@@ -770,7 +819,7 @@ class LibraryTests(unittest.TestCase):
         self.library.enable_autostart([str(old)])
         # The old image is gone, so any start repairs the entry.
         self.library.refresh_autostart([str(new)], packaged=False)
-        self.assertIn(f'Exec="{new}" "--tray"', self.library.autostart_file.read_text())
+        self.assertIn(f'"{new}" "--tray"', self.library.autostart_file.read_text())
         before = self.library.autostart_file.stat().st_mtime_ns
         self.library.refresh_autostart([str(new)], packaged=True)
         self.assertEqual(self.library.autostart_file.stat().st_mtime_ns, before)
@@ -790,7 +839,7 @@ class LibraryTests(unittest.TestCase):
         later = current.stat().st_mtime_ns + 1_000_000_000
         os.utime(other, ns=(later, later))
         self.library.refresh_autostart([str(other)], packaged=True)
-        self.assertIn(f'Exec="{other}" "--tray"', self.library.autostart_file.read_text())
+        self.assertIn(f'"{other}" "--tray"', self.library.autostart_file.read_text())
 
     def test_refresh_still_refuses_foreign_shortcuts(self) -> None:
         shortcut = self.library.desktop_dir / "appglider.desktop"
@@ -801,7 +850,10 @@ class LibraryTests(unittest.TestCase):
 
     def test_packaged_shortcut_accepts_image_path_with_spaces(self) -> None:
         shortcut = self.library.create_launcher_shortcut(["/home/a b/AppGlider.AppImage"])
-        self.assertIn('Exec="/home/a b/AppGlider.AppImage"\n', shortcut.read_text())
+        self.assertIn(
+            'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "/home/a b/AppGlider.AppImage"\n',
+            shortcut.read_text(),
+        )
 
     def test_failed_shortcut_write_preserves_the_previous_entry(self) -> None:
         self.install("1.0.0")

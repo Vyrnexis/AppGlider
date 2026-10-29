@@ -3,6 +3,7 @@
 Every control saves as it changes; there is no Save or Cancel.
 """
 
+import contextlib
 import shutil
 import stat
 from pathlib import Path
@@ -40,7 +41,7 @@ from appglider.core.preferences import (
 from appglider.core.storage import atomic_bytes
 from appglider.github.http import github_request_status
 from appglider.install import self_update
-from appglider.install.library import previous_copy
+from appglider.install.library import appimagelauncher_folder, previous_copy
 from appglider.ui.controls import Segmented, SpaceBar, SpaceSwatch, Switch
 from appglider.ui.pages.app_page import (
     SettingRow,
@@ -365,6 +366,13 @@ class SettingsPage(QWidget):
         self.folder_error.setAccessibleName("Folder problem")
         self.folder_error.hide()
         layout.addWidget(self.folder_error)
+        self.folder_warning = QLabel()
+        self.folder_warning.setObjectName("settingError")
+        self.folder_warning.setTextFormat(Qt.TextFormat.PlainText)
+        self.folder_warning.setWordWrap(True)
+        self.folder_warning.setAccessibleName("Folder warning")
+        layout.addWidget(self.folder_warning)
+        self.warn_about_folder(Path(self.applied_folder).expanduser())
         column.addWidget(frame)
 
         space_frame, space_layout, _ = panel("Space used")
@@ -747,6 +755,21 @@ class SettingsPage(QWidget):
             self.folder.setText(folder)
             self.apply_folder()
 
+    def warn_about_folder(self, folder: Path) -> None:
+        """Say when AppImageLauncher also looks after the chosen folder."""
+        theirs = appimagelauncher_folder()
+        shared = False
+        if theirs is not None:
+            with contextlib.suppress(OSError, ValueError):
+                shared = folder.resolve().is_relative_to(theirs.resolve())
+        self.folder_warning.setText(
+            f"AppImageLauncher manages {theirs} and may add its own menu entries for apps "
+            "installed there. A folder outside it is safer."
+            if shared
+            else ""
+        )
+        self.folder_warning.setVisible(shared)
+
     def apply_folder(self) -> bool:
         """Use the entered folder if it is valid; otherwise explain and keep the previous one."""
         if self.launcher.task is not None:
@@ -763,6 +786,7 @@ class SettingsPage(QWidget):
             self.settings.setValue("installation/folder", text)
             self.launcher.library.apps_dir = folder
             self.applied_folder = text
+            self.warn_about_folder(folder)
             self.launcher.scan_installed()
             self.update_space_used()
         return True

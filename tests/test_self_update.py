@@ -1114,7 +1114,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.settings.value(self_update.VERSION_KEY), "0.9.1")
         lines = self.menu_entry.read_text().splitlines()
         self.assertIn("X-AppGlider=true", lines)
-        self.assertIn(f'Exec="{self.new_image}"', lines)
+        self.assertIn(f'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "{self.new_image}"', lines)
         self.assertFalse((self.image.parent / "autostart" / "appglider.desktop").exists())
         self.assertFalse(window.progress_bar.isVisible())
         self.assertEqual(self.opened, [])
@@ -1124,7 +1124,7 @@ class WindowTests(unittest.TestCase):
         entry = window.library.enable_autostart([str(self.image)])
         self.update(appglider_release())
         lines = entry.read_text().splitlines()
-        self.assertIn(f'Exec="{self.new_image}" "--tray"', lines)
+        self.assertIn(f'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "{self.new_image}" "--tray"', lines)
         self.assertIn("X-AppGlider=true", lines)
         self.assertEqual(
             [p.name for p in (self.image.parent / "autostart").iterdir()], ["appglider.desktop"]

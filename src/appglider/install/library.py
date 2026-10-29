@@ -137,6 +137,32 @@ def appimages_registered() -> bool | None:
     return False
 
 
+def appimagelauncher_folder() -> Path | None:
+    """AppImageLauncher's applications folder when it is installed, else None.
+
+    It is installed if its programs are on PATH or its binfmt handler is registered. The
+    folder is `destination` in its settings file, `~/Applications` by default.
+    """
+    found = any(shutil.which(name) for name in ("AppImageLauncher", "appimagelauncherd"))
+    if not found:
+        with contextlib.suppress(OSError):
+            for entry in BINFMT_DIR.iterdir():
+                with contextlib.suppress(OSError, UnicodeDecodeError):
+                    if "appimagelauncher" in entry.read_text().lower():
+                        found = True
+                        break
+    if not found:
+        return None
+    home = Path.home()
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config") / "appimagelauncher.cfg"
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        for line in config.read_text().splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "destination" and value.strip():
+                return Path(value.strip()).expanduser()
+    return home / "Applications"
+
+
 def nixos_cannot_start() -> bool:
     """NixOS stops generic Linux programs, which AppImages carry, unless they run through
     its AppImage support (binfmt) or nix-ld."""

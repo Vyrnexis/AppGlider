@@ -2037,6 +2037,19 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(dialogs, [])
         self.assertNotIn(failed.window, self.qt.topLevelWidgets())
 
+    def test_a_folder_inside_appimagelaunchers_own_shows_a_warning(self) -> None:
+        page = self.window.settings_page
+        self.window.open_settings("Storage")
+        theirs = Path(self.temp.name) / "Applications"
+        with patch("appglider.ui.pages.settings_page.appimagelauncher_folder", return_value=theirs):
+            page.folder.setText(str(theirs / "appglider"))
+            page.folder.editingFinished.emit()
+            self.assertTrue(page.folder_warning.isVisibleTo(page))
+            self.assertIn("AppImageLauncher", page.folder_warning.text())
+            page.folder.setText(str(Path(self.temp.name) / "elsewhere"))
+            page.folder.editingFinished.emit()
+            self.assertTrue(page.folder_warning.isHidden())
+
     def test_invalid_folder_shows_an_inline_error_and_keeps_the_previous_one(self) -> None:
         page = self.window.settings_page
         library = self.window.library
