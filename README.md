@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/Vyrnexis/AppGlider/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Vyrnexis/AppGlider?label=release"></a>
+  <a href="https://github.com/Vyrnexis/AppGlider/actions/workflows/appimage.yml?query=branch%3Amain"><img alt="Build and tests" src="https://github.com/Vyrnexis/AppGlider/actions/workflows/appimage.yml/badge.svg?branch=main"></a>
   <a href="LICENSE"><img alt="Licence: GPL-3.0-or-later" src="https://img.shields.io/badge/licence-GPL--3.0--or--later-blue"></a>
   <img alt="Platform: Linux x86_64" src="https://img.shields.io/badge/platform-Linux%20x86__64-lightgrey">
 </p>
