@@ -78,6 +78,10 @@ AppGlider needs no GitHub account or token. It uses GitHub's public API, which a
 - A full API check takes two metadata requests per repository (the latest stable release
   and a listing of recent releases). Checksums can need more. Cheap checks (above) avoid
   these for apps that have not changed.
+- The listing asks for the newest 20 releases. A repository that attaches many files to
+  every release (VSCodium has 180) makes that answer larger than AppGlider reads (4 MB), so
+  it asks again for 5, then 1. The size that fitted is remembered until AppGlider closes, so
+  later checks of that repository cost the usual two requests.
 - Answers are stored with their ETag, so repeat requests are conditional and an unchanged
   answer (HTTP 304) is reused. For anonymous requests a 304 still counts against the
   allowance, so a check costs about one request per installed app whether or not anything

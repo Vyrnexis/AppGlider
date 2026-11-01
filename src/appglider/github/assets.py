@@ -16,7 +16,11 @@ from appglider.github import http, versions
 from appglider.github.http import MissingResource, RepositoryMoved
 from appglider.github.versions import check_cancel, release_version, stems, version_key
 
-LISTING_PAGE_SIZE = 20
+# Releases asked for at once. A repository that attaches many files to every release (VSCodium
+# has 180) makes 20 releases larger than AppGlider reads, so it is asked for fewer.
+LISTING_PAGE_SIZES = (20, 5, 1)
+# Page size that fitted per repository this session, so the too-large page is not fetched again.
+_LISTING_SIZE: dict[str, int] = {}
 
 
 MAX_NOTES = 20_000
@@ -325,6 +329,24 @@ def newest_release(entries: list[Any], include_prereleases: bool) -> dict[str, A
     return max(recognised, key=lambda entry: version_key(release_version(entry["tag_name"])))
 
 
+def release_listing(repo: str, prefix: str, cancel: Event) -> Any:
+    """The newest releases in one request, fewer of them when a page would be too large."""
+    key = repo.casefold()
+    known = _LISTING_SIZE.get(key, LISTING_PAGE_SIZES[0])
+    sizes = [size for size in LISTING_PAGE_SIZES if size <= known]
+    for size in sizes:
+        check_cancel(cancel)
+        try:
+            body = http.read_metadata(f"{prefix}?per_page={size}&page=1")
+        except http.MetadataTooLarge:
+            if size != sizes[-1]:
+                continue
+            raise
+        _LISTING_SIZE[key] = size
+        return json.loads(body)
+    return []
+
+
 def api_entries(app: App, cancel: Event) -> list[Any]:
     check_cancel(cancel)
     prefix = f"https://api.github.com/repos/{app.repo}/releases"
@@ -336,9 +358,7 @@ def api_entries(app: App, cancel: Event) -> list[Any]:
         raise ValueError("GitHub returned invalid release metadata.")
     if not app.include_prereleases and stable is not None:
         return [{**stable, "is_latest": True}]
-    check_cancel(cancel)
-    # One request for the newest releases; asset-heavy nightly repositories make full pages huge.
-    items = json.loads(http.read_metadata(f"{prefix}?per_page={LISTING_PAGE_SIZE}&page=1"))
+    items = release_listing(app.repo, prefix, cancel)
     if not isinstance(items, list):
         raise ValueError("GitHub returned an invalid release listing.")
     entries: list[Any] = []

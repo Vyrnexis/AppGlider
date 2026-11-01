@@ -50,6 +50,10 @@ class MissingResource(ValueError):
     """A GitHub resource returned HTTP 404."""
 
 
+class MetadataTooLarge(ValueError):
+    """An answer larger than AppGlider reads; asking for less may fit."""
+
+
 def valid_url(url: str) -> bool:
     parsed = urlsplit(url)
     return (
@@ -472,7 +476,7 @@ def read_metadata(url: str) -> bytes:
     except (OSError, HTTPException) as error:
         raise ValueError(UNREACHABLE) from error
     if len(data) > MAX_METADATA:
-        raise ValueError("The release metadata is too large.")
+        raise MetadataTooLarge("The release metadata is too large.")
     if urlsplit(url).netloc == "api.github.com":
         _remember_etag(url, etag, data)
     return data

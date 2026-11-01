@@ -56,6 +56,61 @@ class ReleaseInfoTests(unittest.TestCase):
         self.assertFalse(info.preview.release.is_latest)
         self.assertEqual(cached_info(APP, self.cache), info)
 
+    def listing_too_large_above(self, limit):
+        """Answer like GitHub for a repository with many files on every release."""
+        self.addCleanup(assets._LISTING_SIZE.clear)
+        urls = []
+
+        def read(url):
+            urls.append(url)
+            if url.endswith("/latest"):
+                return json.dumps(self.stable).encode()
+            size = int(url.split("per_page=")[1].split("&")[0])
+            if size > limit:
+                raise http.MetadataTooLarge("The release metadata is too large.")
+            return json.dumps(self.entries[:size]).encode()
+
+        return urls, patch.object(http, "read_metadata", side_effect=read)
+
+    def test_a_listing_too_large_to_read_is_asked_for_again_with_fewer_releases(self):
+        urls, reading = self.listing_too_large_above(5)
+        with reading:
+            info = discover_releases(APP, Event(), self.cache, force=True)
+            self.assertEqual(info.choice(False).version, "1.2.3")
+            self.assertEqual(info.choice(True).version, "1.3.0-beta.10")
+            self.assertEqual(cached_info(APP, self.cache), info)
+            self.assertEqual(
+                [url.split("?")[-1] for url in urls[1:]],
+                ["per_page=20&page=1", "per_page=5&page=1"],
+            )
+            # The size that fitted is remembered, so the next check skips the oversized page.
+            urls.clear()
+            discover_releases(APP, Event(), self.cache, force=True)
+        self.assertEqual(len(urls), 2)
+        self.assertIn("per_page=5&page=1", urls[1])
+
+    def test_a_single_release_is_the_last_attempt_and_its_error_is_kept(self):
+        urls, reading = self.listing_too_large_above(1)
+        with reading:
+            info = discover_releases(APP, Event(), self.cache, force=True)
+        self.assertEqual(info.choice(True).version, "1.3.0-beta.10")
+        self.assertIn("per_page=1&page=1", urls[-1])
+        urls, reading = self.listing_too_large_above(0)
+        assets._LISTING_SIZE.clear()
+        with reading, self.assertRaisesRegex(ValueError, "too large"):
+            discover_releases(APP, Event(), self.cache, force=True)
+        self.assertEqual(len(urls), 4)
+
+    def test_an_oversized_answer_is_reported_as_too_large(self):
+        big = Response("https://api.github.com/x", {"ETag": '"tag"'})
+        big.write(b" " * (http.MAX_METADATA + 1))
+        big.seek(0)
+        with (
+            patch.object(http, "request", return_value=big),
+            self.assertRaises(http.MetadataTooLarge),
+        ):
+            http.read_metadata("https://api.github.com/repos/owner/app/releases?per_page=20")
+
     def test_prefixed_short_versions_keep_channel_ordering_and_cache(self):
         self.stable = {**metadata("0.6"), "is_latest": True}
         self.beta = metadata("0.7-beta.10", True)
