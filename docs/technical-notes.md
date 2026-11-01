@@ -316,6 +316,18 @@ defaults to `true`, and `build` is the exact AppImage filename to prefer.
 
 Each install folder holds a small `.appglider` marker. That marker is how AppGlider knows
 which files it owns; it never touches AppImages, documents or settings it did not install.
+
+Each version is installed in its own folder (`<apps>/<app id>/<version>/<file>.AppImage`).
+The AppImage runtime treats folders named `<file>.AppImage.home` and `<file>.AppImage.config`
+next to the file as the app's home and settings folders (portable mode). On an update and on
+**Roll back**, these two folders are moved (renamed, so nothing is copied) to sit next to the
+version that becomes active, under its file name. That way the data follows the active
+version, as settings in `~/.config` are shared by every version. The move happens just before
+the library is saved and is undone if saving fails. A folder that already exists next to the
+target is never overwritten: both are then left where they are. If the app is running from
+the old version, the update or roll back stops with a request to close it, before anything is
+downloaded; apps without these folders update while running as before. Other files next to an
+AppImage are left alone, and uninstalling removes only the AppImages, so these folders stay.
 Library and settings changes are written atomically, so a crash cannot leave a half-written
 file. A corrupt file is preserved and reported, never overwritten with an empty library.
 

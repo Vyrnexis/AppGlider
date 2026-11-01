@@ -17,6 +17,8 @@ None of these are approved or scheduled.
 
 Roughly newest first. Where shown, the version is the release that first included the work.
 
+- **Portable apps keep their data:** an app's portable-mode folders (`Name.AppImage.home` and
+  `Name.AppImage.config`) move along with updates and roll backs.
 - **Repositories with many files per release (0.9.6):** update checks of projects such as
   VSCodium, which attach about 180 files to every release, no longer fail after the install.
 - **Offline and quieter banners (0.9.5):** with no network, rows keep what was known before

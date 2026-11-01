@@ -109,6 +109,8 @@ class _InstallPlan:
     made_root: bool
 
 
+# Folders next to an AppImage that its runtime uses as home and settings (portable mode).
+PORTABLE_SUFFIXES = (".home", ".config")
 NIXOS_MARKER = Path("/etc/NIXOS")
 BINFMT_DIR = Path("/proc/sys/fs/binfmt_misc")
 NIXOS_APPIMAGE_HELP = (
@@ -729,6 +731,53 @@ class Library(ShortcutsMixin):
                 ):
                     stage.unlink()
 
+    @staticmethod
+    def _portable_moves(source: Path, target: Path) -> list[tuple[Path, Path]]:
+        """The AppImage portable-mode folders next to `source` and where they would go.
+
+        The AppImage runtime uses `<file>.home` and `<file>.config` next to the file as the
+        app's home and settings folders. Each version has its own folder, so these follow the
+        active version, as settings in ~/.config are shared by every version. A folder that
+        already exists at the target is never overwritten; both are then left as they are.
+        """
+        moves = []
+        for suffix in PORTABLE_SUFFIXES:
+            folder = source.with_name(source.name + suffix)
+            moved = target.with_name(target.name + suffix)
+            if (
+                folder != moved
+                and folder.is_dir()
+                and not folder.is_symlink()
+                and not os.path.lexists(moved)
+            ):
+                moves.append((folder, moved))
+        return moves
+
+    def _require_closed(self, app: App, source: Path, target: Path, purpose: str) -> None:
+        if self._portable_moves(source, target) and running(source):
+            raise ValueError(f"Close {app.name} first: its portable data moves to {purpose}.")
+
+    def _carry_portable(
+        self, app: App, source: Path, target: Path, purpose: str
+    ) -> list[tuple[Path, Path]]:
+        """Move the portable-mode folders; returns the moves so a failed next step can undo them."""
+        self._require_closed(app, source, target, purpose)
+        done: list[tuple[Path, Path]] = []
+        try:
+            for folder, moved in self._portable_moves(source, target):
+                folder.rename(moved)
+                done.append((folder, moved))
+        except OSError:
+            self._undo_moves(done)
+            raise
+        return done
+
+    @staticmethod
+    def _undo_moves(moves: list[tuple[Path, Path]]) -> None:
+        for old, new in reversed(moves):
+            with contextlib.suppress(OSError):
+                new.rename(old)
+
     def _remove_file(self, app: App, path: Path) -> None:
         self._owned(app, path)
         if running(path):
@@ -809,6 +858,9 @@ class Library(ShortcutsMixin):
         if plan.old and plan.exists and plan.old.path == plan.destination:
             check_cancel(cancel)
             return plan.old
+        if plan.old:
+            # Asked again on activation; checked now so a running app is not downloaded for.
+            self._require_closed(app, plan.old.path, plan.destination, "the new version")
         stage: Path | None = None
         try:
             if not plan.exists:
@@ -865,6 +917,7 @@ class Library(ShortcutsMixin):
             raise ValueError("The installation folder is a symbolic link.")
         made_dir = not version_dir.exists()
         created = False
+        moved: list[tuple[Path, Path]] = []
         try:
             version_dir.mkdir(exist_ok=True)
             if destination.exists():
@@ -891,8 +944,11 @@ class Library(ShortcutsMixin):
                 old.prerelease if old else False,
             )
             records[app.id] = installed
+            if old:
+                moved = self._carry_portable(app, old.path, destination, "the new version")
             self._save(records)
         except BaseException:
+            self._undo_moves(moved)
             if created:
                 with contextlib.suppress(OSError):
                     destination.unlink(missing_ok=True)
@@ -926,7 +982,12 @@ class Library(ShortcutsMixin):
                 old.previous_prerelease,
                 old.prerelease,
             )
-            self._save(records)
+            moved = self._carry_portable(app, old.path, old.previous, "the restored version")
+            try:
+                self._save(records)
+            except BaseException:
+                self._undo_moves(moved)
+                raise
             self.save_desktop_metadata(app, metadata)
             self._shortcut(app, old.previous)
         self.update_desktop_database()

@@ -207,6 +207,93 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(note.read_text(), "keep me")
         self.assertEqual(document.read_text(), "my document")
 
+    def portable(self, path: Path, content: str) -> tuple[Path, Path]:
+        """Make an AppImage's portable-mode folders, each holding a settings file."""
+        folders = (path.with_name(path.name + ".home"), path.with_name(path.name + ".config"))
+        for folder in folders:
+            (folder / "app").mkdir(parents=True)
+            (folder / "app" / "settings.json").write_text(content)
+            (folder / ".hidden").write_text(content)
+        return folders
+
+    def test_portable_folders_follow_updates_and_roll_back(self) -> None:
+        first = self.install("1.0.0")
+        self.portable(first.path, "mine")
+        second = self.install("1.1.0")
+        for suffix in (".home", ".config"):
+            moved = second.path.with_name(second.path.name + suffix)
+            self.assertEqual((moved / "app/settings.json").read_text(), "mine")
+            self.assertEqual((moved / ".hidden").read_text(), "mine")
+            self.assertFalse(first.path.with_name(first.path.name + suffix).exists())
+        (second.path.with_name(second.path.name + ".config") / "app/settings.json").write_text(
+            "changed"
+        )
+        self.library.rollback(APP)
+        back = first.path.with_name(first.path.name + ".config") / "app/settings.json"
+        self.assertEqual(back.read_text(), "changed")  # the latest data, not a stale copy
+        self.install("1.1.0")
+        forward = second.path.with_name(second.path.name + ".config") / "app/settings.json"
+        self.assertEqual(forward.read_text(), "changed")
+        # Uninstalling removes the AppImages but never the user's data.
+        self.library.remove(APP)
+        self.assertFalse(second.path.exists())
+        self.assertEqual(forward.read_text(), "changed")
+
+    def test_portable_folders_are_never_overwritten_and_apps_without_them_are_unaffected(
+        self,
+    ) -> None:
+        first = self.install("1.0.0")
+        second = self.install("1.1.0")  # nothing portable: a plain update as before
+        self.assertEqual(sorted(p.name for p in second.path.parent.iterdir()), [second.path.name])
+        self.library.rollback(APP)
+        self.portable(first.path, "old")
+        self.portable(second.path, "existing")
+        self.install("1.1.0")
+        for path, content in ((first.path, "old"), (second.path, "existing")):
+            settings = path.with_name(path.name + ".home") / "app/settings.json"
+            self.assertEqual(settings.read_text(), content)
+
+    def test_a_running_portable_app_is_not_downloaded_for_or_moved(self) -> None:
+        first = self.install("1.0.0")
+        home, _ = self.portable(first.path, "mine")
+        data = appimage_bytes(b"1.1.0")
+        with (
+            patch("appglider.install.library.running", return_value=True),
+            patch("appglider.github.http.request", return_value=io.BytesIO(data)) as request,
+            self.assertRaisesRegex(ValueError, "Close .* first: its portable data"),
+        ):
+            self.library.install(APP, release_for("1.1.0", data), Event(), ignore_progress)
+        request.assert_not_called()
+        self.assertEqual(self.library.scan()[APP.id].path, first.path)
+        self.assertTrue(home.is_dir())
+        # Without portable folders, a running app updates as before.
+        shutil.rmtree(home)
+        shutil.rmtree(first.path.with_name(first.path.name + ".config"))
+        with patch("appglider.install.library.running", return_value=True):
+            self.assertEqual(self.install("1.1.0").version, "1.1.0")
+
+    def test_a_failed_save_puts_the_portable_folders_back(self) -> None:
+        first = self.install("1.0.0")
+        home, config = self.portable(first.path, "mine")
+        data = appimage_bytes(b"1.1.0")
+        with (
+            patch("appglider.github.http.request", return_value=io.BytesIO(data)),
+            patch.object(self.library, "_save", side_effect=OSError("disk full")),
+            self.assertRaisesRegex(OSError, "disk full"),
+        ):
+            self.library.install(APP, release_for("1.1.0", data), Event(), ignore_progress)
+        self.assertEqual((home / "app/settings.json").read_text(), "mine")
+        self.assertTrue(config.is_dir())
+        self.install("1.1.0")
+        with (
+            patch.object(self.library, "_save", side_effect=OSError("disk full")),
+            self.assertRaisesRegex(OSError, "disk full"),
+        ):
+            self.library.rollback(APP)
+        second = self.library.scan()[APP.id].path
+        self.assertTrue(second.with_name(second.name + ".home").is_dir())
+        self.assertFalse(home.exists())
+
     def test_bad_checksum_and_cancellation_keep_current_installation(self) -> None:
         first = self.install("1.0.0")
         data = appimage_bytes(b"new release")

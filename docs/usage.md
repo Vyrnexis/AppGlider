@@ -223,6 +223,12 @@ AppGlider. It needs a system tray.
 **Roll back.** AppGlider keeps the previous version of each app. If a new version misbehaves,
 use **⋯ → Roll back to previous version**, or **Roll back** under **Manage** on the app's page.
 
+**Portable apps.** Some people keep an app's settings in folders next to its AppImage, named
+after the file with `.home` or `.config` added (AppImage's "portable mode"). AppGlider moves
+these folders along when it updates the app or rolls it back, so the app keeps its settings.
+Close the app first; AppGlider asks you to if it is still open. Uninstalling never deletes
+them.
+
 **GitHub's allowance.** GitHub lets programs without an account make about 60 requests an
 hour. AppGlider is careful with them: a routine check reads the project's ordinary release
 page first, which costs nothing, and only uses the allowance when a new version has really
