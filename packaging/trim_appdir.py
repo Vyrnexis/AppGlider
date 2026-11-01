@@ -35,6 +35,24 @@ def trim(appdir: Path) -> None:
     ):
         if path.exists():
             shutil.rmtree(path)
+    # The base image's Tk toolkit, IDLE editor, turtle demos and SQLite: AppGlider uses Qt and
+    # never imports them, and only their own extension modules need the bundled libraries.
+    stdlib = python / "lib/python3.13"
+    for path in (
+        stdlib / "tkinter",
+        stdlib / "idlelib",
+        stdlib / "turtledemo",
+        stdlib / "sqlite3",
+        appdir / "usr/share/tcltk",
+    ):
+        if path.exists():
+            shutil.rmtree(path)
+    (stdlib / "turtle.py").unlink(missing_ok=True)
+    for pattern in ("_tkinter.*.so", "_sqlite3.*.so"):
+        for path in (stdlib / "lib-dynload").glob(pattern):
+            path.unlink()
+    for name in ("libtcl8.6.so", "libtk8.6.so", "libsqlite3.so"):
+        (appdir / "usr/lib" / name).unlink(missing_ok=True)
     for path in pyside.glob("Qt*.abi3.so"):
         if path.name not in {"QtCore.abi3.so", "QtGui.abi3.so", "QtWidgets.abi3.so"}:
             path.unlink()

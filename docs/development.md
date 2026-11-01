@@ -123,7 +123,8 @@ Python runtime, installs the application wheel and pinned runtime requirements, 
 selected Ubuntu 22.04 X11 libraries. User settings, installed apps and the development
 environment are excluded.
 
-`trim_appdir.py` removes unused Qt modules, QML components, development tools and pip.
+`trim_appdir.py` removes unused Qt modules, QML components, development tools, pip, and the
+Python base image's Tk, IDLE, turtle demos and SQLite.
 It follows shared-library dependencies from retained Widgets bindings and desktop plugins.
 Update its retained binding list if the application starts importing another Qt module.
 Runtime licence texts and source/replacement instructions are bundled with the application;
