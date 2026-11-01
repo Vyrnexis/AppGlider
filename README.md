@@ -148,7 +148,9 @@ pictures.
 AppGlider is written in Python with PySide6 and needs Python 3.11 or newer.
 [Development and packaging](docs/development.md) covers setup, checks and building the
 AppImage, [GitHub Actions](docs/builds.md) covers automated builds and releases, and the
-[design brief](docs/design.md) covers the interface.
+[design brief](docs/design.md) covers the interface. Want to help? Read
+[Contributing](CONTRIBUTING.md) first; it explains what fits AppGlider and how to get a pull
+request merged.
 
 ## History
 
