@@ -17,6 +17,8 @@ None of these are approved or scheduled.
 
 Roughly newest first. Where shown, the version is the release that first included the work.
 
+- **Repositories with many files per release (0.9.6):** update checks of projects such as
+  VSCodium, which attach about 180 files to every release, no longer fail after the install.
 - **Offline and quieter banners (0.9.5):** with no network, rows keep what was known before
   and the sidebar says **GitHub: offline**; checks at login try again once the network is up.
   Both banners can be closed until something new is out. Release notes open as a short
