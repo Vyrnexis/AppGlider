@@ -144,8 +144,10 @@ Review these files together when updating the runtime:
 | `packaging/downloads.json` | Python AppImage (Python 3.13.17), packaging tool and runtime hashes |
 | `packaging/ubuntu-libs.json` | Bundled X11 library downloads and hashes |
 
-Some upstream tool URLs use mutable `continuous` releases. A changed download fails the
-hash check deliberately; review the replacement before updating its recorded hash.
+appimagetool is pinned to its numbered 1.9.1 release: its `continuous` build is replaced
+without notice, which once stopped a release build. The Python AppImage comes from a release
+that upstream updates in place. A changed download fails the hash check deliberately; review
+the replacement before updating its recorded hash.
 The AppImage runtime is pinned to a specific GitHub asset ID and SHA-256; its cache
 filename includes that ID. The download requests binary content from GitHub's asset API.
 
