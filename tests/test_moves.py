@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QApplication
 from test_library import appimage_bytes
 
 from appglider.core.catalog import custom_app, load_apps
+from appglider.core.catalogfile import CatalogEntry
 from appglider.github import assets, http
 from appglider.github.assets import Release, RepositoryMismatch
 from appglider.github.http import RepositoryMoved
@@ -116,6 +117,25 @@ class LibraryMoveTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.library = Library(self.root / "data", self.root / "apps", self.root / "desktop")
         self.library.add_repository(OLD)
+
+    def test_the_old_address_of_a_moved_repository_is_not_added_again(self) -> None:
+        # It would get the id the moved app kept: same preferences, unreadable library.
+        self.library.set_build_variant(OLD.id, "Classic.AppImage")
+        self.library.move_repository(OLD.id, NEW)
+        before = {
+            name: (self.library.data_dir / name).read_bytes()
+            for name in ("repositories.json", "build-preferences.json")
+        }
+        entry = CatalogEntry(OLD.repo, "Imported", stable_only=False, build="Other.AppImage")
+        plan = self.library.import_catalog([entry])
+        self.assertEqual((plan.new, plan.existing), ((), (entry,)))
+        with self.assertRaisesRegex(ValueError, "already in the catalog"):
+            self.library.add_repository(custom_app(OLD.repo, "Again"))
+        for name, data in before.items():
+            self.assertEqual((self.library.data_dir / name).read_bytes(), data)
+        self.assertFalse((self.library.data_dir / "release-preferences.json").exists())
+        reopened = Library(self.library.data_dir, self.library.apps_dir, self.library.desktop_dir)
+        self.assertEqual([app.repo for app in reopened.apps], [NEW])
 
     def install(self, repo: str, version: str) -> None:
         payload = appimage_bytes(version.encode())

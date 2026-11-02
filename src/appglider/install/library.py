@@ -524,7 +524,10 @@ class Library(ShortcutsMixin):
             raise ValueError("Invalid custom repository details.")
         with self._lock():
             apps = self.apps
-            if any(known.repo.casefold() == app.repo.casefold() for known in apps):
+            # A moved repository keeps the id its old address gives, so compare ids too.
+            if any(
+                known.repo.casefold() == app.repo.casefold() or known.id == app.id for known in apps
+            ):
                 raise ValueError("This repository is already in the catalog.")
             self.records()
             self._save_release_preference(app.id, app.include_prereleases)
@@ -534,14 +537,19 @@ class Library(ShortcutsMixin):
 
     def plan_import(self, entries: Sequence[CatalogEntry]) -> ImportPlan:
         """Say which catalog entries would be added and which are already in the library."""
-        known = {app.repo.casefold() for app in self.apps}
+        apps = self.apps
+        known = {app.repo.casefold() for app in apps}
+        # A moved repository keeps the id of its old address; that address is not new either.
+        ids = {app.id for app in apps}
         new: list[CatalogEntry] = []
         existing: list[CatalogEntry] = []
         for entry in entries:
-            if entry.repo.casefold() in known:
+            app_id = custom_app(entry.repo).id
+            if entry.repo.casefold() in known or app_id in ids:
                 existing.append(entry)
             else:
                 known.add(entry.repo.casefold())
+                ids.add(app_id)
                 new.append(entry)
         return ImportPlan(tuple(new), tuple(existing))
 
