@@ -15,7 +15,7 @@ def close_window(window):
         if task is not None:
             task.cancel.set()
     with patch(
-        "appglider.ui.window.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes
+        "appglider.ui.window.MessageBox.question", return_value=QMessageBox.StandardButton.Yes
     ):
         if not QThreadPool.globalInstance().waitForDone(5000):
             raise AssertionError("Background worker did not stop during GUI test cleanup")

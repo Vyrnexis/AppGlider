@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -63,7 +62,7 @@ from appglider.install.launch_options import (
 )
 from appglider.install.library import PreviousCopy, previous_copy
 from appglider.ui.app_status import app_status
-from appglider.ui.controls import Segmented, Switch, repolish
+from appglider.ui.controls import MessageBox, Segmented, Switch, repolish
 from appglider.ui.jobs import TaskResult
 
 if TYPE_CHECKING:
@@ -1180,7 +1179,7 @@ class AppPage(QScrollArea):
                 launcher.library.set_build_variant(app.id, target.build_variant)
             except (OSError, ValueError) as failure:
                 launcher.footer.setText(f"Build preference could not be saved: {failure}")
-                QMessageBox.warning(self, "Cannot save the build", str(failure))
+                MessageBox.warning(self, "Cannot save the build", str(failure))
                 return
         remember_release(target, release, launcher.library.data_dir / "release-cache")
         launcher.catalog_changed()
@@ -1234,7 +1233,7 @@ class AppPage(QScrollArea):
             with Path(path).open("rb") as source:
                 png = normalise_icon(source.read(MAX_ICON_BYTES + 1))
         except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot use this icon", str(error))
+            MessageBox.warning(self, "Cannot use this icon", str(error))
             return
         self.save_icon(png)
 
@@ -1250,7 +1249,7 @@ class AppPage(QScrollArea):
             self.launcher.library.set_icon(app, png)
         except (OSError, ValueError) as error:
             self.launcher.footer.setText(f"Icon could not be saved: {error}")
-            QMessageBox.warning(self, "Cannot save the icon", str(error))
+            MessageBox.warning(self, "Cannot save the icon", str(error))
             return
         self.launcher.catalog_changed()
         self.launcher.footer.setText(f"Saved icon for {app.name}.")

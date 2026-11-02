@@ -1,4 +1,4 @@
-"""Small reusable controls: switch, segmented choice and space bars."""
+"""Small reusable controls: switch, segmented choice, space bars and plain message boxes."""
 
 from PySide6.QtCore import Property, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPaintEvent, QPalette, QPen
@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QHBoxLayout,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QWidget,
@@ -17,6 +18,64 @@ def repolish(widget: QWidget) -> None:
     """Re-apply the stylesheet after a dynamic property or object name changed."""
     widget.style().unpolish(widget)
     widget.style().polish(widget)
+
+
+class MessageBox(QMessageBox):
+    """A message box that shows its text exactly as written.
+
+    Names and errors can come from repositories and catalog files; Qt would otherwise
+    read text that looks like markup as rich text, which can load local files.
+    """
+
+    def __init__(
+        self,
+        icon: QMessageBox.Icon,
+        title: str,
+        text: str,
+        buttons: QMessageBox.StandardButton = QMessageBox.StandardButton.NoButton,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(icon, title, text, buttons, parent)
+        self.setTextFormat(Qt.TextFormat.PlainText)
+
+    @classmethod
+    def ask(
+        cls,
+        icon: QMessageBox.Icon,
+        parent: QWidget | None,
+        title: str,
+        text: str,
+        buttons: QMessageBox.StandardButton,
+        default: QMessageBox.StandardButton,
+    ) -> QMessageBox.StandardButton:
+        box = cls(icon, title, text, buttons, parent)
+        box.setDefaultButton(default)
+        box.exec()
+        return box.standardButton(box.clickedButton())
+
+    @classmethod
+    def question(
+        cls,
+        parent: QWidget | None,
+        title: str,
+        text: str,
+        buttons: QMessageBox.StandardButton = (
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ),
+        default: QMessageBox.StandardButton = QMessageBox.StandardButton.NoButton,
+    ) -> QMessageBox.StandardButton:
+        return cls.ask(QMessageBox.Icon.Question, parent, title, text, buttons, default)
+
+    @classmethod
+    def warning(
+        cls,
+        parent: QWidget | None,
+        title: str,
+        text: str,
+        buttons: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok,
+        default: QMessageBox.StandardButton = QMessageBox.StandardButton.NoButton,
+    ) -> QMessageBox.StandardButton:
+        return cls.ask(QMessageBox.Icon.Warning, parent, title, text, buttons, default)
 
 
 class Switch(QAbstractButton):

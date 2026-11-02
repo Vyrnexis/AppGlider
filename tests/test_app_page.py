@@ -17,7 +17,7 @@ from gui_helpers import close_window
 from PySide6.QtCore import QSettings, Qt, QThreadPool, QUrl
 from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QBoxLayout, QMessageBox
+from PySide6.QtWidgets import QApplication, QBoxLayout, QLabel, QMessageBox
 from test_builds import BAMBU, bambu_metadata, chosen_bambu
 from test_library import APP, appimage_bytes, release_for
 
@@ -27,7 +27,7 @@ from appglider.github.assets import Release
 from appglider.github.icons import IconCandidate, normalise_icon
 from appglider.github.release_info import ReleaseInfo, ReleaseOption, info_path
 from appglider.install.library import AppRunning, Library
-from appglider.ui.controls import Segmented, Switch
+from appglider.ui.controls import MessageBox, Segmented, Switch
 from appglider.ui.pages.app_page import (
     NotesBrowser,
     format_date,
@@ -332,7 +332,7 @@ class AppPageTests(unittest.TestCase):
         self.install("1.0.0")
         with (
             patch.object(self.library, "create_shortcut", side_effect=ValueError("no good")),
-            patch("appglider.ui.window.QMessageBox.warning") as warning,
+            patch("appglider.ui.window.MessageBox.warning") as warning,
         ):
             self.window.create_shortcut(APP.id)
             deadline = time.monotonic() + 5
@@ -451,7 +451,7 @@ class AppPageTests(unittest.TestCase):
                 "appglider.ui.pages.app_page.QInputDialog.getItem",
                 side_effect=lambda parent, title, label, items, *args: (items[0], True),
             ),
-            patch("appglider.ui.pages.app_page.QMessageBox.warning") as warning,
+            patch("appglider.ui.pages.app_page.MessageBox.warning") as warning,
             patch.object(self.library, "set_build_variant", side_effect=OSError("disk full")),
         ):
             self.page.choose_build()
@@ -523,7 +523,7 @@ class AppPageTests(unittest.TestCase):
         ):
             with (
                 self.subTest(outcome=outcome),
-                patch("appglider.ui.window.QMessageBox.warning"),
+                patch("appglider.ui.window.MessageBox.warning"),
                 patch(
                     "appglider.ui.pages.app_page.discover_icons",
                     side_effect=outcome if isinstance(outcome, Exception) else None,
@@ -553,7 +553,7 @@ class AppPageTests(unittest.TestCase):
                 "appglider.ui.pages.app_page.QFileDialog.getOpenFileName",
                 return_value=(str(image), ""),
             ),
-            patch("appglider.ui.pages.app_page.QMessageBox.warning") as warning,
+            patch("appglider.ui.pages.app_page.MessageBox.warning") as warning,
         ):
             self.page.choose_icon_action.trigger()
         warning.assert_called_once()
@@ -611,7 +611,7 @@ class AppPageTests(unittest.TestCase):
         window.open_app(APP.id)
         self.assertTrue(self.page.remove_button.isEnabled())
         with patch(
-            "appglider.ui.pages.app_page.QMessageBox.question",
+            "appglider.ui.pages.app_page.MessageBox.question",
             return_value=QMessageBox.StandardButton.No,
         ) as ask:
             self.page.remove_button.click()
@@ -620,7 +620,7 @@ class AppPageTests(unittest.TestCase):
         self.assertIn(APP.id, window.cards)
         self.assertIs(window.pages.currentWidget(), self.page)
         with patch(
-            "appglider.ui.pages.app_page.QMessageBox.question",
+            "appglider.ui.pages.app_page.MessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             self.page.remove_button.click()
@@ -633,7 +633,7 @@ class AppPageTests(unittest.TestCase):
         self.install("1.0.0")
         self.window.open_app(APP.id)
         self.assertTrue(self.page.remove_row.isHidden())
-        with patch("appglider.ui.pages.app_page.QMessageBox.question") as ask:
+        with patch("appglider.ui.pages.app_page.MessageBox.question") as ask:
             self.page.remove_from_library()
         ask.assert_not_called()
         self.assertIn(APP.id, [app.id for app in self.library.apps])
@@ -690,7 +690,7 @@ class AppPageTests(unittest.TestCase):
             card.action_button.click()
         self.assertEqual(install.call_count, 2)
         with patch(
-            "appglider.ui.window.QMessageBox.question",
+            "appglider.ui.window.MessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ) as ask:
             page.forget_button.click()
@@ -705,7 +705,7 @@ class AppPageTests(unittest.TestCase):
     def test_the_row_menu_removes_an_uninstalled_app_from_the_library(self) -> None:
         card = self.window.cards[APP.id]
         with patch(
-            "appglider.ui.window.QMessageBox.question",
+            "appglider.ui.window.MessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             card.unlist_action.trigger()
@@ -832,6 +832,16 @@ class AppPageTests(unittest.TestCase):
                 with self.subTest(reference=reference):
                     browser.set_notes(f"![x]({reference})")
                     self.assertEqual(browser.document().size().height(), missing)
+
+    def test_message_boxes_show_names_as_plain_text(self) -> None:
+        # Names come from catalogs and repositories; markup there must stay text.
+        box = MessageBox(QMessageBox.Icon.Warning, "t", '<img src="/x.png"><b>X</b> is running.')
+        self.addCleanup(box.deleteLater)
+        box.setInformativeText("<b>Also plain</b>")
+        self.assertEqual(box.textFormat(), Qt.TextFormat.PlainText)
+        labels = {label.objectName(): label for label in box.findChildren(QLabel)}
+        for name in ("qt_msgbox_label", "qt_msgbox_informativelabel"):
+            self.assertEqual(labels[name].textFormat(), Qt.TextFormat.PlainText)
 
     def test_notes_never_load_resources_and_only_web_links_open(self) -> None:
         browser = NotesBrowser()

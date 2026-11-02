@@ -541,7 +541,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn("lightcraft", reopened.cards)
         self.window.open_app(CUSTOM.id)
         with patch(
-            "appglider.ui.pages.app_page.QMessageBox.question",
+            "appglider.ui.pages.app_page.MessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             self.window.app_page.remove_button.click()
@@ -944,7 +944,7 @@ class RepositoryGuiTests(unittest.TestCase):
         with (
             patch("appglider.ui.window.latest_release", return_value=custom_release()),
             patch("appglider.github.http.request", return_value=io.BytesIO(payload)),
-            patch("appglider.ui.window.QMessageBox.warning") as warning,
+            patch("appglider.ui.window.MessageBox.warning") as warning,
         ):
             self.window.install_app(CUSTOM.id)
             self.wait_for_task(self.window)
@@ -978,7 +978,7 @@ class RepositoryGuiTests(unittest.TestCase):
             self.wait_for_task(self.window)
         self.assertEqual(self.window.installed[CUSTOM.id].version, "0.9.5")
         with patch(
-            "appglider.ui.window.QMessageBox.question",
+            "appglider.ui.window.MessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             self.window.remove_app(CUSTOM.id)
@@ -986,7 +986,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(self.window.filter_installed.text(), "Installed (0)")
         self.window.open_app(CUSTOM.id)
         with patch(
-            "appglider.ui.pages.app_page.QMessageBox.question",
+            "appglider.ui.pages.app_page.MessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             self.window.app_page.remove_button.click()

@@ -93,6 +93,7 @@ from appglider.install import self_update
 from appglider.install.appimage import check_appimage, clean_environment
 from appglider.install.library import Installed, Library, Orphan
 from appglider.ui.app_status import WAITING
+from appglider.ui.controls import MessageBox
 from appglider.ui.jobs import Lookup, StepSignals, Task, TaskResult
 from appglider.ui.pages.add_page import AddPage
 from appglider.ui.pages.app_page import AppPage, link_button
@@ -749,7 +750,7 @@ class LauncherWindow(TrayMixin):
     def sort_alphabetically(self) -> None:
         if len(self.apps) < 2:
             return
-        answer = QMessageBox.question(
+        answer = MessageBox.question(
             self,
             "Sort the library A–Z?",
             "This replaces your own order. Pinned apps stay on top.",
@@ -829,7 +830,7 @@ class LauncherWindow(TrayMixin):
         try:
             self.library.set_update_hold(app_id, held)
         except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot change update hold", str(error))
+            MessageBox.warning(self, "Cannot change update hold", str(error))
             return
         self.scan_installed()
         self.footer.setText(
@@ -1123,7 +1124,7 @@ class LauncherWindow(TrayMixin):
             try:
                 self.library.discard_orphans(dialog.selected())
             except (OSError, ValueError) as error:
-                QMessageBox.warning(self, "Cannot update the library", str(error))
+                MessageBox.warning(self, "Cannot update the library", str(error))
             self.scan_installed()
         dialog.deleteLater()
 
@@ -1220,7 +1221,7 @@ class LauncherWindow(TrayMixin):
         try:
             log = self.library.launch(app, installed)
         except (OSError, ValueError) as error:
-            QMessageBox.warning(self, f"Cannot launch {app.name}", str(error))
+            MessageBox.warning(self, f"Cannot launch {app.name}", str(error))
             return
         process = self.library.processes[app_id]
         self.footer.setText(f"Launched {app.name} · Log: {log}")
@@ -1229,7 +1230,7 @@ class LauncherWindow(TrayMixin):
             code = process.poll()
             if code is not None and code != 0:
                 self.footer.setText(f"{app.name} exited with code {code}. See {log}")
-                QMessageBox.warning(
+                MessageBox.warning(
                     self,
                     f"{app.name} could not start",
                     f"The application exited with code {code}.\nIts diagnostic log is:\n{log}",
@@ -1303,7 +1304,7 @@ class LauncherWindow(TrayMixin):
     def shortcut_failed(self, error: str) -> None:
         self.menu_task = None
         if not self.quitting:
-            QMessageBox.warning(self, "Cannot create shortcut", error)
+            MessageBox.warning(self, "Cannot create shortcut", error)
 
     def app_running(self, app_id: str) -> bool:
         """Whether an app AppGlider installed is running now, however it was started."""
@@ -1321,7 +1322,7 @@ class LauncherWindow(TrayMixin):
         app = next((app for app in self.apps if app.id == app_id), None)
         if app is None:
             return
-        box = QMessageBox(
+        box = MessageBox(
             QMessageBox.Icon.Warning,
             f"{app.name} is running",
             f"{app.name} is running.",
@@ -1339,7 +1340,7 @@ class LauncherWindow(TrayMixin):
         app = next((app for app in self.apps if app.id == app_id), None)
         if app is None or self.force_task is not None:
             return
-        box = QMessageBox(
+        box = MessageBox(
             QMessageBox.Icon.Warning,
             f"Force close {app.name}?",
             f"Force close {app.name}?",
@@ -1371,7 +1372,7 @@ class LauncherWindow(TrayMixin):
     def force_close_failed(self, error: str) -> None:
         self.force_task = None
         if not self.quitting:
-            QMessageBox.warning(self, "Cannot force close", error)
+            MessageBox.warning(self, "Cannot force close", error)
 
     def refresh_desktop_database(self) -> None:
         """Let the desktop notice changed menu entries; the tool can take seconds."""
@@ -1424,7 +1425,7 @@ class LauncherWindow(TrayMixin):
             self.offer_force_close(result.running, result.message)
         if result.errors and not self.close_after_task:
             errors = "\n\n".join(f"{key}: {value}" for key, value in result.errors.items())
-            QMessageBox.warning(self, "Some operations could not finish", errors)
+            MessageBox.warning(self, "Some operations could not finish", errors)
         if self.close_after_task:
             self.close()
 
@@ -1464,7 +1465,7 @@ class LauncherWindow(TrayMixin):
         if self.close_after_task:
             self.close()
         else:
-            QMessageBox.warning(self, "Operation could not finish", error)
+            MessageBox.warning(self, "Operation could not finish", error)
 
     def cancel_task(self) -> None:
         if self.task is not None:
@@ -1903,7 +1904,7 @@ class LauncherWindow(TrayMixin):
 
     def remove_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
-        answer = QMessageBox.question(
+        answer = MessageBox.question(
             self,
             f"Remove {app.name}?",
             "Remove this app and its previous version from AppGlider?\n"
@@ -1924,7 +1925,7 @@ class LauncherWindow(TrayMixin):
         missing = self.missing.get(app_id)
         if self.task is not None or missing is None:
             return
-        answer = QMessageBox.question(
+        answer = MessageBox.question(
             self,
             f"Forget the missing {app.name} copy?",
             f"AppGlider will stop tracking the AppImage it installed at\n{missing.path}\n"
@@ -1935,7 +1936,7 @@ class LauncherWindow(TrayMixin):
         try:
             self.library.forget_missing(app_id)
         except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot forget the copy", str(error))
+            MessageBox.warning(self, "Cannot forget the copy", str(error))
             return
         self.scan_installed()
         self.footer.setText(f"Forgot the missing {app.name} copy. No files were deleted.")
@@ -1945,7 +1946,7 @@ class LauncherWindow(TrayMixin):
         app = next((app for app in self.apps if app.id == app_id), None)
         if app is None or self.task is not None or app_id in self.installed:
             return
-        answer = QMessageBox.question(
+        answer = MessageBox.question(
             self,
             f"Remove {app.name} from the library?",
             f"{app.name} will no longer be listed. No application files are deleted.",
@@ -1955,7 +1956,7 @@ class LauncherWindow(TrayMixin):
         try:
             self.library.remove_repository(app_id)
         except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "Cannot remove the app", str(error))
+            MessageBox.warning(self, "Cannot remove the app", str(error))
             return
         self.catalog_changed()
         self.footer.setText(
@@ -1974,7 +1975,7 @@ class LauncherWindow(TrayMixin):
             event.ignore()
             return
         if self.task is not None:
-            answer = QMessageBox.question(
+            answer = MessageBox.question(
                 self,
                 "Operation in progress",
                 "Cancel the current operation and close when it has stopped?",

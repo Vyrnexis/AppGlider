@@ -378,7 +378,7 @@ class LibraryTests(unittest.TestCase):
         window.toggle_pin(names[3])
         custom = self.shown()
         self.assertNotEqual(custom[1:], [n for n in names if n != names[3]])
-        with patch("appglider.ui.window.QMessageBox.question") as ask:
+        with patch("appglider.ui.window.MessageBox.question") as ask:
             ask.return_value = QMessageBox.StandardButton.No
             window.sort_action.trigger()
             self.assertEqual(
@@ -1153,7 +1153,7 @@ class LibraryTests(unittest.TestCase):
                 return_value=True,
             ),
             patch("appglider.ui.window.QThreadPool.globalInstance"),
-            patch("appglider.ui.window.QMessageBox.question") as question,
+            patch("appglider.ui.window.MessageBox.question") as question,
         ):
             self.window.tray.show()
             self.window.start_task("Downloading", lambda cancel, progress: TaskResult("Done"))
@@ -1449,7 +1449,7 @@ class LibraryTests(unittest.TestCase):
                 "appglider.ui.window.QTimer.singleShot",
                 side_effect=lambda delay, *args: single_shot(0, *args),
             ),
-            patch("appglider.ui.window.QMessageBox.warning") as warning,
+            patch("appglider.ui.window.MessageBox.warning") as warning,
         ):
             process = launch.return_value
             process.poll.return_value = 1
@@ -1760,7 +1760,7 @@ class LibraryTests(unittest.TestCase):
         page = self.window.app_page
         with (
             patch("appglider.ui.window.discover_releases", side_effect=OSError("Offline")),
-            patch("appglider.ui.window.QMessageBox.warning"),
+            patch("appglider.ui.window.MessageBox.warning"),
             patch("appglider.ui.window.QThreadPool.globalInstance") as pool,
         ):
             pool.return_value.start.side_effect = lambda task: task.run()
@@ -1924,7 +1924,7 @@ class LibraryTests(unittest.TestCase):
         self.assertIn("check needed", self.window.cards[APP.id].chip.toolTip())
         with (
             patch("appglider.ui.window.discover_releases", side_effect=OSError("Offline")),
-            patch("appglider.ui.window.QMessageBox.warning") as warning,
+            patch("appglider.ui.window.MessageBox.warning") as warning,
         ):
             self.window.refresh_releases()
             self.wait_for_release_checks()
@@ -1970,7 +1970,7 @@ class LibraryTests(unittest.TestCase):
             )
         with (
             patch("appglider.ui.window.QThreadPool.globalInstance"),
-            patch("appglider.ui.window.QMessageBox.question") as question,
+            patch("appglider.ui.window.MessageBox.question") as question,
             patch("appglider.ui.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
         ):
             self.window.refresh_releases()
@@ -2004,7 +2004,7 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(card.shortcut_action.isEnabled())
         shortcut = self.window.library.desktop_dir / f"appglider-{APP.id}.desktop"
         shortcut.unlink()
-        with patch("appglider.ui.window.QMessageBox.warning") as warning:
+        with patch("appglider.ui.window.MessageBox.warning") as warning:
             card.shortcut_requested.emit(APP.id)
             deadline = time.monotonic() + 5
             while self.window.menu_task is not None and time.monotonic() < deadline:
@@ -2030,7 +2030,7 @@ class LibraryTests(unittest.TestCase):
 
     def test_install_update_and_rollback_through_background_ui(self) -> None:
         card = self.window.cards[APP.id]
-        with patch("appglider.ui.window.QMessageBox.warning") as warning:
+        with patch("appglider.ui.window.MessageBox.warning") as warning:
             for version in ("1.0.0", "1.1.0"):
                 payload = appimage_bytes(version.encode())
                 release = release_for(version, payload)
@@ -2065,7 +2065,7 @@ class LibraryTests(unittest.TestCase):
         self.window.scan_installed()
         newer_payload = appimage_bytes(b"1.1.0")
         newer = release_for("1.1.0", newer_payload)
-        with patch("appglider.ui.window.QMessageBox.warning") as warning:
+        with patch("appglider.ui.window.MessageBox.warning") as warning:
             for latest, expected, version in ((first, "Updated 0 apps.", "1.0.0"),):
                 self.window.releases[APP.id] = newer
                 self.window.refresh()
