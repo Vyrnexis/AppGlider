@@ -99,6 +99,7 @@ Status chips, one per row, in priority order:
 | State | Chip text | Colour token | Primary button |
 | --- | --- | --- | --- |
 | Busy (installing, updating) | Installing… / Updating… with progress | accent | Cancel |
+| Waiting its turn in Update all | Waiting | neutral | its usual button, disabled |
 | Update available | ↑ 1.4.0 | warn | Update (primary style) |
 | Choose build | Choose build | warn | Choose build |
 | Held with a newer release | ‖ Held · 2.3.0 out | held | Launch |
