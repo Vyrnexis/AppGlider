@@ -31,12 +31,12 @@ None of these are approved or scheduled.
 
 Roughly newest first. Where shown, the version is the release that first included the work.
 
-- **Update all, one app at a time on screen:** each app's row changes as soon as it is
+- **Update all, one app at a time on screen (0.9.7):** each app's row changes as soon as it is
   updated and leaves the Updates page, instead of all of them changing at the end; the apps
   still in line show **Waiting**.
-- **Force close:** a frozen app can be closed from its **⋯** menu or its page, after asking,
+- **Force close (0.9.7):** a frozen app can be closed from its **⋯** menu or its page, after asking,
   including the extra processes it started. Messages that ask you to close an app offer it too.
-- **Portable apps keep their data:** an app's portable-mode folders (`Name.AppImage.home` and
+- **Portable apps keep their data (0.9.7):** an app's portable-mode folders (`Name.AppImage.home` and
   `Name.AppImage.config`) move along with updates and roll backs.
 - **Repositories with many files per release (0.9.6):** update checks of projects such as
   VSCodium, which attach about 180 files to every release, no longer fail after the install.
