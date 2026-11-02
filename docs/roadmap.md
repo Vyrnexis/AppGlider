@@ -15,6 +15,8 @@ None of these are approved or scheduled.
   GitHub's SHA-256 like any download, blocks would only come from that release's own file,
   and anything unexpected would fall back to a full download. Apps that publish a `.zsync`
   could follow later; for some, such as VSCodium, little can be reused between versions.
+  Finding the reusable parts is too slow in pure Python for a 44 MB file, so this would use
+  a zsync tool installed on the computer, or a small compiled helper inside the AppImage.
 - **AppGlider on a USB stick:** carry AppGlider and its apps on a stick and use them on any
   computer. AppGlider already runs from portable mode (`.home` and `.config` folders next to
   its file), but the library stores each app's full path, and a stick is mounted at a
