@@ -13,6 +13,7 @@ import tempfile
 import time
 import unittest
 from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import MagicMock, patch
@@ -510,6 +511,17 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "symbolic"):
             self.install("1.0.0")
         self.assertFalse((elsewhere / "1.0.0").exists())
+
+    def test_install_refuses_a_name_the_library_could_not_manage_later(self) -> None:
+        data = appimage_bytes()
+        release = replace(release_for("1.0.0", data), name=".AppImage")
+        with (
+            patch("appglider.github.http.request", return_value=io.BytesIO(data)) as request,
+            self.assertRaisesRegex(ValueError, "unsafe filename"),
+        ):
+            self.library.install(APP, release, Event(), ignore_progress)
+        request.assert_not_called()
+        self.assertEqual(self.library.records(), {})
 
     def test_failed_download_does_not_trust_an_incomplete_file(self) -> None:
         data = appimage_bytes()
@@ -1207,6 +1219,17 @@ class ReleaseTests(unittest.TestCase):
         metadata["assets"][0]["size"] = -1
         with self.assertRaises(ValueError):
             select_release(APP, metadata, architecture())
+
+    def test_a_bare_appimage_extension_is_not_a_filename(self) -> None:
+        # pathlib sees no suffix in ".AppImage", so the library could never manage it later.
+        metadata = self.metadata()
+        bare = {**metadata["assets"][0], "name": ".AppImage"}
+        bare["browser_download_url"] = bare["browser_download_url"].rsplit("/", 1)[0] + "/.AppImage"
+        with self.assertRaisesRegex(ValueError, "AppImage"):
+            select_release(APP, {**metadata, "assets": [bare]}, architecture())
+        both = {**metadata, "assets": [bare, *metadata["assets"]]}
+        chosen = select_release(APP, both, architecture())
+        self.assertEqual(chosen.name, metadata["assets"][0]["name"])
 
     def test_release_notes_and_date_come_from_the_api_and_are_bounded_and_validated(self) -> None:
         metadata = {

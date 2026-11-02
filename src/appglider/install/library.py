@@ -990,7 +990,11 @@ class Library(ShortcutsMixin):
             raise ValueError("Add this repository to the catalog before installing its app.")
         if release.prerelease and not current.include_prereleases:
             raise ValueError("Enable prereleases for this application before installing a preview.")
-        if not re.fullmatch(VERSION, release.version) or Path(release.name).name != release.name:
+        if (
+            not re.fullmatch(VERSION, release.version)
+            or Path(release.name).name != release.name
+            or Path(release.name).suffix.lower() != ".appimage"  # what _owned requires later
+        ):
             raise ValueError("The release has an unsafe filename or version.")
         records = self.records()
         old = records.get(app.id)

@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import date
+from pathlib import PurePosixPath
 from threading import Event
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
@@ -137,7 +138,8 @@ def select_asset(app: App, assets: list[Any], version: str, arch: str) -> dict[s
         if not isinstance(asset, dict):
             continue
         name = asset.get("name")
-        if not isinstance(name, str) or not name.casefold().endswith(".appimage"):
+        # The same rule as the library's ownership check, so a bare ".AppImage" is skipped.
+        if not isinstance(name, str) or PurePosixPath(name).suffix.lower() != ".appimage":
             continue
         if len(name) > 512 or any(ord(c) < 32 or ord(c) == 127 or c in "/\\" for c in name):
             raise ValueError("The release has an invalid AppImage filename.")
