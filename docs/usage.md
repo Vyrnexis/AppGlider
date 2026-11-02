@@ -121,6 +121,7 @@ downloads. Results fade away after a while.
 | ⚠ File missing | Reinstall | The app's file was moved or deleted; see [below](#when-an-apps-file-goes-missing) |
 | Not installed | Install | On your list but not downloaded yet |
 | Installing… / Updating… | Cancel | Work is in progress |
+| Waiting | Update (greyed out) | **Update all** will get to this app next |
 
 Every chip has a word or symbol as well as a colour, and hovering over it explains it.
 
@@ -212,6 +213,12 @@ When an update is waiting:
 If you'd rather not see the banner, press its **×**. It stays closed until a newer version
 or another app's update comes out. The rows and the sidebar count still show what's waiting,
 and the **Updates** page always keeps the banner with **Update all**.
+
+**Update all** updates one app at a time, in the order of your list. The app being
+updated shows **Updating…**, the others **Waiting**. As each one finishes, its row shows
+**✓ Up to date** and leaves the **Updates** page, and the counts go down. If you cancel, the
+apps already updated stay updated. An app that could not be updated keeps its **↑** chip,
+and a summary is shown at the end.
 
 **Read before you update.** An app's page shows **What's new**, the project's notes for the
 new version.

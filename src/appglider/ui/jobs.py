@@ -35,6 +35,12 @@ class TaskSignals(QObject):
     failed = Signal(str)
 
 
+class StepSignals(QObject):
+    """One app of a longer task is done; reported before the whole task ends."""
+
+    step = Signal(str, object)
+
+
 class Task(QRunnable):
     def __init__(self, operation: Callable[[Event, Progress], TaskResult]) -> None:
         super().__init__()

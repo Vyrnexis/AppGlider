@@ -2087,6 +2087,59 @@ class LibraryTests(unittest.TestCase):
             self.assertTrue(card.rollback_action.isEnabled())
             warning.assert_not_called()
 
+    def test_update_all_shows_each_app_as_it_finishes(self) -> None:
+        window = self.window
+        first, second = APPS[0], APPS[1]
+        old, new = appimage_bytes(b"1.0.0"), appimage_bytes(b"1.1.0")
+
+        def release(app: App, version: str, data: bytes) -> Release:
+            name = f"{app.id}-{version}.AppImage"
+            return replace(
+                release_for(version, data),
+                name=name,
+                url=f"https://github.com/{app.repo}/releases/download/v{version}/{name}",
+            )
+
+        for app in (first, second):
+            with patch("appglider.github.http.request", return_value=io.BytesIO(old)):
+                window.library.install(app, release(app, "1.0.0", old), Event(), lambda *a: None)
+            window.releases[app.id] = release(app, "1.1.0", new)
+        window.scan_installed()
+        window.show_view("updates")
+        self.assertEqual([row.app.id for row in window.app_list.rows], [first.id, second.id])
+        reached, go_on = Event(), Event()
+        self.addCleanup(go_on.set)
+
+        def latest(app: App, cancel: Event, cache: Path) -> Release:
+            if app.id == second.id:
+                reached.set()
+                go_on.wait(5)
+            return window.releases[app.id]
+
+        with (
+            patch("appglider.ui.window.latest_release", side_effect=latest),
+            patch("appglider.github.http.request", side_effect=lambda *a, **k: io.BytesIO(new)),
+        ):
+            window.update_all()
+            self.assertEqual(window.cards[first.id].chip.text(), "Updating…")
+            self.assertEqual(window.cards[second.id].chip.text(), "Waiting")
+            self.assertEqual(window.cards[second.id].action_button.text(), "Update")
+            self.assertFalse(window.cards[second.id].action_button.isEnabled())
+            # The first app is done while the second is still on its way.
+            deadline = time.monotonic() + 5
+            while first.id in window.working and time.monotonic() < deadline:
+                QTest.qWait(10)
+            self.assertTrue(reached.is_set())
+            self.assertEqual(window.installed[first.id].version, "1.1.0")
+            self.assertEqual([row.app.id for row in window.app_list.rows], [second.id])
+            self.assertEqual(window.updates_count.text(), "1")
+            self.assertEqual(window.cards[second.id].chip.text(), "Updating…")
+            go_on.set()
+            self.wait_for_task()
+        self.assertEqual(window.installed[second.id].version, "1.1.0")
+        self.assertEqual(window.app_list.rows, [])
+        self.assertEqual(window.footer.text(), "Updated 2 apps.")
+
     def test_busy_state_cancellation_and_launch_stays_available(self) -> None:
         payload = appimage_bytes()
         with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):

@@ -10,6 +10,9 @@ from appglider.github.release_info import ReleaseInfo
 from appglider.github.versions import version_key
 from appglider.install.library import Installed
 
+# The `working` state of an app that Update all has not reached yet.
+WAITING = "Waiting"
+
 
 @dataclass(frozen=True)
 class AppStatus:
@@ -57,7 +60,7 @@ def app_status(
         and not newer
         and (release is None or release.version != installed.version)
     )
-    if working:
+    if working and working != WAITING:
         mode = "cancel"
     elif installed and build_required:
         mode = "build"
@@ -71,7 +74,10 @@ def app_status(
     offline = (refresh_error or error) == UNREACHABLE
     stamp = datetime.fromtimestamp(info.checked_at).strftime("%d %b, %H:%M") if info else ""
     details: list[str] = []
-    if working:
+    if working == WAITING:
+        state, text = "none", "Waiting"
+        details.append("Waiting its turn in Update all")
+    elif working:
         state, text = "busy", f"{working}…"
     elif mode == "build":
         state, text = "build", "Choose build"

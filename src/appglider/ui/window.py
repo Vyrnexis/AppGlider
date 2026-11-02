@@ -92,7 +92,8 @@ from appglider.github.versions import Cancelled, check_cancel, version_key
 from appglider.install import self_update
 from appglider.install.appimage import check_appimage, clean_environment
 from appglider.install.library import Installed, Library, Orphan
-from appglider.ui.jobs import Lookup, Task, TaskResult
+from appglider.ui.app_status import WAITING
+from appglider.ui.jobs import Lookup, StepSignals, Task, TaskResult
 from appglider.ui.pages.add_page import AddPage
 from appglider.ui.pages.app_page import AppPage, link_button
 from appglider.ui.pages.settings_page import SettingsPage
@@ -242,6 +243,8 @@ class LauncherWindow(TrayMixin):
         self.menu_task: Lookup | None = None
         self.force_task: Lookup | None = None
         self.force_app: App | None = None
+        self.update_steps = StepSignals(self)
+        self.update_steps.step.connect(self.update_step)
         self.menu_app: App | None = None
         self.self_explicit = False
         self.self_notify = False
@@ -1410,6 +1413,23 @@ class LauncherWindow(TrayMixin):
 
     def task_finished(self, result: TaskResult) -> None:
         self.show_moves()
+        self.apply_results(result)
+        self.reset_task()
+        self.footer.setText(self.with_move_notice(result.message))
+        if result.downloaded is not None:
+            self.self_update_downloaded(result.downloaded)
+        if result.build_choices and not self.close_after_task:
+            self.choose_build(next(iter(result.build_choices)))
+        if result.running and not self.close_after_task:
+            self.offer_force_close(result.running, result.message)
+        if result.errors and not self.close_after_task:
+            errors = "\n\n".join(f"{key}: {value}" for key, value in result.errors.items())
+            QMessageBox.warning(self, "Some operations could not finish", errors)
+        if self.close_after_task:
+            self.close()
+
+    def apply_results(self, result: TaskResult) -> None:
+        """Take in what a task (or one app of Update all) found and installed."""
         self.releases.update(result.releases)
         for app in self.apps:
             checked_info = result.release_infos.get(app.id)
@@ -1425,19 +1445,17 @@ class LauncherWindow(TrayMixin):
         self.check_errors.update(result.errors)
         for app_id in result.releases:
             self.check_errors.pop(app_id, None)
-        self.reset_task()
-        self.footer.setText(self.with_move_notice(result.message))
-        if result.downloaded is not None:
-            self.self_update_downloaded(result.downloaded)
-        if result.build_choices and not self.close_after_task:
-            self.choose_build(next(iter(result.build_choices)))
-        if result.running and not self.close_after_task:
-            self.offer_force_close(result.running, result.message)
-        if result.errors and not self.close_after_task:
-            errors = "\n\n".join(f"{key}: {value}" for key, value in result.errors.items())
-            QMessageBox.warning(self, "Some operations could not finish", errors)
-        if self.close_after_task:
-            self.close()
+
+    def update_step(self, app_id: str, part: TaskResult) -> None:
+        """One app of Update all is done: show it now, and start the next one's chip."""
+        if self.task is None or app_id not in self.working:
+            return
+        del self.working[app_id]
+        following = next((key for key, state in self.working.items() if state == WAITING), None)
+        if following is not None:
+            self.working[following] = "Updating"
+        self.apply_results(part)
+        self.scan_installed()
 
     def task_failed(self, error: str) -> None:
         self.show_moves()
@@ -1819,15 +1837,20 @@ class LauncherWindow(TrayMixin):
         )
 
     def update_all(self) -> None:
+        # In the order the list shows, so rows leave it from the top.
         apps = [
             app
-            for app in self.apps
+            for app in self.sorted_apps(self.apps)
             if self.has_update(app.id)
             and app.id in self.releases
             and self.installed[app.id].managed
         ]
 
+        if not apps or self.task is not None:
+            return
         versions = {app.id: self.installed[app.id].version for app in apps}
+        # Each app is reported as it finishes, so its row changes without waiting for the rest.
+        steps = self.update_steps.step
 
         def update(app: App, cancel: Event, progress: Progress) -> Release:
             release = latest_release(app, cancel, self.library.data_dir / "release-cache")
@@ -1846,26 +1869,27 @@ class LauncherWindow(TrayMixin):
             for app in apps:
                 check_cancel(cancel)
                 progress(f"Checking {app.name}…", 0, 0)
+                part = TaskResult("")
                 try:
                     release = self.library.following_moves(
                         app, lambda app: update(app, cancel, progress)
                     )
-                    result.releases[app.id] = release
+                    part.releases[app.id] = release
                     if release.newer_than(versions[app.id]):
                         updated.append(app.id)
                 except BuildChoiceRequired as error:
                     result.build_choices[app.id] = error
                 except (OSError, ValueError) as error:
-                    result.errors[app.id] = str(error)
+                    part.errors[app.id] = str(error)
+                result.releases.update(part.releases)
+                result.errors.update(part.errors)
+                steps.emit(app.id, part)
             result.message = f"Updated {len(updated)} apps."
             return result
 
-        if apps:
-            self.start_task(
-                "Updating installed apps…",
-                operation,
-                working={app.id: "Updating" for app in apps},
-            )
+        working = {app.id: WAITING for app in apps}
+        working[apps[0].id] = "Updating"
+        self.start_task("Updating installed apps…", operation, working=working)
 
     def rollback_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
