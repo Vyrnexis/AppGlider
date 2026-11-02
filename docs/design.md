@@ -59,10 +59,10 @@ confirmations, file pickers and choices that block an action (such as choosing a
   offered release: the first five lines fading out, with Show all notes / Show less to
   expand them in place, never a scroll area inside the page) and Versions. Right: Preferences (release channel, hold, pin, build, icon,
   menu shortcut, and the Arguments and Environment launch options), then Manage, styled as a
-  danger area: Roll back when a copy is kept, then Uninstall while the app is installed or
-  Remove from library once it is not, never both, and Forget missing copy when the
-  installed file has gone. A row that does not apply is hidden, not disabled; a running
-  task disables what is shown. Hold and Menu shortcut show once the app is installed.
+  danger area: Force close while the app is running, Roll back when a copy is kept, then
+  Uninstall while the app is installed or Remove from library once it is not, never both,
+  and Forget missing copy when the installed file has gone. A row that does not apply is
+  hidden, not disabled; a running task disables what is shown (except Force close). Hold and Menu shortcut show once the app is installed.
 - **Settings page**: a secondary list (General, Updates, Catalogs, Storage, About)
   and panels of setting rows. Changes apply immediately; there is no Save or Cancel.
   Storage also has a read-only Space used panel: the total, one bar split into the versions
@@ -113,8 +113,8 @@ When GitHub cannot be reached at all, rows keep their last known chip (Check fai
 real failures) and the sidebar GitHub status reads **GitHub: offline** instead.
 
 Chips always pair colour with a symbol or word; colour is never the only signal. The ⋯ menu
-holds quick actions only: Open details, Launch, Open repository, Pin to top, Move up and
-Move down, Hold, Create/repair menu shortcut, Roll back, Uninstall; or, for an app that is
+holds quick actions only: Open details, Launch, Force close… (only while the app is
+running), Open repository, Pin to top, Move up and Move down, Hold, Create/repair menu shortcut, Roll back, Uninstall; or, for an app that is
 not installed, Remove from library and (when its file has gone) Forget missing copy. It
 shows only the actions that fit the app's state: Move up and Move down only while the list
 can be reordered, Roll back only when a copy is kept. Everything else is on the App page. Clicking anywhere on a row except its
