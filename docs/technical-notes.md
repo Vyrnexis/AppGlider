@@ -335,7 +335,10 @@ or whose environment has `APPIMAGE=` pointing into it. The AppImage runtime sets
 and child processes inherit it, so helper processes and copies started from the menu, the tray
 or a terminal are included, as is an earlier version still open after an update. AppGlider's
 own process is never included. Each process is held with a `pidfd` and checked again before
-any signal, so a process number reused by another program is never signalled. The processes
+any signal, so a process number reused by another program is never signalled. The Python in
+the AppImage is built without `os.pidfd_open`, so the `pidfd_open` and `pidfd_send_signal`
+system calls are made through `ctypes`; on kernels before 5.3, which have neither, a process is
+checked again just before it is signalled by number. The packaged smoke test checks this. The processes
 get `SIGTERM`, then `SIGKILL` if still running after two seconds; the work runs off the Qt
 thread. The ⋯ menu checks when it opens, and the app page checks every three seconds while
 it is shown (a scan takes a few milliseconds). An app that removes `APPIMAGE` from its own

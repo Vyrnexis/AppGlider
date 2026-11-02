@@ -54,6 +54,7 @@ def main() -> None:
         assert report["header_version"] == f"v{version}", report
         assert report["refresh_action"] == "Check for updates", report
         assert report["https_certificates"] > 0, report
+        assert report["force_close"] is True, report  # the bundled Python lacks os.pidfd_open
         assert report["installed"] == 0 and report["catalog"] == 0, report
         assert report["welcome"] is True, report
         assert report["example_catalog"] == 14, report

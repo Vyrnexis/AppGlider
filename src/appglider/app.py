@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QComboBox, QSystemTrayIcon
 from appglider import APP_NAME, APP_TASKBAR_ICON, APP_VERSION
 from appglider.core.catalogfile import EXAMPLE_CATALOG
 from appglider.core.catalogfile import read as read_catalog
+from appglider.install.library import process_handles_work
 from appglider.install.self_update import AFTER_UPDATE_FLAG, cleanup, running_image
 from appglider.instance import SingleInstance
 from appglider.ui.window import LauncherWindow
@@ -107,6 +108,7 @@ def main() -> int:
                             len(card.findChildren(QComboBox)) for card in window.cards.values()
                         ),
                         "python": sys.version.split()[0],
+                        "force_close": process_handles_work(),
                         "prefix": sys.prefix,
                         "appdir": os.environ.get("APPDIR"),
                         "installed": len(window.installed),

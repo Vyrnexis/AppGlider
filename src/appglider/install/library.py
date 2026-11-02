@@ -1,6 +1,7 @@
 """Install, update and launch this launcher’s private AppImage library."""
 
 import contextlib
+import errno
 import fcntl
 import hashlib
 import json
@@ -244,6 +245,55 @@ def app_processes(root: Path) -> list[int]:
     return found
 
 
+# Linux system call numbers, the same on x86_64 and aarch64 (and every other architecture).
+SYS_PIDFD_SEND_SIGNAL = 424
+SYS_PIDFD_OPEN = 434
+NO_HANDLE = -1  # the kernel cannot hold processes (before Linux 5.3)
+# The portable Python in the AppImage is built without these, so the system calls are used.
+PYTHON_PIDFD = hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")
+
+
+def _syscall(number: int, *arguments: object) -> int:
+    """A Linux system call through the C library, raising OSError as Python does."""
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    result = int(libc.syscall(number, *arguments))
+    if result == -1:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return result
+
+
+def pidfd_open(pid: int) -> int:
+    """A handle on one process. The Python AppGlider bundles lacks os.pidfd_open."""
+    if PYTHON_PIDFD:
+        return os.pidfd_open(pid)
+    return _syscall(SYS_PIDFD_OPEN, pid, 0)
+
+
+def pidfd_send_signal(handle: int, sig: int) -> None:
+    if PYTHON_PIDFD:
+        signal.pidfd_send_signal(handle, sig)
+    else:
+        _syscall(SYS_PIDFD_SEND_SIGNAL, handle, int(sig), None, 0)
+
+
+def process_handles_work() -> bool:
+    """Whether this system can hold processes for Force close (reported by the smoke test)."""
+    try:
+        handle = pidfd_open(os.getpid())
+    except OSError:
+        return False
+    try:
+        pidfd_send_signal(handle, 0)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(handle)
+
+
 def _stop(root: Path, handles: dict[int, int], sig: signal.Signals) -> None:
     """Send a signal to every process of the app, holding each one so a reused number is safe."""
     prefixes = _folder_prefixes(root)
@@ -251,33 +301,41 @@ def _stop(root: Path, handles: dict[int, int], sig: signal.Signals) -> None:
         if pid in handles:
             continue
         try:
-            handle = os.pidfd_open(pid)
-        except OSError:
-            continue  # gone already
+            handle = pidfd_open(pid)
+        except OSError as error:
+            if error.errno != errno.ENOSYS:
+                continue  # gone already
+            handle = NO_HANDLE
         # Checked again once held: the number may have passed to another program meanwhile.
         if _started_from(Path(f"/proc/{pid}"), prefixes):
             handles[pid] = handle
-        else:
+        elif handle != NO_HANDLE:
             os.close(handle)
-    for handle in handles.values():
+    for pid, handle in handles.items():
         with contextlib.suppress(OSError):
-            signal.pidfd_send_signal(handle, sig)
+            if handle != NO_HANDLE:
+                pidfd_send_signal(handle, sig)
+            elif _started_from(Path(f"/proc/{pid}"), prefixes):
+                os.kill(pid, sig)  # without handles, checked again just before
 
 
-def _wait_for_exit(handles: dict[int, int], seconds: float) -> None:
+def _wait_for_exit(root: Path, handles: dict[int, int], seconds: float) -> None:
     """Wait until every held process has exited, or the time is up."""
     poller = select.poll()
-    for handle in handles.values():
+    waiting = {handle for handle in handles.values() if handle != NO_HANDLE}
+    for handle in waiting:
         poller.register(handle, select.POLLIN)
-    waiting = set(handles.values())
+    unheld = [pid for pid, handle in handles.items() if handle == NO_HANDLE]
+    prefixes = _folder_prefixes(root)
     deadline = time.monotonic() + seconds
-    while waiting:
+    while waiting or unheld:
         left = deadline - time.monotonic()
         if left <= 0:
             return
-        for handle, _ in poller.poll(int(left * 1000) + 1):
+        for handle, _ in poller.poll(min(int(left * 1000) + 1, 50)):
             waiting.discard(handle)
             poller.unregister(handle)
+        unheld = [pid for pid in unheld if _started_from(Path(f"/proc/{pid}"), prefixes)]
 
 
 def force_close(root: Path, grace: float) -> bool:
@@ -285,12 +343,13 @@ def force_close(root: Path, grace: float) -> bool:
     handles: dict[int, int] = {}
     try:
         _stop(root, handles, signal.SIGTERM)
-        _wait_for_exit(handles, grace)
+        _wait_for_exit(root, handles, grace)
         _stop(root, handles, signal.SIGKILL)
-        _wait_for_exit(handles, 1.0)
+        _wait_for_exit(root, handles, 1.0)
     finally:
         for handle in handles.values():
-            os.close(handle)
+            if handle != NO_HANDLE:
+                os.close(handle)
     return not app_processes(root)
 
 

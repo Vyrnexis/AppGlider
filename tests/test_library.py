@@ -1,5 +1,6 @@
 """Install lifecycle and launch proof using temporary files and controlled downloads."""
 
+import errno
 import hashlib
 import io
 import json
@@ -11,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import MagicMock, patch
@@ -30,6 +32,7 @@ from appglider.install.library import (
     Orphan,
     appimagelauncher_folder,
     previous_copy,
+    process_handles_work,
 )
 from appglider.install.shortcuts import desktop_exec
 
@@ -426,10 +429,23 @@ class LibraryTests(unittest.TestCase):
 
     def test_force_close_stops_every_process_of_the_app_and_nothing_else(self) -> None:
         installed = self.install("1.0.0")
-        polite = self.start_process(installed.path)
-        stubborn = self.start_process(installed.path, stubborn=True)
+        # As in the AppImage, whose Python lacks os.pidfd_open, and on kernels before 5.3.
+        no_pidfd = OSError(errno.ENOSYS, "Function not implemented")
+        for case, patched in (
+            ("this Python", {}),
+            ("system calls", {"PYTHON_PIDFD": False}),
+            ("process numbers", {"pidfd_open": MagicMock(side_effect=no_pidfd)}),
+        ):
+            with self.subTest(case), ExitStack() as stack:
+                for name, value in patched.items():
+                    stack.enter_context(patch(f"appglider.install.library.{name}", value))
+                self.check_force_close(installed.path)
+
+    def check_force_close(self, path: Path) -> None:
+        polite = self.start_process(path)
+        stubborn = self.start_process(path, stubborn=True)
         # A copy from an earlier version that was still open when the app was updated.
-        earlier = self.start_process(installed.path.parent.parent / "0.9.0" / "old.AppImage")
+        earlier = self.start_process(path.parent.parent / "0.9.0" / "old.AppImage")
         bystander = self.start_process(self.external / "other.AppImage", stubborn=True)
         self.assertTrue(self.library.app_running(APP))
         started = time.monotonic()
@@ -441,6 +457,11 @@ class LibraryTests(unittest.TestCase):
         self.assertIsNone(bystander.poll())
         self.assertFalse(self.library.app_running(APP))
         self.assertTrue(self.library.force_close(APP, grace=0.3))  # nothing left is fine
+
+    def test_this_system_can_hold_processes(self) -> None:
+        self.assertTrue(process_handles_work())
+        with patch("appglider.install.library.PYTHON_PIDFD", False):
+            self.assertTrue(process_handles_work())
 
     def test_force_close_needs_an_app_folder_appglider_made(self) -> None:
         installed = self.install("1.0.0")
