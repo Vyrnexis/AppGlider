@@ -23,6 +23,12 @@ None of these are approved or scheduled.
   different place on each computer. Paths would need to be kept relative to the apps folder,
   menu and login entries skipped in portable mode, and a short guide written (an ext4 stick
   avoids FAT32's missing permissions and 4 GB file limit).
+- **Builds that update from their own repository (for forks):** a fork that builds AppGlider
+  on GitHub Actions still carries this repository in the AppImage's update information, so
+  AppImageUpdate or Gear Lever would replace the fork's build with this one. Reading
+  `GITHUB_REPOSITORY` during the build would point each build at the repository that made
+  it (local builds keep this one). A nice to have for people who fork AppGlider; idea from
+  the zonaro/AppGlider fork.
 - **Hiding apps:** hiding an app without removing it would need more work and only makes
   sense if people ask for it. Removing an app from the list and adding it again with a
   catalog already covers most of it.
