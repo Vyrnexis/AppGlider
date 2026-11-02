@@ -26,6 +26,26 @@ PLAIN_DOCTYPE = re.compile(
 )
 
 
+XML_DECLARATION = re.compile(r"\s*<\?xml\s[^?]*\?>")
+INSTRUCTION = re.compile(r"<\?.*?\?>", re.S)
+
+
+def without_instructions(text: str) -> str:
+    """The SVG without processing instructions, keeping a leading XML declaration.
+
+    Editors add harmless ones (Adobe's xpacket metadata), but Qt also obeys
+    xml-stylesheet, which can name any local file, so all of them are dropped.
+    """
+    declaration = XML_DECLARATION.match(text)
+    head = declaration.group() if declaration else ""
+    body = text[len(head) :]
+    while (stripped := INSTRUCTION.sub("", body)) != body:
+        body = stripped  # removing one must not leave another behind
+    if "<?" in body:
+        raise ValueError("The SVG icon is malformed.")
+    return head + body
+
+
 @dataclass(frozen=True)
 class IconCandidate:
     name: str
@@ -82,6 +102,7 @@ def normalise_icon(data: bytes) -> bytes:
         # Editors often write the standard SVG 1.1 declaration; one without an internal
         # subset defines nothing, so it is removed rather than refused.
         text_svg = PLAIN_DOCTYPE.sub("", text_svg, count=1)
+        text_svg = without_instructions(text_svg)
         if "<!DOCTYPE" in text_svg.upper() or "<!ENTITY" in text_svg.upper():
             raise ValueError("SVG icons must not contain document types or entities.")
         try:

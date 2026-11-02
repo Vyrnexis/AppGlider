@@ -25,6 +25,7 @@ from appglider.github.icons import (
     is_strong,
     normalise_icon,
     web_files,
+    without_instructions,
 )
 from appglider.github.versions import Cancelled
 from appglider.install.library import Library
@@ -65,6 +66,26 @@ class IconTests(unittest.TestCase):
         )
         image = QImage.fromData(normalise_icon(doctype + SVG), "PNG")
         self.assertEqual(image.size().width(), 512)
+
+    def test_processing_instructions_are_dropped_so_no_local_file_is_read(self):
+        # Qt obeys xml-stylesheet, which could name any local file; xpacket is editor metadata.
+        with tempfile.TemporaryDirectory() as directory:
+            css = Path(directory) / "local.css"
+            css.write_text("path { fill: #ff0000; }")
+            stylesheet = f'<?xml-stylesheet type="text/css" href="{css}"?>'.encode()
+            declaration = b'<?xml version="1.0" encoding="UTF-8"?>\n'
+            for data in (
+                stylesheet + SVG,
+                declaration + stylesheet + SVG,
+                declaration + b"<?xpacket begin='' id='W5M0'?>" + SVG,
+            ):
+                with self.subTest(data=data[:40]):
+                    image = QImage.fromData(normalise_icon(data), "PNG")
+                    self.assertEqual(image.pixelColor(256, 256).name(), "#39b3d7")
+            with self.assertRaisesRegex(ValueError, "malformed"):
+                normalise_icon(b"<?xml-stylesheet href='x'" + SVG)
+        # Removing one instruction must not leave another behind.
+        self.assertEqual(without_instructions("<svg><<?a?>?xml-stylesheet href='x'?>"), "<svg>")
 
     def test_raster_icons_are_shrunk_but_never_enlarged(self):
         for side, expected in ((32, 32), (1024, 512)):
