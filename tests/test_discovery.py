@@ -1,5 +1,6 @@
 """Discover real release assets without assuming repository-based filenames."""
 
+import hashlib
 import json
 import tempfile
 import time
@@ -26,7 +27,7 @@ class DiscoveryTests(unittest.TestCase):
             "name": name,
             "browser_download_url": prefix + quote(name, safe=""),
             "size": 100,
-            "digest": "sha256:" + "a" * 64,
+            "digest": "sha256:" + hashlib.sha256(name.encode()).hexdigest(),
         }
 
     def select(self, names, arch="x86_64"):
@@ -90,6 +91,20 @@ class DiscoveryTests(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, "Multiple AppImages"),
                 ):
                     self.select(order)
+
+    def test_one_file_under_two_names_needs_no_build_choice(self):
+        # t8y2/dbx attaches a promoted preview again under its stable name (issue #9).
+        names = ["DBX_1.2.3-beta.20261102.1_amd64.AppImage", "DBX_1.2.3_amd64.AppImage"]
+        same = [{**self.asset(name), "digest": "sha256:" + "B" * 64} for name in names]
+        for order in (same, same[::-1]):
+            selected = assets.select_release(APP, {"tag_name": "v1.2.3", "assets": order}, "x86_64")
+            self.assertEqual(selected.name, "DBX_1.2.3_amd64.AppImage")
+            self.assertEqual(selected.sha256, "b" * 64)
+        sized = [same[0], {**same[1], "size": 101}]
+        unpublished = [{**asset, "digest": ""} for asset in same]
+        for listing in (sized, unpublished):
+            with self.subTest(listing=listing), self.assertRaisesRegex(ValueError, "Multiple"):
+                assets.select_release(APP, {"tag_name": "v1.2.3", "assets": listing}, "x86_64")
 
     def test_builtin_and_former_names_keep_the_existing_preference(self):
         for app in APPS:
@@ -228,7 +243,14 @@ class DiscoveryTests(unittest.TestCase):
         base = release_for("1.2.3", appimage_bytes())
         listing = [self.asset(name) for name in ("Desktop-x64.AppImage", "Portable-x64.AppImage")]
         html = b"".join(
-            public_assets(replace(base, name=asset["name"], url=asset["browser_download_url"]))
+            public_assets(
+                replace(
+                    base,
+                    name=asset["name"],
+                    url=asset["browser_download_url"],
+                    sha256=asset["digest"].removeprefix("sha256:"),
+                )
+            )
             for asset in listing
         )
         with (

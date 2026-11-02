@@ -22,10 +22,14 @@ from appglider.install.library import Library
 BAMBU = custom_app("bambulab/BambuStudio", "Bambu Studio")
 
 
+def bambu_payload(name: str) -> bytes:
+    """Different builds are different files, so each has its own checksum."""
+    return appimage_bytes(b"test payload " + name.encode())
+
+
 def bambu_metadata(
     version="02.08.02.61", *, preview=False, variants=("22.04", "24.04"), timestamp="20260820225108"
 ):
-    payload = appimage_bytes()
     names = [f"BambuStudio_ubuntu{variant}-v{version}-{timestamp}.AppImage" for variant in variants]
     return {
         "tag_name": f"v{version}",
@@ -35,8 +39,8 @@ def bambu_metadata(
             {
                 "name": name,
                 "browser_download_url": f"{BAMBU.source_url}/releases/download/v{version}/{name}",
-                "size": len(payload),
-                "digest": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                "size": len(bambu_payload(name)),
+                "digest": "sha256:" + hashlib.sha256(bambu_payload(name)).hexdigest(),
             }
             for name in names
         ],
@@ -138,6 +142,7 @@ class BuildTests(unittest.TestCase):
             {
                 **original,
                 "name": renamed,
+                "digest": "sha256:" + hashlib.sha256(bambu_payload(renamed)).hexdigest(),
                 "browser_download_url": original["browser_download_url"].rsplit("/", 1)[0]
                 + "/"
                 + renamed,
@@ -269,16 +274,11 @@ class BuildTests(unittest.TestCase):
     def test_four_part_install_update_and_rollback_keep_correct_build_and_records(self):
         app = replace(chosen_bambu(), include_prereleases=True)
         self.library.add_repository(app)
-        payload = appimage_bytes()
-        with patch.object(http, "request", return_value=io.BytesIO(payload)):
-            first = self.library.install(
-                app,
-                assets.select_release(app, bambu_metadata(), "x86_64"),
-                Event(),
-                ignore_progress,
-            )
+        stable = assets.select_release(app, bambu_metadata(), "x86_64")
+        with patch.object(http, "request", return_value=io.BytesIO(bambu_payload(stable.name))):
+            first = self.library.install(app, stable, Event(), ignore_progress)
         preview = assets.select_release(app, bambu_metadata("02.09.00.12", preview=True), "x86_64")
-        with patch.object(http, "request", return_value=io.BytesIO(payload)):
+        with patch.object(http, "request", return_value=io.BytesIO(bambu_payload(preview.name))):
             second = self.library.install(app, preview, Event(), ignore_progress)
         self.assertTrue(second.prerelease)
         self.assertEqual(second.previous, first.path)

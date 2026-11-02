@@ -20,7 +20,7 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
-from test_builds import BAMBU, bambu_metadata, chosen_bambu
+from test_builds import BAMBU, bambu_metadata, bambu_payload, chosen_bambu
 from test_library import appimage_bytes
 
 from appglider import APP_ICON
@@ -748,7 +748,7 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_changing_build_while_background_check_runs_discards_old_results_and_rechecks(self):
         selected = chosen_bambu()
         self.library.add_repository(selected)
-        payload = appimage_bytes()
+        payload = bambu_payload(select_release(selected, bambu_metadata(), architecture()).name)
         with patch.object(http, "request", return_value=io.BytesIO(payload)):
             self.library.install(
                 selected,
@@ -786,7 +786,7 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_missing_variant_card_requires_choice_before_updating_and_keeps_installed_copy(self):
         selected = chosen_bambu()
         self.library.add_repository(selected)
-        payload = appimage_bytes()
+        payload = bambu_payload(select_release(selected, bambu_metadata(), architecture()).name)
         with patch.object(http, "request", return_value=io.BytesIO(payload)):
             installed = self.library.install(
                 selected,
@@ -831,7 +831,8 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertEqual(self.library.scan()[selected.id], installed)
         self.assertTrue(installed.path.is_file())
         self.assertEqual(self.window.cards[selected.id].action_button.text(), "Update")
-        with patch.object(http, "request", return_value=io.BytesIO(payload)):
+        newer = bambu_payload(entries[0]["assets"][0]["name"])
+        with patch.object(http, "request", return_value=io.BytesIO(newer)):
             self.window.install_app(selected.id)
             self.wait_for_task(self.window)
         updated = self.library.scan()[selected.id]

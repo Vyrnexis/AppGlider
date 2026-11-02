@@ -178,9 +178,33 @@ def select_asset(app: App, assets: list[Any], version: str, arch: str) -> dict[s
         if preferred:
             candidates = preferred
             break
+    candidates = one_file(candidates)
     if len(candidates) != 1:
         raise BuildChoiceRequired(app, candidates, version, arch)
     return candidates[0]
+
+
+def one_file(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The shortest name when every candidate is the same file, else all of them.
+
+    Some projects attach a promoted preview again under its stable name. Only a published
+    SHA-256 and size shared by all candidates show it is one file; there is nothing to choose.
+    """
+    files = {
+        (
+            asset.get("digest", "").lower() if isinstance(asset.get("digest"), str) else None,
+            asset.get("size"),
+        )
+        for asset in candidates
+    }
+    if len(candidates) < 2 or len(files) != 1:
+        return candidates
+    digest, size = files.pop()
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        return candidates
+    if type(size) is not int or size <= 0:
+        return candidates
+    return [min(candidates, key=lambda asset: (len(asset["name"]), asset["name"]))]
 
 
 class RepositoryMismatch(ValueError):
