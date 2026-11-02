@@ -328,6 +328,18 @@ target is never overwritten: both are then left where they are. If the app is ru
 the old version, the update or roll back stops with a request to close it, before anything is
 downloaded; apps without these folders update while running as before. Other files next to an
 AppImage are left alone, and uninstalling removes only the AppImages, so these folders stay.
+
+**Force close** finds an app's processes in `/proc`: the current user's processes whose
+executable is in the app's own folder (`<apps>/<app id>/`, which must carry AppGlider's marker),
+or whose environment has `APPIMAGE=` pointing into it. The AppImage runtime sets that variable
+and child processes inherit it, so helper processes and copies started from the menu, the tray
+or a terminal are included, as is an earlier version still open after an update. AppGlider's
+own process is never included. Each process is held with a `pidfd` and checked again before
+any signal, so a process number reused by another program is never signalled. The processes
+get `SIGTERM`, then `SIGKILL` if still running after two seconds; the work runs off the Qt
+thread. The ⋯ menu checks when it opens, and the app page checks every three seconds while
+it is shown (a scan takes a few milliseconds). An app that removes `APPIMAGE` from its own
+environment and runs from outside its mount is not found.
 Library and settings changes are written atomically, so a crash cannot leave a half-written
 file. A corrupt file is preserved and reported, never overwritten with an empty library.
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QEvent, QObject, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QColor,
     QDesktopServices,
@@ -70,6 +70,7 @@ if TYPE_CHECKING:
 
 NOTES_PREVIEW_LINES = 5
 WEB_SCHEMES = ("http", "https")
+RUNNING_CHECK_MS = 3000
 
 
 def version_text(version: str | None) -> str:
@@ -309,6 +310,12 @@ class AppPage(QScrollArea):
         self.release_url = ""
         self.shown_notes: str | None = None
         self.options_app: str | None = None
+        self.running = False
+        # An app can be started or closed anywhere, so the page looks again every few seconds.
+        self.running_timer = QTimer(self)
+        self.running_timer.setInterval(RUNNING_CHECK_MS)
+        self.running_timer.timeout.connect(self.update_running)
+        self.running_timer.start()
         self.setObjectName("appPage")
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -601,6 +608,8 @@ class AppPage(QScrollArea):
 
     def build_manage(self, column: QVBoxLayout) -> None:
         frame, layout, _ = panel("Manage", "dangerPanel")
+        self.force_button = QPushButton("Force close…")
+        self.force_button.clicked.connect(self.force_close)
         self.rollback_button = QPushButton("Roll back")
         self.rollback_button.clicked.connect(self.rollback)
         self.uninstall_button = QPushButton("Uninstall…")
@@ -611,8 +620,14 @@ class AppPage(QScrollArea):
         self.remove_button = QPushButton("Remove…")
         self.remove_button.setAccessibleName("Remove from library")
         self.remove_button.clicked.connect(self.remove_from_library)
-        for button in (self.uninstall_button, self.forget_button, self.remove_button):
+        for button in (
+            self.force_button,
+            self.uninstall_button,
+            self.forget_button,
+            self.remove_button,
+        ):
             button.setObjectName("danger")
+        self.force_row = SettingRow("Force close", "Unsaved work is lost", self.force_button)
         self.rollback_row = SettingRow("Roll back", "Restore the kept copy", self.rollback_button)
         self.uninstall_row = SettingRow("Uninstall", "Your data is kept", self.uninstall_button)
         self.forget_row = SettingRow(
@@ -623,7 +638,13 @@ class AppPage(QScrollArea):
         )
         # Each divider sits above its row and shows only when a shown row comes before it.
         self.manage_dividers: dict[SettingRow, QFrame] = {}
-        rows = (self.rollback_row, self.uninstall_row, self.forget_row, self.remove_row)
+        rows = (
+            self.force_row,
+            self.rollback_row,
+            self.uninstall_row,
+            self.forget_row,
+            self.remove_row,
+        )
         for index, row in enumerate(rows):
             if index:
                 divider = QFrame()
@@ -650,6 +671,7 @@ class AppPage(QScrollArea):
         self.back_button.setText(f"‹ {back_label}")
         self.back_button.setAccessibleName(f"Back to {back_label}")
         self.verticalScrollBar().setValue(0)
+        self.running = self.launcher.app_running(app_id)
         self.refresh()
 
     def refresh(self) -> None:
@@ -684,7 +706,9 @@ class AppPage(QScrollArea):
             f"Roll back to {version_text(previous.version)}" if previous else "Roll back"
         )
         missing = launcher.missing.get(app.id) if installed is None else None
+        self.force_button.setAccessibleName(f"Force close {app.name}")
         rows = (
+            (self.force_row, self.force_button, managed and self.running),
             (self.rollback_row, self.rollback_button, managed and previous is not None),
             (self.uninstall_row, self.uninstall_button, installed is not None),
             (self.forget_row, self.forget_button, missing is not None),
@@ -693,7 +717,7 @@ class AppPage(QScrollArea):
         earlier = False
         for row, button, visible in rows:
             row.setVisible(visible)
-            button.setEnabled(not busy)
+            button.setEnabled(not busy or button is self.force_button)
             if row in self.manage_dividers:
                 self.manage_dividers[row].setVisible(visible and earlier)
             earlier = earlier or visible
@@ -1009,6 +1033,19 @@ class AppPage(QScrollArea):
             self.launch_error.show()
             return
         self.launch_error.hide()
+
+    def update_running(self) -> None:
+        """Show Force close only while the app runs; looked up only while the page is seen."""
+        if self.app_id is None or not self.isVisible():
+            return
+        running = self.launcher.app_running(self.app_id)
+        if running != self.running:
+            self.running = running
+            self.refresh()
+
+    def force_close(self) -> None:
+        if self.app_id:
+            self.launcher.force_close_app(self.app_id)
 
     def rollback(self) -> None:
         if self.app_id:

@@ -6,7 +6,9 @@ import hashlib
 import json
 import os
 import re
+import select
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
@@ -45,6 +47,8 @@ MAX_LOG_BYTES = 5 * 1024 * 1024
 STALE_STAGE_SECONDS = 24 * 60 * 60
 LOCK_WAIT_SECONDS = 3.0
 MAX_APPS = 100
+# How long a force-closed app may take to close by itself before it is killed.
+FORCE_CLOSE_GRACE = 2.0
 
 _T = TypeVar("_T")
 
@@ -192,6 +196,102 @@ def running(path: Path) -> bool:
         except OSError:
             continue
     return False
+
+
+class AppRunning(ValueError):
+    """An action needs the app closed; the window can offer to force close it."""
+
+    def __init__(self, app_id: str, message: str) -> None:
+        super().__init__(message)
+        self.app_id = app_id
+
+
+def _started_from(process: Path, prefixes: tuple[bytes, ...]) -> bool:
+    """Whether a process is an AppImage in one of these folders, or was started by one."""
+    with contextlib.suppress(OSError):
+        if os.fsencode(os.readlink(process / "exe")).startswith(prefixes):
+            return True
+    try:
+        with (process / "environ").open("rb") as source:
+            environment = source.read(1024 * 1024).split(b"\0")
+    except OSError:
+        return False
+    return any(
+        entry.startswith(b"APPIMAGE=") and entry[len(b"APPIMAGE=") :].startswith(prefixes)
+        for entry in environment
+    )
+
+
+def _folder_prefixes(root: Path) -> tuple[bytes, ...]:
+    return tuple({os.fsencode(root) + b"/", os.fsencode(root.resolve()) + b"/"})
+
+
+def app_processes(root: Path) -> list[int]:
+    """This user's processes started from an AppImage in an app's folder, never AppGlider."""
+    prefixes = _folder_prefixes(root)
+    own, uid = os.getpid(), os.getuid()
+    found = []
+    for process in Path("/proc").iterdir():
+        if not process.name.isdigit() or int(process.name) == own:
+            continue
+        try:
+            if process.stat().st_uid != uid:
+                continue
+        except OSError:
+            continue
+        if _started_from(process, prefixes):
+            found.append(int(process.name))
+    return found
+
+
+def _stop(root: Path, handles: dict[int, int], sig: signal.Signals) -> None:
+    """Send a signal to every process of the app, holding each one so a reused number is safe."""
+    prefixes = _folder_prefixes(root)
+    for pid in app_processes(root):
+        if pid in handles:
+            continue
+        try:
+            handle = os.pidfd_open(pid)
+        except OSError:
+            continue  # gone already
+        # Checked again once held: the number may have passed to another program meanwhile.
+        if _started_from(Path(f"/proc/{pid}"), prefixes):
+            handles[pid] = handle
+        else:
+            os.close(handle)
+    for handle in handles.values():
+        with contextlib.suppress(OSError):
+            signal.pidfd_send_signal(handle, sig)
+
+
+def _wait_for_exit(handles: dict[int, int], seconds: float) -> None:
+    """Wait until every held process has exited, or the time is up."""
+    poller = select.poll()
+    for handle in handles.values():
+        poller.register(handle, select.POLLIN)
+    waiting = set(handles.values())
+    deadline = time.monotonic() + seconds
+    while waiting:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        for handle, _ in poller.poll(int(left * 1000) + 1):
+            waiting.discard(handle)
+            poller.unregister(handle)
+
+
+def force_close(root: Path, grace: float) -> bool:
+    """Ask the app's processes to close, then kill what is left; True when none remain."""
+    handles: dict[int, int] = {}
+    try:
+        _stop(root, handles, signal.SIGTERM)
+        _wait_for_exit(handles, grace)
+        _stop(root, handles, signal.SIGKILL)
+        _wait_for_exit(handles, 1.0)
+    finally:
+        for handle in handles.values():
+            os.close(handle)
+    return not app_processes(root)
 
 
 class Library(ShortcutsMixin):
@@ -697,6 +797,30 @@ class Library(ShortcutsMixin):
         self.processes[app.id] = process
         return log
 
+    def _app_folder(self, app: App) -> Path | None:
+        """The app's own folder, only when AppGlider made it."""
+        root = self.apps_dir / app.id
+        if root.is_symlink() or not root.is_dir() or not self._has_marker(root, app):
+            return None
+        return root
+
+    def app_running(self, app: App) -> bool:
+        """Whether any AppImage AppGlider installed for this app is running, however started."""
+        root = self._app_folder(app)
+        return root is not None and bool(app_processes(root))
+
+    def force_close(self, app: App, grace: float = FORCE_CLOSE_GRACE) -> bool:
+        """Close every process of the app, killing what has not closed after ``grace`` seconds.
+
+        Returns True when nothing of the app is left running.
+        """
+        root = self._app_folder(app)
+        if root is None:
+            raise ValueError("Only apps installed by AppGlider can be closed here.")
+        closed = force_close(root, grace)
+        self.reap_processes()
+        return closed
+
     def _marker(self, app: App) -> str:
         return f"AppGlider\n{app.id}\n{app.repo}\n"
 
@@ -755,7 +879,9 @@ class Library(ShortcutsMixin):
 
     def _require_closed(self, app: App, source: Path, target: Path, purpose: str) -> None:
         if self._portable_moves(source, target) and running(source):
-            raise ValueError(f"Close {app.name} first: its portable data moves to {purpose}.")
+            raise AppRunning(
+                app.id, f"Close {app.name} first: its portable data moves to {purpose}."
+            )
 
     def _carry_portable(
         self, app: App, source: Path, target: Path, purpose: str
@@ -781,7 +907,9 @@ class Library(ShortcutsMixin):
     def _remove_file(self, app: App, path: Path) -> None:
         self._owned(app, path)
         if running(path):
-            raise ValueError(f"{app.name} is running. Close it before removing this version.")
+            raise AppRunning(
+                app.id, f"{app.name} is running. Close it before removing this version."
+            )
         path.unlink(missing_ok=True)
         with contextlib.suppress(OSError):
             path.parent.rmdir()
@@ -1003,7 +1131,7 @@ class Library(ShortcutsMixin):
             for path in paths:
                 self._owned(app, path)
                 if running(path):
-                    raise ValueError(f"Close {app.name} before removing it.")
+                    raise AppRunning(app.id, f"Close {app.name} before removing it.")
                 if path.exists() and not path.is_file():
                     raise ValueError(f"The AppImage path is not a regular file: {path}")
             # Keep both binaries recoverable until the library change has been saved.

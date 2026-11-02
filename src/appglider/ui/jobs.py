@@ -12,6 +12,7 @@ from appglider.github.download import Progress
 from appglider.github.icons import IconCandidate
 from appglider.github.release_info import ReleaseInfo
 from appglider.github.versions import Cancelled
+from appglider.install.library import AppRunning
 from appglider.install.self_update import Downloaded
 
 
@@ -25,6 +26,7 @@ class TaskResult:
     build_choices: dict[str, BuildChoiceRequired] = field(default_factory=dict)
     downloaded: Downloaded | None = None
     moved: App | None = None  # the app under its new address, when Add app found a move
+    running: str = ""  # the app that must be closed before the action can go ahead
 
 
 class TaskSignals(QObject):
@@ -47,6 +49,8 @@ class Task(QRunnable):
             self.signals.finished.emit(TaskResult(str(error)))
         except BuildChoiceRequired as error:
             self.signals.finished.emit(TaskResult(str(error), build_choices={error.app_id: error}))
+        except AppRunning as error:
+            self.signals.finished.emit(TaskResult(str(error), running=error.app_id))
         except Exception as error:
             self.signals.failed.emit(str(error))
         else:

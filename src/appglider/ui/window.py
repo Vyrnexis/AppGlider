@@ -240,6 +240,8 @@ class LauncherWindow(TrayMixin):
         self.self_task: Lookup | None = None
         self.shortcut_task: Lookup | None = None
         self.menu_task: Lookup | None = None
+        self.force_task: Lookup | None = None
+        self.force_app: App | None = None
         self.menu_app: App | None = None
         self.self_explicit = False
         self.self_notify = False
@@ -683,6 +685,8 @@ class LauncherWindow(TrayMixin):
         card.setParent(self.app_list)
         card.details_requested.connect(self.open_app)
         card.launch_requested.connect(self.launch_app)
+        card.force_close_requested.connect(self.force_close_app)
+        card.running_check = self.app_running
         card.install_requested.connect(self.install_app)
         card.shortcut_requested.connect(self.create_shortcut)
         card.rollback_requested.connect(self.rollback_app)
@@ -1298,6 +1302,74 @@ class LauncherWindow(TrayMixin):
         if not self.quitting:
             QMessageBox.warning(self, "Cannot create shortcut", error)
 
+    def app_running(self, app_id: str) -> bool:
+        """Whether an app AppGlider installed is running now, however it was started."""
+        app = next((app for app in self.apps if app.id == app_id), None)
+        installed = self.installed.get(app_id)
+        if app is None or installed is None or not installed.managed:
+            return False
+        try:
+            return self.library.app_running(app)
+        except OSError:
+            return False
+
+    def offer_force_close(self, app_id: str, message: str) -> None:
+        """An action stopped because the app is running: say so, and offer to force close it."""
+        app = next((app for app in self.apps if app.id == app_id), None)
+        if app is None:
+            return
+        box = QMessageBox(
+            QMessageBox.Icon.Warning,
+            f"{app.name} is running",
+            f"{app.name} is running.",
+            parent=self,
+        )
+        box.setInformativeText(message)
+        box.addButton(QMessageBox.StandardButton.Ok)
+        force = box.addButton("Force close…", QMessageBox.ButtonRole.ActionRole)
+        box.exec()
+        if box.clickedButton() is force:
+            self.force_close_app(app_id)
+
+    def force_close_app(self, app_id: str) -> None:
+        """Ask, then close every process of the app off the Qt thread (it may wait seconds)."""
+        app = next((app for app in self.apps if app.id == app_id), None)
+        if app is None or self.force_task is not None:
+            return
+        box = QMessageBox(
+            QMessageBox.Icon.Warning,
+            f"Force close {app.name}?",
+            f"Force close {app.name}?",
+            parent=self,
+        )
+        box.setInformativeText("Any unsaved work in it will be lost.")
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        force = box.addButton("Force close", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        if box.clickedButton() is not force:
+            return
+        self.footer.setText(f"Closing {app.name}…")
+        library = self.library
+        task = self.force_task = Lookup(lambda cancel: library.force_close(app))
+        self.force_app = app
+        task.signals.finished.connect(self.force_closed)
+        task.signals.failed.connect(self.force_close_failed)
+        QThreadPool.globalInstance().start(task)
+
+    def force_closed(self, closed: object) -> None:
+        self.force_task = None
+        app = self.force_app
+        if self.quitting or app is None:
+            return
+        self.footer.setText(f"Closed {app.name}." if closed else f"{app.name} is still running.")
+        self.app_page.update_running()
+
+    def force_close_failed(self, error: str) -> None:
+        self.force_task = None
+        if not self.quitting:
+            QMessageBox.warning(self, "Cannot force close", error)
+
     def refresh_desktop_database(self) -> None:
         """Let the desktop notice changed menu entries; the tool can take seconds."""
         library = self.library
@@ -1359,6 +1431,8 @@ class LauncherWindow(TrayMixin):
             self.self_update_downloaded(result.downloaded)
         if result.build_choices and not self.close_after_task:
             self.choose_build(next(iter(result.build_choices)))
+        if result.running and not self.close_after_task:
+            self.offer_force_close(result.running, result.message)
         if result.errors and not self.close_after_task:
             errors = "\n\n".join(f"{key}: {value}" for key, value in result.errors.items())
             QMessageBox.warning(self, "Some operations could not finish", errors)

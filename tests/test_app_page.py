@@ -25,7 +25,7 @@ from appglider.github import assets, versions
 from appglider.github.assets import Release
 from appglider.github.icons import IconCandidate, normalise_icon
 from appglider.github.release_info import ReleaseInfo, ReleaseOption, info_path
-from appglider.install.library import Library
+from appglider.install.library import AppRunning, Library
 from appglider.ui.controls import Segmented, Switch
 from appglider.ui.pages.app_page import (
     NotesBrowser,
@@ -90,6 +90,70 @@ class AppPageTests(unittest.TestCase):
             ReleaseOption(preview.version, preview),
             time.time(),
         )
+
+    def answer(self, *buttons: str):
+        """Stand-in for QMessageBox.exec that presses the named buttons, one dialog each."""
+        pressed = iter(buttons)
+
+        def exec_(box: QMessageBox) -> int:
+            text = next(pressed)
+            next(button for button in box.buttons() if button.text() == text).click()
+            return 0
+
+        return patch.object(QMessageBox, "exec", new=exec_)
+
+    def wait_for_force_close(self) -> None:
+        deadline = time.monotonic() + 5
+        while self.window.force_task is not None and time.monotonic() < deadline:
+            QTest.qWait(10)
+        self.assertIsNone(self.window.force_task, "Force close did not finish")
+
+    # Force close
+
+    def test_force_close_shows_only_while_the_app_runs_and_asks_first(self) -> None:
+        window, library = self.window, self.library
+        self.install("1.0.0")
+        row = window.cards[APP.id]
+        with patch.object(library, "app_running", return_value=False):
+            row.update_running()
+            self.assertFalse(row.force_action.isVisible())
+            window.open_app(APP.id)
+            self.assertFalse(self.page.force_row.isVisibleTo(self.page))
+        with patch.object(library, "app_running", return_value=True):
+            row.update_running()
+            self.assertTrue(row.force_action.isVisible())
+            self.page.update_running()
+            self.assertTrue(self.page.force_row.isVisibleTo(self.page))
+            self.assertEqual(self.page.force_button.accessibleName(), f"Force close {APP.name}")
+            with (
+                patch.object(library, "force_close", return_value=True) as force_close,
+                self.answer("Cancel", "Force close"),
+            ):
+                self.page.force_button.click()
+                force_close.assert_not_called()
+                self.page.force_button.click()
+                self.wait_for_force_close()
+            force_close.assert_called_once()
+        self.assertEqual(window.footer.text(), f"Closed {APP.name}.")
+        with patch.object(library, "app_running", return_value=False):
+            self.page.update_running()
+            self.assertFalse(self.page.force_row.isVisibleTo(self.page))
+
+    def test_an_action_stopped_by_a_running_app_offers_force_close(self) -> None:
+        window, library = self.window, self.library
+        self.install("1.0.0", "1.1.0")
+        blocked = AppRunning(APP.id, f"Close {APP.name} first: its portable data moves.")
+        with (
+            patch.object(library, "rollback", side_effect=blocked),
+            patch.object(library, "force_close", return_value=False) as force_close,
+            self.answer("Force close…", "Force close"),
+        ):
+            window.rollback_app(APP.id)
+            self.wait_for_task()
+            self.wait_for_force_close()
+        force_close.assert_called_once()
+        self.assertEqual(window.footer.text(), f"{APP.name} is still running.")
+        self.assertEqual(library.scan()[APP.id].version, "1.1.0")
 
     # Opening, leaving and following the window
 

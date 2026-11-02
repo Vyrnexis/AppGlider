@@ -1,5 +1,6 @@
 """Library row widgets: status chips, drag reordering and compact application cards."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -181,6 +182,7 @@ class DragHandle(QWidget):
 class AppRow(QFrame):
     details_requested = Signal(str)
     launch_requested = Signal(str)
+    force_close_requested = Signal(str)
     install_requested = Signal(str)
     shortcut_requested = Signal(str)
     rollback_requested = Signal(str)
@@ -286,6 +288,12 @@ class AppRow(QFrame):
         )
         self.launch_action = menu.addAction("Launch")
         self.launch_action.triggered.connect(lambda: self.launch_requested.emit(app.id))
+        self.force_action = menu.addAction("Force close…")
+        self.force_action.triggered.connect(lambda: self.force_close_requested.emit(self.app.id))
+        self.force_action.setVisible(False)
+        # Asked as the menu opens: an app may be started or closed outside AppGlider at any time.
+        self.running_check: Callable[[str], bool] = lambda app_id: False
+        menu.aboutToShow.connect(self.update_running)
         menu.addAction("Open repository").triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl(app.source_url))
         )
@@ -313,6 +321,10 @@ class AppRow(QFrame):
         more.setMenu(menu)
         content.addWidget(more)
         self.set_state(None, None, False)
+
+    def update_running(self) -> None:
+        managed = bool(self.installed and self.installed.managed)
+        self.force_action.setVisible(managed and self.running_check(self.app.id))
 
     def activate(self) -> None:
         signal = {

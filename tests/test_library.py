@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,7 @@ from appglider.github.download import download, latest_release
 from appglider.github.versions import Cancelled, architecture, version_key
 from appglider.install.appimage import check_appimage
 from appglider.install.library import (
+    AppRunning,
     Installed,
     Library,
     Orphan,
@@ -401,6 +403,62 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(recovery.read_bytes(), contents)
         self.assertNotIn(APP.id, self.library.records())
         self.assertFalse((self.library.desktop_dir / f"appglider-{APP.id}.desktop").exists())
+
+    def start_process(self, appimage: Path, *, stubborn: bool = False) -> subprocess.Popen[bytes]:
+        """A real process that looks started from ``appimage``; a stubborn one ignores SIGTERM."""
+        code = (
+            "import signal, sys, time\n"
+            "if sys.argv[1] == 'stubborn': signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "print('ready', flush=True)\n"
+            "time.sleep(60)\n"
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", code, "stubborn" if stubborn else "polite"],
+            env={**os.environ, "APPIMAGE": str(appimage)},
+            stdout=subprocess.PIPE,
+        )
+        self.addCleanup(process.wait)
+        self.addCleanup(process.kill)
+        assert process.stdout is not None
+        self.assertEqual(process.stdout.readline(), b"ready\n")
+        process.stdout.close()
+        return process
+
+    def test_force_close_stops_every_process_of_the_app_and_nothing_else(self) -> None:
+        installed = self.install("1.0.0")
+        polite = self.start_process(installed.path)
+        stubborn = self.start_process(installed.path, stubborn=True)
+        # A copy from an earlier version that was still open when the app was updated.
+        earlier = self.start_process(installed.path.parent.parent / "0.9.0" / "old.AppImage")
+        bystander = self.start_process(self.external / "other.AppImage", stubborn=True)
+        self.assertTrue(self.library.app_running(APP))
+        started = time.monotonic()
+        self.assertTrue(self.library.force_close(APP, grace=0.3))
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(polite.wait(timeout=5), -signal.SIGTERM)
+        self.assertEqual(earlier.wait(timeout=5), -signal.SIGTERM)
+        self.assertEqual(stubborn.wait(timeout=5), -signal.SIGKILL)
+        self.assertIsNone(bystander.poll())
+        self.assertFalse(self.library.app_running(APP))
+        self.assertTrue(self.library.force_close(APP, grace=0.3))  # nothing left is fine
+
+    def test_force_close_needs_an_app_folder_appglider_made(self) -> None:
+        installed = self.install("1.0.0")
+        process = self.start_process(installed.path)
+        (installed.path.parent.parent / ".appglider").write_text("not ours")
+        self.assertFalse(self.library.app_running(APP))
+        with self.assertRaisesRegex(ValueError, "Only apps installed by AppGlider"):
+            self.library.force_close(APP, grace=0.1)
+        self.assertIsNone(process.poll())
+
+    def test_actions_blocked_by_a_running_app_name_it(self) -> None:
+        self.install("1.0.0")
+        with (
+            patch("appglider.install.library.running", return_value=True),
+            self.assertRaises(AppRunning) as raised,
+        ):
+            self.library.remove(APP)
+        self.assertEqual(raised.exception.app_id, APP.id)
 
     def test_ownership_and_running_checks_protect_installed_files(self) -> None:
         installed = self.install("1.0.0")

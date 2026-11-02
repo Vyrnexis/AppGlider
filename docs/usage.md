@@ -136,6 +136,7 @@ The menu only offers what makes sense for the app right now:
 | --- | --- |
 | ![The menu of an installed app](previews/guide-menu-installed.png) | ![The menu of an app that is not installed](previews/guide-menu-not-installed.png) |
 
+**Force close…** appears while the app is running (see [Force close](#force-close)).
 **Roll back to previous version** appears when AppGlider kept an earlier copy, and **Move
 up** and **Move down** appear while the list can be reordered. An app whose file went
 missing also offers **Forget missing copy…**. While AppGlider is busy installing or updating
@@ -229,6 +230,13 @@ these folders along when it updates the app or rolls it back, so the app keeps i
 Close the app first; AppGlider asks you to if it is still open. Uninstalling never deletes
 them.
 
+<a id="force-close"></a>**Force close.** When an app has frozen, **⋯ → Force close…** (or
+**Force close** under **Manage** on the app's page) closes it, after asking. Both appear only
+while the app is running, however you started it. AppGlider first asks the app to close; if it
+is still running two seconds later, it is stopped. Any unsaved work in it is lost. Only apps
+AppGlider installed are closed, never anything else. When an update, roll back or uninstall
+cannot go ahead because the app is open, the message offers **Force close…** too.
+
 **GitHub's allowance.** GitHub lets programs without an account make about 60 requests an
 hour. AppGlider is careful with them: a routine check reads the project's ordinary release
 page first, which costs nothing, and only uses the allowance when a new version has really
@@ -261,7 +269,8 @@ you left it.
    - **Arguments** and **Environment**: see [Launch options](#launch-options).
 
    **Hold at this version** and **Menu shortcut** appear once the app is installed.
-6. **Manage** (in red): **Roll back** when an earlier copy is kept, and **Uninstall…**,
+6. **Manage** (in red): **Force close** while the app is running, **Roll back** when an
+   earlier copy is kept, and **Uninstall…**,
    **Forget…** or **Remove…** depending on the app's state. Each asks first. See
    [Uninstalling, forgetting and removing](#uninstalling-forgetting-and-removing).
 
