@@ -15,6 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from catalog_fixture import APPS, stock
 from gui_helpers import close_window
 from PySide6.QtCore import QSettings, Qt, QThreadPool, QUrl
+from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QBoxLayout, QMessageBox
 from test_builds import BAMBU, bambu_metadata, chosen_bambu
@@ -816,6 +817,22 @@ class AppPageTests(unittest.TestCase):
         self.assertTrue(self.page.notes_link.isVisibleTo(self.page))
         self.assertNotIn("Released", self.page.release_meta.text())
 
+    def test_notes_never_show_a_local_image(self) -> None:
+        browser = NotesBrowser()
+        self.addCleanup(browser.deleteLater)
+        browser.resize(600, 400)
+        with tempfile.TemporaryDirectory() as directory:
+            tall = Path(directory) / "tall.png"
+            image = QImage(40, 320, QImage.Format.Format_RGB32)
+            image.fill(0xFF000000)
+            image.save(str(tall), "PNG")
+            browser.set_notes("![x](/missing/image.png)")
+            missing = browser.document().size().height()
+            for reference in (str(tall), tall.as_uri()):
+                with self.subTest(reference=reference):
+                    browser.set_notes(f"![x]({reference})")
+                    self.assertEqual(browser.document().size().height(), missing)
+
     def test_notes_never_load_resources_and_only_web_links_open(self) -> None:
         browser = NotesBrowser()
         self.addCleanup(browser.deleteLater)
@@ -828,7 +845,9 @@ class AppPageTests(unittest.TestCase):
                 "file:///etc/passwd",
                 "/relative/image.png",
             ):
-                self.assertIsNone(browser.loadResource(kind, QUrl(url)))
+                resource = browser.loadResource(kind, QUrl(url))
+                self.assertIsInstance(resource, QImage)  # None or bytes let Qt read the file
+                self.assertTrue(resource.isNull())
         loaded = []
         original = NotesBrowser.loadResource
 
@@ -842,7 +861,7 @@ class AppPageTests(unittest.TestCase):
             )
             browser.show()
             self.qt.processEvents()
-        self.assertTrue(all(browser.loadResource(2, name) is None for name in loaded))
+        self.assertTrue(all(browser.loadResource(2, name).isNull() for name in loaded))
         self.assertFalse(browser.document().resource(2, QUrl("https://example.com/x.png")))
         with patch("appglider.ui.pages.app_page.QDesktopServices.openUrl") as opened:
             for url in (

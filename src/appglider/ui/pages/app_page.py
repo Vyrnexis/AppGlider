@@ -12,6 +12,7 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QFont,
+    QImage,
     QLinearGradient,
     QPainter,
     QPaintEvent,
@@ -122,8 +123,11 @@ class NotesBrowser(QTextBrowser):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def loadResource(self, type: int, name: QUrl | str) -> Any:  # noqa: A002, N802
-        """Notes come from the network: never fetch images or read local files for them."""
-        return None
+        """Notes come from the network: never fetch images or read local files for them.
+
+        Only an image stops Qt from opening the path itself; None or bytes do not.
+        """
+        return QImage()
 
     def open_link(self, url: QUrl) -> None:
         if url.scheme().lower() in WEB_SCHEMES and url.host():
