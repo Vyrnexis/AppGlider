@@ -14,10 +14,12 @@ from appglider.core.catalog import App
 from appglider.core.storage import atomic_bytes, atomic_json
 from appglider.install.appimage import NO_INTEGRATION, check_appimage, clean_environment
 from appglider.install.desktopentry import (
+    MAX_DESKTOP_BYTES,
     DesktopMetadata,
     Groups,
     extract_desktop_groups,
     metadata_from_groups,
+    parse_groups,
     valid_groups,
 )
 from appglider.install.launch_options import LaunchOptions
@@ -29,6 +31,8 @@ AUTOSTART_FLAG = "--tray"
 # Raised when entries change, so refresh_shortcuts rewrites the older ones.
 METADATA_MARKER = "X-AppGlider-Metadata=2"
 DATABASE_SECONDS = 10
+NAME_SUFFIX = " (AppGlider)"
+DEFAULT_DATA_DIRS = "/usr/local/share:/usr/share"
 
 
 def desktop_exec(arguments: list[str]) -> str:
@@ -76,6 +80,7 @@ class ShortcutsMixin:
     data_dir: Path
     desktop_dir: Path
     autostart_dir: Path
+    system_data_dirs: tuple[Path, ...]
 
     if TYPE_CHECKING:
 
@@ -115,7 +120,8 @@ class ShortcutsMixin:
                     errors.append(f"{entry}: {error}")
         return errors
 
-    def create_shortcut(self, app: App) -> None:
+    def create_shortcut(self, app: App) -> str:
+        """Write the app's menu entry; returns the name it shows."""
         with contextlib.suppress(OSError, ValueError):
             current = self.records().get(app.id)
             if current and current.managed and current.path.is_file():
@@ -127,8 +133,9 @@ class ShortcutsMixin:
             if not installed or not installed.managed or not installed.path.is_file():
                 raise ValueError("Install this app with AppGlider first.")
             self._owned(app, installed.path)
-            self._shortcut(app, installed.path)
+            name = self._shortcut(app, installed.path)
         self.update_desktop_database()
+        return name
 
     def refresh_shortcuts(self, cancel: Event | None = None) -> int:
         """Rewrite menu entries from older versions: the app's own details, current Exec.
@@ -379,7 +386,83 @@ class ShortcutsMixin:
                 check=False,
             )
 
-    def _shortcut(self, app: App, path: Path) -> None:
+    def _foreign_names(self) -> set[str]:
+        """Casefolded names of the visible menu entries AppGlider did not write. Read-only.
+
+        Folders are read in XDG order, so a user entry hides a system one with the same file
+        name (the usual way to hide an app), as the menu itself does.
+        """
+        folders = [self.desktop_dir, *self.system_data_dirs]
+        names: set[str] = set()
+        seen: set[str] = set()
+        for folder in folders:
+            try:
+                entries = sorted(folder.glob("*.desktop"))
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.name in seen:
+                    continue
+                seen.add(entry.name)
+                try:
+                    if entry.is_symlink() or not entry.is_file():
+                        continue
+                    with entry.open("rb") as source:
+                        data = source.read(MAX_DESKTOP_BYTES + 1)
+                    if len(data) > MAX_DESKTOP_BYTES:
+                        continue
+                    text = data.decode()
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if "X-AppGlider=true" in text.splitlines():
+                    continue
+                main = parse_groups(text).get("Desktop Entry", {})
+                if main.get("NoDisplay", "").lower() == "true":
+                    continue
+                if main.get("Hidden", "").lower() == "true":
+                    continue
+                if main.get("Name"):
+                    names.add(main["Name"].casefold())
+        return names
+
+    @staticmethod
+    def _menu_name(app: App, foreign: set[str]) -> str:
+        """The app's name, with a suffix only when another visible entry already uses it."""
+        return app.name + NAME_SUFFIX if app.name.casefold() in foreign else app.name
+
+    def refresh_shortcut_names(self, cancel: Event | None = None) -> int:
+        """Add or drop the name suffix on AppGlider's menu entries as other apps come and go.
+
+        Rewrites only the `Name=` line of the main section; no AppImage is started.
+        Foreign entries are only read. Returns how many entries changed.
+        """
+        foreign = self._foreign_names()
+        changed = 0
+        for app in self.apps:
+            if cancel is not None and cancel.is_set():
+                break
+            shortcut = self.desktop_dir / f"appglider-{app.id}.desktop"
+            wanted = self._menu_name(app, foreign)
+            try:
+                if not self._owned_shortcut(shortcut):
+                    continue
+                if _main_name(shortcut.read_text()) in (None, wanted):
+                    continue
+                with self._lock():
+                    if not self._owned_shortcut(shortcut):
+                        continue
+                    text = shortcut.read_text()
+                    if _main_name(text) in (None, wanted):
+                        continue
+                    atomic_bytes(shortcut, _with_name(text, wanted).encode())
+                changed += 1
+            except (OSError, ValueError):
+                continue
+        if changed:
+            self.update_desktop_database()
+        return changed
+
+    def _shortcut(self, app: App, path: Path) -> str:
         self.desktop_dir.mkdir(parents=True, exist_ok=True)
         shortcut = self.desktop_dir / f"appglider-{app.id}.desktop"
         if shortcut.is_symlink() or (
@@ -396,8 +479,10 @@ class ShortcutsMixin:
             options = self.launch_options(app.id)
         except ValueError:
             options = LaunchOptions()  # launching reports the unreadable file
-        text = shortcut_text(app, path, icon, self._desktop_metadata(app, path), options)
+        name = self._menu_name(app, self._foreign_names())
+        text = shortcut_text(app, path, icon, self._desktop_metadata(app, path), options, name)
         atomic_bytes(shortcut, text.encode())
+        return name
 
 
 def exec_target(command: list[str]) -> str:
@@ -415,6 +500,7 @@ def shortcut_text(
     icon: Path,
     metadata: DesktopMetadata | None,
     options: LaunchOptions,
+    name: str | None = None,
 ) -> str:
     """The menu entry for an installed app, using the app's own details when it gave any."""
     metadata = metadata or DesktopMetadata()
@@ -424,7 +510,7 @@ def shortcut_text(
     lines = [
         "[Desktop Entry]",
         "Type=Application",
-        f"Name={app.name} (AppGlider)",
+        f"Name={app.name if name is None else name}",
     ]
     if metadata.comment:
         lines.append(f"Comment={metadata.comment}")
@@ -448,3 +534,27 @@ def shortcut_text(
         command = desktop_exec([*prefix, str(path), *action.arguments])
         lines += ["", f"[Desktop Action {action.id}]", f"Name={action.name}", f"Exec={command}"]
     return "\n".join(lines) + "\n"
+
+
+def _main_name(text: str) -> str | None:
+    """The `Name=` value of the [Desktop Entry] group, or None without one."""
+    in_main = False
+    for line in text.splitlines():
+        if line.startswith("["):
+            in_main = line == "[Desktop Entry]"
+        elif in_main and line.startswith("Name="):
+            return line[5:]
+    return None
+
+
+def _with_name(text: str, name: str) -> str:
+    """The entry with its main-section `Name=` line replaced; everything else is kept."""
+    in_main = False
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if line.startswith("["):
+            in_main = line.rstrip("\r\n") == "[Desktop Entry]"
+        elif in_main and line.startswith("Name="):
+            lines[index] = f"Name={name}\n"
+            break
+    return "".join(lines)

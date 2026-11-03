@@ -241,6 +241,7 @@ class LauncherWindow(TrayMixin):
         self.self_state = self_update.SelfUpdate()
         self.self_task: Lookup | None = None
         self.shortcut_task: Lookup | None = None
+        self.names_task: Lookup | None = None
         self.menu_task: Lookup | None = None
         self.force_task: Lookup | None = None
         self.force_app: App | None = None
@@ -632,6 +633,7 @@ class LauncherWindow(TrayMixin):
     def scheduled_check(self) -> None:
         """Check installed apps on the chosen schedule, without disturbing a running task."""
         self.offline_attempts = 0
+        self.refresh_menu_names()
         self.automatic_self_check(notify=True)
         if (
             self.task is None
@@ -1299,7 +1301,8 @@ class LauncherWindow(TrayMixin):
     def shortcut_created(self, result: object) -> None:
         self.menu_task = None
         if not self.quitting and self.menu_app is not None:
-            self.footer.setText(f"Created menu shortcut: {self.menu_app.name} (AppGlider).")
+            name = result if isinstance(result, str) else self.menu_app.name
+            self.footer.setText(f"Created menu shortcut: {name}.")
 
     def shortcut_failed(self, error: str) -> None:
         self.menu_task = None
@@ -1499,12 +1502,14 @@ class LauncherWindow(TrayMixin):
 
     def startup_check(self) -> None:
         """The first check after the window opens; both parts follow the update schedule choice."""
+        self.refresh_menu_names()
         self.refresh_releases()
         self.automatic_self_check()
 
     def check_for_updates(self) -> None:
         """The toolbar and tray command: a full check of the apps and of AppGlider itself."""
         self.offline_attempts = 0
+        self.refresh_menu_names()
         self.start_self_check(explicit=True)
         self.refresh_releases(force=True)
 
@@ -1546,6 +1551,19 @@ class LauncherWindow(TrayMixin):
 
     def shortcuts_refreshed(self, result: object) -> None:
         self.shortcut_task = None
+
+    def refresh_menu_names(self) -> None:
+        """Add or drop the "(AppGlider)" name suffix as other menu entries come and go."""
+        if self.quitting or self.names_task is not None:
+            return
+        library = self.library
+        task = self.names_task = Lookup(library.refresh_shortcut_names)
+        task.signals.finished.connect(self.menu_names_refreshed)
+        task.signals.failed.connect(self.menu_names_refreshed)
+        QThreadPool.globalInstance().start(task)
+
+    def menu_names_refreshed(self, result: object) -> None:
+        self.names_task = None
 
     def self_check_done(self, tag: object) -> None:
         self.self_task = None
@@ -1999,6 +2017,8 @@ class LauncherWindow(TrayMixin):
             self.self_task.cancel.set()
         if self.shortcut_task is not None:
             self.shortcut_task.cancel.set()
+        if self.names_task is not None:
+            self.names_task.cancel.set()
         self.add_page.stop()
         self.tray.hide()
         super().closeEvent(event)

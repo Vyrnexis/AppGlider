@@ -2013,7 +2013,7 @@ class LibraryTests(unittest.TestCase):
             warning.assert_not_called()
         self.assertIn("Created menu shortcut", self.window.footer.text())
         self.assertTrue(shortcut.is_file())
-        self.assertIn("Name=PhotoCraft (AppGlider)", shortcut.read_text())
+        self.assertIn("Name=PhotoCraft\n", shortcut.read_text())
 
     def test_legacy_external_link_does_not_appear_as_installed_or_updatable(self) -> None:
         path = Path(self.temp.name) / "solidcraft.AppImage"

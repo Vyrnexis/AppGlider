@@ -828,10 +828,82 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Only apps installed"):
             self.library.launch(APP, Installed(path, None, False))
 
+    def foreign_entry(self, folder: Path, name: str, text: str) -> Path:
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / name
+        path.write_text(text)
+        return path
+
+    def shortcut_main_name(self) -> str:
+        shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
+        return next(line for line in shortcut.read_text().splitlines() if line.startswith("Name="))
+
+    def test_menu_name_is_plain_without_a_clash(self) -> None:
+        self.install("1.0.0")
+        self.assertEqual(self.shortcut_main_name(), "Name=PhotoCraft")
+
+    def test_menu_name_gets_suffix_for_user_and_system_clashes(self) -> None:
+        system = self.root / "share" / "applications"
+        self.library.system_data_dirs = (system,)
+        self.foreign_entry(
+            self.library.desktop_dir, "other.desktop", "[Desktop Entry]\nName=photocraft\n"
+        )
+        self.install("1.0.0")
+        self.assertEqual(self.shortcut_main_name(), "Name=PhotoCraft (AppGlider)")
+        (self.library.desktop_dir / "other.desktop").unlink()
+        self.assertEqual(self.library.refresh_shortcut_names(), 1)
+        self.assertEqual(self.shortcut_main_name(), "Name=PhotoCraft")
+        self.foreign_entry(system, "sys.desktop", "[Desktop Entry]\nName=PHOTOCRAFT\n")
+        self.assertEqual(self.library.refresh_shortcut_names(), 1)
+        self.assertEqual(self.shortcut_main_name(), "Name=PhotoCraft (AppGlider)")
+        self.assertEqual(self.library.refresh_shortcut_names(), 0)
+
+    def test_menu_name_ignores_hidden_and_appglider_entries(self) -> None:
+        system = self.root / "share" / "applications"
+        self.library.system_data_dirs = (system,)
+        for name, extra in (("a", "NoDisplay=true\n"), ("b", "Hidden=true\n")):
+            self.foreign_entry(
+                system, f"{name}.desktop", f"[Desktop Entry]\nName=PhotoCraft\n{extra}"
+            )
+        self.foreign_entry(
+            self.library.desktop_dir,
+            "appglider.desktop",
+            "[Desktop Entry]\nName=PhotoCraft\nX-AppGlider=true\n",
+        )
+        self.install("1.0.0")
+        self.assertEqual(self.shortcut_main_name(), "Name=PhotoCraft")
+
+    def test_menu_name_ignores_system_entry_hidden_by_user_copy(self) -> None:
+        system = self.root / "share" / "applications"
+        self.library.system_data_dirs = (system,)
+        self.foreign_entry(system, "photo.desktop", "[Desktop Entry]\nName=PhotoCraft\n")
+        self.foreign_entry(
+            self.library.desktop_dir,
+            "photo.desktop",
+            "[Desktop Entry]\nName=PhotoCraft\nNoDisplay=true\n",
+        )
+        self.install("1.0.0")
+        self.assertEqual(self.shortcut_main_name(), "Name=PhotoCraft")
+
+    def test_name_refresh_keeps_foreign_files_and_actions(self) -> None:
+        self.install("1.0.0")
+        shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
+        shortcut.write_text(
+            shortcut.read_text() + "\n[Desktop Action new]\nName=PhotoCraft\nExec=x\n"
+        )
+        other = self.foreign_entry(
+            self.library.desktop_dir, "other.desktop", "[Desktop Entry]\nName=PhotoCraft\n"
+        )
+        before = other.read_bytes()
+        self.assertEqual(self.library.refresh_shortcut_names(), 1)
+        self.assertEqual(self.shortcut_main_name(), "Name=PhotoCraft (AppGlider)")
+        self.assertIn("[Desktop Action new]\nName=PhotoCraft\nExec=x", shortcut.read_text())
+        self.assertEqual(other.read_bytes(), before)
+
     def test_menu_shortcut_tracks_active_version_without_duplicates(self) -> None:
         first = self.install("1.0.0")
         shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
-        self.assertIn("Name=PhotoCraft (AppGlider)", shortcut.read_text())
+        self.assertIn("Name=PhotoCraft\n", shortcut.read_text())
         self.assertIn(str(first.path), shortcut.read_text())
         second = self.install("1.1.0")
         self.assertEqual(list(self.library.desktop_dir.glob("*.desktop")), [shortcut])
@@ -1070,14 +1142,14 @@ class LibraryTests(unittest.TestCase):
         state = (self.library.data_dir / "library.json").read_bytes()
         shortcut = self.library.desktop_dir / f"appglider-{APP.id}.desktop"
         shortcut.write_text(
-            shortcut.read_text().replace("PhotoCraft (AppGlider)", "Outdated application label")
+            shortcut.read_text().replace("Name=PhotoCraft", "Name=Outdated application label")
         )
         reopened = Library(
             self.library.data_dir, self.library.apps_dir, desktop_dir=self.library.desktop_dir
         )
         self.assertEqual(reopened.scan()[APP.id], installed)
         reopened.create_shortcut(APP)
-        self.assertIn("Name=PhotoCraft (AppGlider)", shortcut.read_text())
+        self.assertIn("Name=PhotoCraft\n", shortcut.read_text())
         self.assertEqual((self.library.data_dir / "library.json").read_bytes(), state)
         self.assertEqual(list(self.library.desktop_dir.glob("*.desktop")), [shortcut])
 

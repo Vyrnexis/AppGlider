@@ -41,7 +41,7 @@ from appglider.github.icons import MAX_ICON_BYTES, normalise_icon
 from appglider.github.versions import VERSION, check_cancel, version_key
 from appglider.install.appimage import check_appimage, clean_environment
 from appglider.install.launch_options import LaunchOptions, load_launch_options, options_json
-from appglider.install.shortcuts import ShortcutsMixin
+from appglider.install.shortcuts import DEFAULT_DATA_DIRS, ShortcutsMixin
 
 FREE_SPACE_MARGIN = 64 * 1024 * 1024
 MAX_LOG_BYTES = 5 * 1024 * 1024
@@ -366,6 +366,10 @@ class Library(ShortcutsMixin):
         home = Path.home()
         xdg_data = Path(os.environ.get("XDG_DATA_HOME", str(home / ".local/share")))
         self.desktop_dir = desktop_dir if desktop_dir is not None else xdg_data / "applications"
+        data_dirs = os.environ.get("XDG_DATA_DIRS") or DEFAULT_DATA_DIRS
+        self.system_data_dirs = tuple(
+            Path(item) / "applications" for item in data_dirs.split(":") if item
+        )
         xdg_config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
         self.autostart_dir = (
             autostart_dir if autostart_dir is not None else xdg_config / "autostart"

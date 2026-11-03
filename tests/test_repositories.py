@@ -196,7 +196,7 @@ class CatalogTests(unittest.TestCase):
         reopened = Library(self.library.data_dir, self.library.apps_dir, self.library.desktop_dir)
         self.assertEqual(reopened.scan()[CUSTOM.id].path, first.path)
         shortcut = self.library.desktop_dir / f"appglider-{CUSTOM.id}.desktop"
-        self.assertIn("LightCraft Classic (AppGlider)", shortcut.read_text())
+        self.assertIn("Name=LightCraft Classic\n", shortcut.read_text())
         self.library.remove(CUSTOM)
         self.library.remove_repository(CUSTOM.id)
         self.assertEqual(reopened.scan(), {})

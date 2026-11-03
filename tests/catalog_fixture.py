@@ -17,5 +17,6 @@ APPS = tuple(
 
 def stock(library: Library) -> Library:
     """Fill a fresh library with the example apps, as importing the starter catalog does."""
+    library.system_data_dirs = ()  # never read the real /usr/share
     library.import_catalog(STARTER_ENTRIES)
     return library

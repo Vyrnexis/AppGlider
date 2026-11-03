@@ -267,7 +267,7 @@ class ExtractionTests(unittest.TestCase):
 class EntryTextTests(unittest.TestCase):
     def test_without_metadata_the_entry_is_plain_but_marked(self) -> None:
         text = shortcut_text(APP, Path("/apps/a b.AppImage"), Path("/i.png"), None, LaunchOptions())
-        self.assertIn("Name=PhotoCraft (AppGlider)\n", text)
+        self.assertIn("Name=PhotoCraft\n", text)
         self.assertIn('Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "/apps/a b.AppImage" %F\n', text)
         self.assertIn("Categories=Utility;\n", text)
         self.assertIn("X-AppGlider=true\nX-AppGlider-Metadata=2\n", text)
@@ -285,7 +285,7 @@ class EntryTextTests(unittest.TestCase):
             LaunchOptions(),
         )
         for line in (
-            "Name=PhotoCraft (AppGlider)",
+            "Name=PhotoCraft",
             "Comment=Edit photos",
             'Exec="env" "APPIMAGELAUNCHER_DISABLE=1" "/apps/p.AppImage" %U',
             "Icon=/i.png",
