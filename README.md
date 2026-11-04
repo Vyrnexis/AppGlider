@@ -44,6 +44,8 @@ other launchers, are left alone.
 - Add any public GitHub repository that publishes AppImages, and install it with one button.
 - Every download is checked against the checksum the project published before it is used.
 - The previous version is kept, so you can roll back if an update misbehaves.
+- Add an AppImage you already have from a file. AppGlider reads its name, version and icon,
+  and copies it in; such apps are never checked for updates.
 
 **Stay up to date**
 
@@ -52,7 +54,7 @@ other launchers, are left alone.
 - Read the release notes on the app's page, then **Update** one app or **Update all**.
 - Stable versions by default; previews only for the apps you choose. Hold any app at its
   current version.
-- Keeps itself up to date too.
+- Keeps itself up to date too, and can move itself into your apps folder.
 
 **Fits your desktop**
 
@@ -121,6 +123,7 @@ AppGlider starts empty. Add apps in either of two ways:
 
 - **Add app** (in the sidebar): paste a GitHub repository address, choose **Inspect
   repository**, then **Add to library**.
+- **Add app → Choose AppImage…**: add an AppImage that is already on your computer.
 - **Import catalog…** (on the welcome screen, or under **Settings → Catalogs**): add a whole
   list at once from a plain text file. **Example catalog** adds a ready-made list of the
   ArtCraft apps and SolidCraft ([`docs/catalogs/artcraft.toml`](docs/catalogs/artcraft.toml)).

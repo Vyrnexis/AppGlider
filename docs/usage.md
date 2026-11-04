@@ -181,6 +181,30 @@ cancels the search.
 
 To add many apps at once, use a [catalog](#catalogs-sharing-a-list-of-apps).
 
+AppGlider's own repository is refused: it already updates itself and keeps its own menu entry.
+
+### An AppImage already on your computer
+
+If you have an AppImage that did not come from GitHub, or from a project AppGlider cannot
+use, add it from a file. On the Add app page, under **Add a file from this computer**:
+
+1. Choose **Choose AppImage…** and pick the file.
+2. AppGlider reads its name, version and icon from inside the file and shows them. You can
+   change the **Name**.
+3. Choose **Add to library**. The file is copied into AppGlider's install folder. The original
+   stays where it is, and you can delete it afterwards.
+
+The app gets a **◇ Manual** chip and works like any other installed app: **Launch**, a menu
+entry, launch options, **Pin to top**, **Force close** and **Uninstall**. The difference is
+that AppGlider cannot check it for updates, so it is left out of **Updates**, **Update all**
+and the update counts, and its page has no release notes or Versions.
+
+To update it, download a newer file yourself, open the app's page and choose **Replace with a
+newer file…** under **Preferences**. The old file is kept, so **Roll back** still works.
+**Uninstall** removes the app from your list as well, since there is nothing to download
+again. The file you first added is never touched. A file identical to one you already have is
+refused.
+
 ## Installing and launching
 
 Press **Install** on an app's row or its page. AppGlider:
@@ -191,7 +215,8 @@ Press **Install** on an app's row or its page. AppGlider:
 
 The row then shows **Launch**. A download that fails or that you cancel leaves nothing
 behind. Installed apps work offline. If an app fails to start, AppGlider tells you where to
-find its log file.
+find its log file. When it quits with an error right after starting, the message also shows
+the end of that log.
 
 AppGlider only manages the apps it installed itself. AppImages you downloaded some other way,
 or installed with another program, are left alone.
@@ -372,7 +397,8 @@ no Save button.
    - **General**: theme, accent colour and how the window behaves.
    - **Updates**: how often to check for updates, and notifications.
    - **Catalogs**: import a list of apps, add the example list, or export your own.
-   - **Storage**: the folder new apps are installed in, and the space they use.
+   - **Storage**: the folder new apps are installed in, moving AppGlider there, and the space
+     they use.
    - **About**: the version, **Check now** for a new AppGlider, **What's new in …** for the
      notes of the version you are running, the licence
      (GPL-3.0-or-later, no warranty), and links to the website, the source code and the
@@ -396,6 +422,11 @@ keeps only one earlier copy of each app, and each update replaces it. The sizes 
 files only, not the documents or settings the apps keep.
 
 ![Settings, Storage section with the space used by each app](previews/appglider-storage.png)
+
+**Move AppGlider here.** When AppGlider runs from some other folder, such as Downloads, this
+row appears. **Move here** copies AppGlider into the install folder, points its menu and
+login entries at the copy and restarts from it. The old file is removed once it is no longer
+running.
 
 ## Catalogs: sharing a list of apps
 
@@ -534,6 +565,10 @@ example from `~/Applications`.
 **AppGlider will not start, and the message mentions FUSE.** Start it with
 `--appimage-extract-and-run` added, for example
 `./AppGlider-*.AppImage --appimage-extract-and-run`.
+
+**An app quits right after it starts.** The message shows the end of the app's log and says
+where the full log is. If it says AppImages need FUSE, install your distribution's FUSE 2
+package (often called `fuse2` or `libfuse2`) and try again.
 
 **AppGlider's own menu entry stopped working.** You probably moved AppGlider's file. Start it
 once from its new place and the entry is repaired.

@@ -37,6 +37,12 @@ None of these are approved or scheduled.
 
 Roughly newest first. Where shown, the version is the release that first included the work.
 
+- **AppImages from a file (next release):** **Add app → Choose AppImage…** adds a file that is
+  already on the computer, reading its name, version and icon from inside it. These apps are
+  never checked for updates; **Replace with a newer file…** keeps the old one for Roll back.
+- **Move AppGlider here (next release):** **Settings → Storage** can copy AppGlider into the
+  install folder, restart from the copy and remove the old file. When an app quits with an
+  error right after starting, the message shows the end of its log and explains a missing FUSE.
 - **Update all, one app at a time on screen (0.9.7):** each app's row changes as soon as it is
   updated and leaves the Updates page, instead of all of them changing at the end; the apps
   still in line show **Waiting**.
