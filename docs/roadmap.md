@@ -29,6 +29,11 @@ None of these are approved or scheduled.
   `GITHUB_REPOSITORY` during the build would point each build at the repository that made
   it (local builds keep this one). A nice to have for people who fork AppGlider; idea from
   the zonaro/AppGlider fork.
+- **Linking a manual app to a repository:** an app added from a file could later be given
+  the GitHub repository it has started publishing on, and from then on be updated like any
+  other app, keeping its launch options, pin and place in the list. The installed file would
+  have to be matched to a release build (or simply replaced at the next update). Idea from
+  issue #13.
 - **Hiding apps:** hiding an app without removing it would need more work and only makes
   sense if people ask for it. Removing an app from the list and adding it again with a
   catalog already covers most of it.
