@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from threading import Event
 
 from PySide6.QtCore import QObject, QRunnable, Signal
@@ -25,8 +26,11 @@ class TaskResult:
     release_infos: dict[str, ReleaseInfo] = field(default_factory=dict)
     build_choices: dict[str, BuildChoiceRequired] = field(default_factory=dict)
     downloaded: Downloaded | None = None
+    placed: Path | None = None  # AppGlider's copy in its new folder, ready to start
     moved: App | None = None  # the app under its new address, when Add app found a move
     running: str = ""  # the app that must be closed before the action can go ahead
+    chosen: object = None  # a file picked on the Add page, with what was read from it
+    added: App | None = None  # the app added from a file
 
 
 class TaskSignals(QObject):

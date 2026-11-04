@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appglider.core.catalog import App
+from appglider.core.catalog import MANUAL_DESCRIPTION, App
 from appglider.github.assets import BuildChoiceRequired, Release, variant_label
 from appglider.github.download import Progress, latest_release
 from appglider.github.http import file_stamp
@@ -428,6 +428,7 @@ class AppPage(QScrollArea):
 
     def build_notes(self, column: QVBoxLayout) -> None:
         frame, layout, self.notes_heading = panel("What's new")
+        self.notes_frame = frame
         self.notes_panel = frame
         release_line = QHBoxLayout()
         release_line.setSpacing(8)
@@ -470,6 +471,7 @@ class AppPage(QScrollArea):
 
     def build_versions(self, column: QVBoxLayout) -> None:
         frame, layout, _ = panel("Versions")
+        self.versions_frame = frame
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(8)
@@ -529,6 +531,8 @@ class AppPage(QScrollArea):
         self.pin_switch = Switch()
         self.pin_switch.setAccessibleName("Pin to top")
         self.pin_switch.clicked.connect(self.toggle_pin)
+        self.replace_button = QPushButton("Replace with a newer file…")
+        self.replace_button.clicked.connect(self.replace_file)
         self.build_button = QPushButton("Change…")
         self.build_button.setAccessibleName("Change build")
         self.build_button.clicked.connect(self.choose_build)
@@ -571,6 +575,9 @@ class AppPage(QScrollArea):
         )
         self.pin_row = SettingRow("Pin to top", "Show first in the library", self.pin_switch)
         self.build_row = SettingRow("Build", "Automatic", self.build_button)
+        self.replace_row = SettingRow(
+            "Newer file", "The old file is kept for Roll back", self.replace_button
+        )
         self.icon_row = SettingRow("Icon", "", icon_control)
         self.shortcut_row = SettingRow(
             "Menu shortcut", "In your applications menu", self.shortcut_button
@@ -591,6 +598,7 @@ class AppPage(QScrollArea):
                 self.hold_row,
                 self.pin_row,
                 self.build_row,
+                self.replace_row,
                 self.icon_row,
                 self.shortcut_row,
                 self.arguments_row,
@@ -705,6 +713,10 @@ class AppPage(QScrollArea):
         previous = previous_copy(installed)
         self.refresh_versions(app, installed, release, info, previous, busy)
         self.refresh_preferences(app, installed, busy)
+        # Nothing to look up for an app added from a file: no releases, no versions column.
+        self.notes_frame.setVisible(not app.manual)
+        self.versions_frame.setVisible(not app.manual)
+        self.columns.setStretch(0, 0 if app.manual else 13)
         self.rollback_row.label.setText(
             f"Roll back to {version_text(previous.version)}" if previous else "Roll back"
         )
@@ -743,8 +755,12 @@ class AppPage(QScrollArea):
             self.icon_preview.setPixmap(icon_pixmap(path, 32))
             self.icon_hint.setText("Saved icon" if path != app.icon else "Default icon")
         self.title.setText(app.name)
-        self.source.setText(f"{app.repo} · {app.description}" if app.description else app.repo)
+        if app.manual:
+            self.source.setText(f"{MANUAL_DESCRIPTION} · {app.file}")
+        else:
+            self.source.setText(f"{app.repo} · {app.description}" if app.description else app.repo)
         show_chip(self.chip, state, text, tooltip)
+        self.channel_chip.setVisible(not app.manual)
         preview = app.include_prereleases
         show_chip(
             self.channel_chip,
@@ -786,6 +802,11 @@ class AppPage(QScrollArea):
                 "Reinstall",
                 f"Reinstall {app.name}",
                 "The AppImage was moved or deleted; download and verify it again",
+            ),
+            "replace": (
+                "Replace…",
+                f"Choose a file for {app.name}",
+                "The AppImage was moved or deleted; choose a file to use instead",
             ),
         }[mode]
         self.action_button.setText(text)
@@ -923,10 +944,27 @@ class AppPage(QScrollArea):
         held = app.hold_updates
         self.hold_switch.setChecked(held)
         managed = bool(installed and installed.managed)
+        manual = app.manual
         # Holding and the menu shortcut need an installed copy; a stale hold can still go.
-        for row, visible in ((self.hold_row, managed or held), (self.shortcut_row, managed)):
+        # An app added from a file has no releases, so no channel, hold or build.
+        earlier = False
+        for row, visible in (
+            (self.channel_row, not manual),
+            (self.hold_row, (managed or held) and not manual),
+            (self.pin_row, True),
+            (self.build_row, not manual),
+            (self.replace_row, manual),
+            (self.icon_row, True),
+            (self.shortcut_row, managed),
+            (self.arguments_row, True),
+            (self.environment_row, True),
+        ):
             row.setVisible(visible)
-            self.preference_dividers[row].setVisible(visible)
+            if row in self.preference_dividers:
+                self.preference_dividers[row].setVisible(visible and earlier)
+            earlier = earlier or visible
+        self.find_icons_action.setVisible(not manual)
+        self.replace_button.setEnabled(not busy)
         self.hold_switch.setEnabled(not busy)
         self.hold_hint.setText(self.hold_text(app, installed))
         self.pin_switch.setChecked(app.id in launcher.pinned)
@@ -981,7 +1019,9 @@ class AppPage(QScrollArea):
     def activate(self) -> None:
         if self.app_id is None:
             return
-        if self.mode in ("install", "reinstall", "update"):
+        if self.mode == "replace":
+            self.replace_file()
+        elif self.mode in ("install", "reinstall", "update"):
             self.launcher.install_app(self.app_id)
         elif self.mode == "build":
             self.choose_build()
@@ -1049,6 +1089,10 @@ class AppPage(QScrollArea):
     def force_close(self) -> None:
         if self.app_id:
             self.launcher.force_close_app(self.app_id)
+
+    def replace_file(self) -> None:
+        if self.app_id:
+            self.launcher.replace_file(self.app_id)
 
     def rollback(self) -> None:
         if self.app_id:

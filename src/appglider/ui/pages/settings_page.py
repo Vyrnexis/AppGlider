@@ -371,6 +371,12 @@ class SettingsPage(QWidget):
         self.folder_warning.setAccessibleName("Folder warning")
         layout.addWidget(self.folder_warning)
         self.warn_about_folder(Path(self.applied_folder).expanduser())
+        self.move_button = QPushButton("Move here")
+        self.move_button.setAccessibleName("Move AppGlider to the install folder")
+        self.move_button.clicked.connect(self.move_self)
+        self.move_row = SettingRow("Move AppGlider here", "", self.move_button)
+        layout.addWidget(self.move_row)
+        self.update_move_row()
         column.addWidget(frame)
 
         space_frame, space_layout, _ = panel("Space used")
@@ -637,6 +643,7 @@ class SettingsPage(QWidget):
             self.export_button,
             self.folder,
             self.browse_button,
+            self.move_button,
         ):
             widget.setEnabled(idle)
         if self.isVisible() and self.current_section() == "Storage":
@@ -770,4 +777,28 @@ class SettingsPage(QWidget):
             self.warn_about_folder(folder)
             self.launcher.scan_installed()
             self.update_space_used()
+            self.update_move_row()
         return True
+
+    def move_source(self) -> Path | None:
+        """The running AppImage when it sits outside the chosen install folder."""
+        image = self_update.running_image()
+        if image is None:
+            return None
+        folder = Path(self.applied_folder).expanduser()
+        with contextlib.suppress(OSError, ValueError):
+            if image.parent.resolve() == folder.resolve():
+                return None
+        return image
+
+    def update_move_row(self) -> None:
+        image = self.move_source()
+        self.move_row.setVisible(image is not None)
+        if image is not None:
+            self.move_row.hint.setText(
+                f"AppGlider runs from {image.parent}. It restarts from here."
+            )
+
+    def move_self(self) -> None:
+        if self.move_source() is not None and self.apply_folder():
+            self.launcher.move_self(Path(self.applied_folder).expanduser())

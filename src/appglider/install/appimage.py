@@ -9,6 +9,42 @@ from appglider.github.versions import architecture
 # the file into ~/Applications and out of the folder AppGlider manages.
 NO_INTEGRATION = {"APPIMAGELAUNCHER_DISABLE": "1"}
 
+# Free space left over after copying or downloading an AppImage.
+FREE_SPACE_MARGIN = 64 * 1024 * 1024
+
+LOG_TAIL_BYTES = 8192
+LOG_TAIL_LINES = 12
+FUSE_MARKERS = (
+    "libfuse.so.2",
+    "dlopen(): error loading libfuse",
+    "fusermount",
+    "cannot mount appimage",
+    "fuse: device not found",
+)
+FUSE_HELP = (
+    "AppImages need FUSE to start. Install your distribution's FUSE 2 package "
+    "(often called fuse2 or libfuse2), then try again."
+)
+
+
+def log_tail(path: Path) -> str:
+    """The last few non-empty lines of a log; reads only its end and never fails."""
+    try:
+        with path.open("rb") as source:
+            source.seek(0, os.SEEK_END)
+            source.seek(max(0, source.tell() - LOG_TAIL_BYTES))
+            data = source.read(LOG_TAIL_BYTES)
+    except OSError:
+        return ""
+    lines = [line.rstrip() for line in data.decode("utf-8", "replace").splitlines()]
+    return "\n".join([line for line in lines if line.strip()][-LOG_TAIL_LINES:])
+
+
+def fuse_explanation(text: str) -> str | None:
+    """Plain advice when the text shows the AppImage could not start for lack of FUSE."""
+    lowered = text.lower()
+    return FUSE_HELP if any(marker in lowered for marker in FUSE_MARKERS) else None
+
 
 def check_appimage(path: Path) -> None:
     with path.open("rb") as source:

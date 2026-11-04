@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appglider.core.catalog import App
+from appglider.core.catalog import MANUAL_DESCRIPTION, App
 from appglider.github.assets import Release
 from appglider.github.icons import icon_pixmap
 from appglider.github.release_info import ReleaseInfo
@@ -184,6 +184,7 @@ class AppRow(QFrame):
     launch_requested = Signal(str)
     force_close_requested = Signal(str)
     install_requested = Signal(str)
+    replace_requested = Signal(str)
     shortcut_requested = Signal(str)
     rollback_requested = Signal(str)
     hold_requested = Signal(str)
@@ -246,7 +247,9 @@ class AppRow(QFrame):
         identity.addLayout(name_row)
         self.subtitle = ElidedLabel()
         self.subtitle.setObjectName("rowSubtitle")
-        self.subtitle.set_full_text(app.description or app.repo)
+        self.subtitle.set_full_text(
+            MANUAL_DESCRIPTION if app.manual else app.description or app.repo
+        )
         identity.addWidget(self.subtitle)
         identity.addStretch()
         content.addLayout(identity, stretch=1)
@@ -294,9 +297,11 @@ class AppRow(QFrame):
         # Asked as the menu opens: an app may be started or closed outside AppGlider at any time.
         self.running_check: Callable[[str], bool] = lambda app_id: False
         menu.aboutToShow.connect(self.update_running)
-        menu.addAction("Open repository").triggered.connect(
+        self.repository_action = menu.addAction("Open repository")
+        self.repository_action.triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl(app.source_url))
         )
+        self.repository_action.setVisible(not app.manual)
         self.pin_action = menu.addAction("Pin to top")
         self.pin_action.triggered.connect(lambda: self.pin_requested.emit(app.id))
         self.move_up_action = menu.addAction("Move up")
@@ -332,6 +337,7 @@ class AppRow(QFrame):
             "install": self.install_requested,
             "update": self.install_requested,
             "reinstall": self.install_requested,
+            "replace": self.replace_requested,
             "build": self.build_requested,
             "cancel": self.cancel_requested,
         }[self.mode]
@@ -385,7 +391,7 @@ class AppRow(QFrame):
         managed = bool(installed and installed.managed)
         shown = (
             (self.launch_action, installed is not None),
-            (self.hold_action, managed or self.app.hold_updates),
+            (self.hold_action, (managed or self.app.hold_updates) and not self.app.manual),
             (self.shortcut_action, managed),
             (self.rollback_action, managed and previous_copy(installed) is not None),
             (self.remove_action, managed),
@@ -438,6 +444,11 @@ class AppRow(QFrame):
                 "Reinstall",
                 f"Reinstall {name}",
                 "The AppImage was moved or deleted; download and verify it again",
+            ),
+            "replace": (
+                "Replace…",
+                f"Choose a file for {name}",
+                "The AppImage was moved or deleted; choose a file to use instead",
             ),
         }[self.mode]
         self.action_button.setText(text)

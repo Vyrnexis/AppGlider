@@ -22,15 +22,19 @@ from typing import TypeVar
 
 from appglider import APP_ICON
 from appglider.core.catalog import (
+    OWN_REPO_NOTE,
     App,
     custom_app,
     default_description,
     default_id,
+    is_own_repo,
     load_apps,
     load_build_preferences,
     load_release_preferences,
     load_update_holds,
+    manual_app,
     valid_build_variant,
+    valid_file_name,
 )
 from appglider.core.catalogfile import CatalogEntry, entry_for
 from appglider.core.storage import atomic_bytes, atomic_json
@@ -39,11 +43,12 @@ from appglider.github.download import Progress, download
 from appglider.github.http import RepositoryMoved, file_stamp
 from appglider.github.icons import MAX_ICON_BYTES, normalise_icon
 from appglider.github.versions import VERSION, check_cancel, version_key
+from appglider.install.appimage import FREE_SPACE_MARGIN as FREE_SPACE_MARGIN  # re-exported
 from appglider.install.appimage import check_appimage, clean_environment
 from appglider.install.launch_options import LaunchOptions, load_launch_options, options_json
+from appglider.install.place import place_appimage
 from appglider.install.shortcuts import DEFAULT_DATA_DIRS, ShortcutsMixin
 
-FREE_SPACE_MARGIN = 64 * 1024 * 1024
 MAX_LOG_BYTES = 5 * 1024 * 1024
 STALE_STAGE_SECONDS = 24 * 60 * 60
 LOCK_WAIT_SECONDS = 3.0
@@ -77,6 +82,8 @@ class Installed:
     previous: Path | None = None
     prerelease: bool = False
     previous_prerelease: bool = False
+    # The kept copy's version when its folder name does not say (a manual app's); "" = unknown.
+    previous_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,9 +104,10 @@ def previous_copy(installed: Installed | None) -> PreviousCopy | None:
         return None
     if not stat.S_ISREG(info.st_mode):
         return None
+    version = installed.previous_version
     return PreviousCopy(
         installed.previous,
-        installed.previous.parent.name,
+        installed.previous.parent.name if version is None else version,
         installed.previous_prerelease,
         info.st_size,
     )
@@ -526,11 +534,15 @@ class Library(ShortcutsMixin):
             app.repo, app.name, app.include_prereleases, app.build_variant, app.description
         ):
             raise ValueError("Invalid custom repository details.")
+        if is_own_repo(app.repo):
+            raise ValueError(OWN_REPO_NOTE)
         with self._lock():
             apps = self.apps
             # A moved repository keeps the id its old address gives, so compare ids too.
             if any(
-                known.repo.casefold() == app.repo.casefold() or known.id == app.id for known in apps
+                (not known.manual and known.repo.casefold() == app.repo.casefold())
+                or known.id == app.id
+                for known in apps
             ):
                 raise ValueError("This repository is already in the catalog.")
             self.records()
@@ -542,14 +554,14 @@ class Library(ShortcutsMixin):
     def plan_import(self, entries: Sequence[CatalogEntry]) -> ImportPlan:
         """Say which catalog entries would be added and which are already in the library."""
         apps = self.apps
-        known = {app.repo.casefold() for app in apps}
+        known = {app.repo.casefold() for app in apps if not app.manual}
         # A moved repository keeps the id of its old address; that address is not new either.
         ids = {app.id for app in apps}
         new: list[CatalogEntry] = []
         existing: list[CatalogEntry] = []
         for entry in entries:
             app_id = custom_app(entry.repo).id
-            if entry.repo.casefold() in known or app_id in ids:
+            if is_own_repo(entry.repo) or entry.repo.casefold() in known or app_id in ids:
                 existing.append(entry)
             else:
                 known.add(entry.repo.casefold())
@@ -583,7 +595,8 @@ class Library(ShortcutsMixin):
             return plan
 
     def export_entries(self) -> tuple[CatalogEntry, ...]:
-        return tuple(entry_for(app) for app in self.apps)
+        # An app added from a file has no repository, and its file cannot travel in a catalog.
+        return tuple(entry_for(app) for app in self.apps if not app.manual)
 
     def remove_repository(self, app_id: str) -> None:
         with self._lock():
@@ -645,7 +658,7 @@ class Library(ShortcutsMixin):
         with self._lock():
             apps = self.apps
             current = next((app for app in apps if app.id == app_id), None)
-            if current is None:
+            if current is None or current.manual:
                 raise ValueError("This repository is not in the library.")
             moved = custom_app(
                 repo,
@@ -660,7 +673,7 @@ class Library(ShortcutsMixin):
             moved = replace(moved, hold_updates=current.hold_updates)
             if moved.repo == current.repo:
                 return current
-            if any(app.repo.casefold() == moved.repo.casefold() for app in apps):
+            if any(not app.manual and app.repo.casefold() == moved.repo.casefold() for app in apps):
                 raise ValueError(
                     f"{current.repo} moved to {moved.repo} on GitHub, which is already in "
                     "your library. Remove one of them."
@@ -687,17 +700,21 @@ class Library(ShortcutsMixin):
         if len(apps) > MAX_APPS:
             raise ValueError(f"The library supports up to {MAX_APPS} repositories.")
         atomic_json(
-            self.data_dir / "repositories.json",
-            [
-                {"repo": app.repo, "name": app.name}
-                | ({} if app.id == default_id(app) else {"id": app.id})
-                | (
-                    {}
-                    if app.description == default_description(app.repo)
-                    else {"description": app.description}
-                )
-                for app in apps
-            ],
+            self.data_dir / "repositories.json", [self._repository_entry(app) for app in apps]
+        )
+
+    @staticmethod
+    def _repository_entry(app: App) -> dict[str, str]:
+        if app.manual:
+            return {"id": app.id, "name": app.name, "file": app.file}
+        return (
+            {"repo": app.repo, "name": app.name}
+            | ({} if app.id == default_id(app) else {"id": app.id})
+            | (
+                {}
+                if app.description == default_description(app.repo)
+                else {"description": app.description}
+            )
         )
 
     def _entries(self) -> dict[str, object]:
@@ -748,12 +765,17 @@ class Library(ShortcutsMixin):
                 previous, managed = item.get("previous"), item.get("managed")
                 prerelease = item.get("prerelease", False)
                 previous_prerelease = item.get("previous_prerelease", False)
+                previous_version = item.get("previous_version")
                 if (
                     not isinstance(location, str)
                     or not Path(location).is_absolute()
                     or type(managed) is not bool
                     or type(prerelease) is not bool
                     or type(previous_prerelease) is not bool
+                    or not (
+                        previous_version is None
+                        or (isinstance(previous_version, str) and len(previous_version) <= 128)
+                    )
                     or (
                         version is not None
                         and (
@@ -775,6 +797,7 @@ class Library(ShortcutsMixin):
                     Path(previous) if previous is not None else None,
                     prerelease,
                     previous_prerelease,
+                    previous_version,
                 )
             return result
         except (OSError, ValueError) as error:
@@ -798,7 +821,9 @@ class Library(ShortcutsMixin):
                 "previous": str(item.previous) if item.previous else None,
                 "prerelease": item.prerelease,
                 "previous_prerelease": item.previous_prerelease,
-            }
+            } | (
+                {} if item.previous_version is None else {"previous_version": item.previous_version}
+            )
         atomic_json(self.data_dir / "library.json", saved)
 
     @contextlib.contextmanager
@@ -990,7 +1015,7 @@ class Library(ShortcutsMixin):
     ) -> tuple[dict[str, Installed], Installed | None]:
         # Settings may change during a download, so use the catalog's current preferences.
         current = next((a for a in self.apps if a.id == app.id and a.repo == app.repo), None)
-        if current is None:
+        if current is None or current.manual:
             raise ValueError("Add this repository to the catalog before installing its app.")
         if release.prerelease and not current.include_prereleases:
             raise ValueError("Enable prereleases for this application before installing a preview.")
@@ -1177,13 +1202,17 @@ class Library(ShortcutsMixin):
             self._owned(app, old.path)
             self._owned(app, old.previous)
             check_appimage(old.previous)
+            restored = old.previous.parent.name
+            if old.previous_version is not None:
+                restored = old.previous_version
             records[app.id] = Installed(
                 old.previous,
-                old.previous.parent.name,
+                restored or None,
                 True,
                 old.path,
                 old.previous_prerelease,
                 old.prerelease,
+                (old.version or "") if app.manual else None,
             )
             moved = self._carry_portable(app, old.path, old.previous, "the restored version")
             try:
@@ -1269,3 +1298,200 @@ class Library(ShortcutsMixin):
                 raise OSError(
                     f"{app.name} was uninstalled, but cleanup failed: " + "; ".join(errors)
                 )
+
+    # Apps added from a file on this computer (no repository)
+
+    @staticmethod
+    def _source_digest(source: Path) -> str:
+        if source.is_symlink() or not source.is_file():
+            raise ValueError(f"{source.name} is not a plain file.")
+        with source.open("rb") as handle:
+            return hashlib.file_digest(handle, "sha256").hexdigest()
+
+    @staticmethod
+    def _manual_version(version: str) -> str:
+        if version and not re.fullmatch(VERSION, version):
+            raise ValueError("The version is not one AppGlider can read.")
+        return version
+
+    def _same_file(self, digest: str, size: int) -> tuple[str, Path] | None:
+        """The app whose installed file has these exact contents, if any."""
+        names = {app.id: app.name for app in self.apps}
+        for app_id, record in self.records().items():
+            try:
+                if not record.managed or record.path.stat().st_size != size:
+                    continue
+                with record.path.open("rb") as handle:
+                    found = hashlib.file_digest(handle, "sha256").hexdigest()
+            except OSError:
+                continue
+            if found == digest:
+                return names.get(app_id, app_id), record.path
+        return None
+
+    @staticmethod
+    def _manual_folder(root: Path, version: str, digest: str) -> Path:
+        """Where a file of this version goes under the app's folder; never an existing one."""
+        name = version or "0.0"
+        if not version or os.path.lexists(root / name):
+            name = f"{name}+{digest[:8]}"
+        folder = root / name
+        if os.path.lexists(folder):
+            raise ValueError("A copy of this file is already kept for this app.")
+        return folder
+
+    def add_file(self, app: App, source: Path, version: str, icon: bytes | None) -> str:
+        """Copy an AppImage from this computer into the library as a new app.
+
+        The copy is made in `<apps>/<id>/<version>/` under AppGlider's marker, so it is owned
+        like any install; the original is never changed. Returns a warning to show, or "".
+        """
+        if app != manual_app(app.name, app.file, app_id=app.id) or source.name != app.file:
+            raise ValueError("Invalid file details.")
+        version = self._manual_version(version)
+        png = normalise_icon(icon) if icon is not None else None
+        digest = self._source_digest(source)
+        with self._lock():
+            if len(self.apps) >= MAX_APPS:
+                raise ValueError(f"The library supports up to {MAX_APPS} apps.")
+            if any(known.id == app.id for known in self.apps):
+                raise ValueError("This app is already in the library.")
+            same = self._same_file(digest, source.stat().st_size)
+            if same is not None:
+                raise ValueError(f"{source.name} is already in the library as {same[0]}.")
+            root = self.apps_dir.resolve() / app.id
+            if os.path.lexists(root):
+                raise ValueError("The installation folder already exists.")
+            root.mkdir(parents=True)
+            (root / ".appglider").write_text(self._marker(app))
+        folder = root
+        try:
+            folder = self._manual_folder(root, version, digest)
+            placed = place_appimage(source, folder)
+            metadata = self.read_desktop_metadata(app, placed, placed)
+            warning = ""
+            with self._lock():
+                apps = self.apps
+                if any(known.id == app.id for known in apps):
+                    raise ValueError("This app is already in the library.")
+                records = self.records()
+                self._save_repositories((*apps, app))
+                records[app.id] = Installed(placed, version or None, True)
+                try:
+                    self._save(records)
+                except BaseException:
+                    self._save_repositories(apps)
+                    raise
+                if png is not None:
+                    try:
+                        self._write_icon(app, png)
+                    except (OSError, ValueError) as error:
+                        warning = f" Icon could not be saved: {error}"
+                self.save_desktop_metadata(app, metadata)
+                try:
+                    self._shortcut(app, placed)
+                except OSError as error:
+                    warning += f" Its menu shortcut could not be saved: {error}"
+            self.update_desktop_database()
+        except BaseException:
+            if folder != root:
+                with contextlib.suppress(OSError):
+                    (folder / source.name).unlink(missing_ok=True)
+                    folder.rmdir()
+            self._remove_empty_root(root)
+            raise
+        return warning
+
+    def _write_icon(self, app: App, png: bytes) -> None:
+        directory = self.data_dir / "icons"
+        if directory.is_symlink():
+            raise ValueError("The icon folder is a symbolic link; it was left untouched.")
+        atomic_bytes(directory / f"{app.id}.png", png)
+
+    def replace_file(self, app: App, source: Path, version: str) -> None:
+        """Make a newer AppImage from this computer the active file, keeping the old one.
+
+        The old file becomes the roll-back copy (the one before it is removed), exactly as
+        after an update, and portable-mode folders follow the active file.
+        """
+        version = self._manual_version(version)
+        if not valid_file_name(source.name):
+            raise ValueError("Choose a file whose name ends in .AppImage.")
+        digest = self._source_digest(source)
+        with self._lock():
+            current = next((known for known in self.apps if known.id == app.id), None)
+            if current is None or not current.manual:
+                raise ValueError("Only an app added from a file can be replaced by a file.")
+            old = self.records().get(app.id)
+            if old is None or not old.managed:
+                raise ValueError(f"{current.name} is not installed.")
+            root = self._owned(current, old.path)
+            if old.path.is_file() and old.path.stat().st_size == source.stat().st_size:
+                with old.path.open("rb") as handle:
+                    if hashlib.file_digest(handle, "sha256").hexdigest() == digest:
+                        raise ValueError("This is the file already in use.")
+            folder = self._manual_folder(root, version, digest)
+        self._require_closed(current, old.path, folder / source.name, "the new file")
+        activated = False
+        try:
+            placed = place_appimage(source, folder)
+            metadata = self.read_desktop_metadata(current, placed, placed)
+            with self._lock():
+                records = self.records()
+                if records.get(app.id) != old:
+                    raise ValueError(
+                        f"The library changed while {current.name} was copied. Try again."
+                    )
+                kept = old.path.is_file()
+                moved = self._carry_portable(current, old.path, placed, "the new file")
+                records[app.id] = Installed(
+                    placed,
+                    version or None,
+                    True,
+                    old.path if kept else None,
+                    False,
+                    old.prerelease,
+                    (old.version or "") if kept else None,
+                )
+                apps = self.apps
+                try:
+                    if source.name != current.file:  # the header names the file in use
+                        self._save_repositories(
+                            tuple(
+                                replace(known, file=source.name) if known.id == app.id else known
+                                for known in apps
+                            )
+                        )
+                    self._save(records)
+                except BaseException:
+                    self._undo_moves(moved)
+                    self._save_repositories(apps)
+                    raise
+                activated = True
+                self.save_desktop_metadata(current, metadata)
+                if old.previous and old.previous != placed:
+                    with contextlib.suppress(OSError, ValueError):
+                        self._remove_file(current, old.previous)
+                try:
+                    self._shortcut(current, placed)
+                except OSError as error:
+                    raise ValueError(
+                        f"{current.name} was replaced, but its shortcut could not be saved: {error}"
+                    ) from error
+            self.update_desktop_database()
+        except BaseException:
+            if not activated:
+                with contextlib.suppress(OSError):
+                    (folder / source.name).unlink(missing_ok=True)
+                    folder.rmdir()
+            raise
+
+    def remove_file_app(self, app: App) -> None:
+        """Uninstall an app added from a file and drop it: with no repository, nothing is left."""
+        try:
+            self.remove(app)
+        except OSError:
+            with contextlib.suppress(ValueError):
+                self.remove_repository(app.id)
+            raise
+        self.remove_repository(app.id)

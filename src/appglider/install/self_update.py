@@ -18,14 +18,14 @@ from threading import Event
 from PySide6.QtCore import QSettings
 
 from appglider import APP_VERSION
-from appglider.core.catalog import custom_app
+from appglider.core.catalog import OWN_REPO, custom_app
 from appglider.github.assets import Release
 from appglider.github.download import Progress, download, latest_release
 from appglider.github.http import latest_tag
 from appglider.github.versions import check_cancel, release_version, version_key
 from appglider.install import appimage, library
 
-REPO = "Vyrnexis/AppGlider"
+REPO = OWN_REPO
 # Key in the announced-versions record; app ids never contain a colon, so it cannot clash.
 NOTIFY_KEY = "AppGlider:self"
 NO_IMAGE_HINT = "update it the way you installed it"
@@ -34,6 +34,8 @@ NO_IMAGE_HINT = "update it the way you installed it"
 READY_KEY = "selfupdate/ready"
 REPLACED_KEY = "selfupdate/replaced"
 VERSION_KEY = "selfupdate/version"
+# Set when the replaced file is in another folder because AppGlider was moved, not updated.
+MOVED_KEY = "selfupdate/moved"
 AFTER_UPDATE_FLAG = "--after-update"
 
 
@@ -156,15 +158,29 @@ def record(settings: QSettings, done: Downloaded) -> None:
     settings.sync()
 
 
+def record_move(settings: QSettings, old: Path, new: Path) -> None:
+    """Remember a move to another folder, so the next start removes the file left behind."""
+    settings.setValue(REPLACED_KEY, str(old))
+    settings.setValue(READY_KEY, str(new))
+    settings.setValue(MOVED_KEY, True)
+    settings.remove(VERSION_KEY)
+    settings.sync()
+
+
 def forget(settings: QSettings, *keys: str) -> None:
-    for key in keys or (READY_KEY, REPLACED_KEY, VERSION_KEY):
+    for key in keys or (READY_KEY, REPLACED_KEY, VERSION_KEY, MOVED_KEY):
         settings.remove(key)
     settings.sync()
 
 
-def eligible(old: Path, image: Path) -> bool:
-    """Whether a replaced file is one an update may delete, apart from whether it still runs."""
-    if old.absolute() == image.absolute() or old.parent.absolute() != image.parent.absolute():
+def eligible(old: Path, image: Path, moved: bool = False) -> bool:
+    """Whether a replaced file is one an update may delete, apart from whether it still runs.
+
+    An update replaces a file beside the new one; only a move leaves it in another folder.
+    """
+    if old.absolute() == image.absolute():
+        return False
+    if not moved and old.parent.absolute() != image.parent.absolute():
         return False
     if old.is_symlink() or not old.is_file() or not is_image_name(old.name):
         return False
@@ -190,7 +206,8 @@ def cleanup(settings: QSettings) -> None:
         forget(settings)  # the new file vanished, so the old one must not be removed for it
         return
     waiting = False
-    if old and eligible(Path(old), image):
+    moved = bool(settings.value(MOVED_KEY, False, type=bool))
+    if old and eligible(Path(old), image, moved):
         # Only a file that is still running is tried again at the next start.
         waiting = library.running(Path(old))
         if not waiting:
@@ -199,7 +216,7 @@ def cleanup(settings: QSettings) -> None:
     if ready and same_file(Path(ready), image):
         forget(settings, READY_KEY, VERSION_KEY)
     if old and not waiting:
-        forget(settings, REPLACED_KEY)
+        forget(settings, REPLACED_KEY, MOVED_KEY)
 
 
 @dataclass(frozen=True)

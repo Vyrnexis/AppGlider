@@ -21,6 +21,7 @@ who want to know exactly what AppGlider does with their system, and for contribu
 - [Tray and single instance](#tray-and-single-instance)
 - [Names and identifiers](#names-and-identifiers)
 - [Renamed and moved repositories](#renamed-and-moved-repositories)
+- [Apps added from a file](#apps-added-from-a-file)
 - [Library recovery](#library-recovery)
 
 ## How release checks work
@@ -445,6 +446,39 @@ menu entry and release caches stay attached. The operation runs again with the n
 old address: GitHub keeps redirecting only until someone takes the old name, and that someone
 could publish anything there. Add app with an old address adds the new one. The old name is
 still offered as a file-name stem, since moved projects often keep their file names.
+
+## Apps added from a file
+
+**Add app → Choose AppImage…** adds an AppImage from this computer that has no GitHub
+repository. AppGlider never checks such an app for updates: it is skipped by release checks,
+**Update all**, the update counts and GitHub's allowance accounting, and has no release channel,
+hold, build, What's new or Versions.
+
+- **Copy.** `place_appimage` (`install/place.py`) copies the file into
+  `<apps>/<id>/<version>/<file>.AppImage` under the usual `.appglider` marker, so Uninstall,
+  Force close, launch options, icon, menu shortcut, pin and ordering work as for any install.
+  The original is not changed. A file whose bytes (SHA-256) equal an installed file is refused.
+- **Name, version, icon** come from inside the AppImage (`read_identity` in
+  `install/desktopentry.py`, using the same `--appimage-extract` as menu details): the
+  `.desktop` file's `Name` and `X-AppImage-Version`, and its icon. The version falls back to the
+  file name (`release_version`), then to unknown (shown as `?`; the folder is
+  `0.0+<8 hex digits of the SHA-256>`). A file that is not executable is first copied to a
+  temporary executable file for this reading. The name can be edited before adding.
+- **Replace with a newer file…** (App page, Preferences) copies another file in, keeps the old
+  one as the roll-back copy exactly as an update does (the copy before that is removed) and
+  moves portable-mode folders with it. The repository entry's `file` follows the new name.
+  A version folder that already exists gets `+<8 hex digits>` appended.
+- **Uninstall** (and **Forget missing copy**) removes the app from the library too, since
+  there is nothing to install again. The original file is never touched.
+- **Id and storage.** The id is `file-` and 12 random hex digits. Repository ids are bundled
+  names or begin with `github-`, so they cannot collide. `repositories.json` gets entries
+  `{"id": "file-…", "name": "…", "file": "Name.AppImage"}` with no `repo`; entries with `repo`
+  are read and written exactly as before, so existing data loads unchanged. (An older AppGlider
+  refuses a file containing such an entry and preserves it.) `library.json` records may carry
+  an optional `previous_version` (a string, `""` for unknown) giving the version of the kept
+  copy when its folder name cannot, which only manual apps use.
+- **Catalogs.** Export skips these apps (the file is not portable and a catalog has no field
+  for it); import is unaffected.
 
 ## Library recovery
 

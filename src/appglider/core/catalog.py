@@ -2,6 +2,7 @@
 
 import json
 import re
+import secrets
 from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -10,6 +11,10 @@ from appglider import APP_ICON
 
 ASSETS = Path(__file__).parent.parent / "assets"
 MAX_DESCRIPTION = 200
+OWN_REPO = "Vyrnexis/AppGlider"
+OWN_REPO_NOTE = (
+    "AppGlider updates itself and keeps its own menu entry, so it is not added to the library."
+)
 
 
 @dataclass(frozen=True)
@@ -22,6 +27,13 @@ class App:
     include_prereleases: bool = False
     build_variant: str = ""
     hold_updates: bool = False
+    # The name of the AppImage a manual app was added from; empty for a repository app.
+    file: str = ""
+
+    @property
+    def manual(self) -> bool:
+        """Added from a file on this computer: no repository, so it is never checked."""
+        return bool(self.file)
 
     @property
     def icon(self) -> Path:
@@ -30,6 +42,8 @@ class App:
 
     @property
     def source_url(self) -> str:
+        if self.manual:
+            return ""
         return f"https://github.com/{self.repo}"
 
 
@@ -51,6 +65,15 @@ KNOWN_IDS = {
     "storytold/gridcraft": "gridcraft",
     "tangency-labs/solidcraft": "solidcraft",
 }
+
+
+MANUAL_ID = re.compile(r"file-[0-9a-f]{12}")
+MANUAL_DESCRIPTION = "Added from a file"
+
+
+def is_own_repo(repo: str) -> bool:
+    """Whether a repository address is AppGlider's own, ignoring case."""
+    return repo.casefold() == OWN_REPO.casefold()
 
 
 def default_description(repo: str) -> str:
@@ -118,6 +141,32 @@ def custom_app(
     )
 
 
+def valid_file_name(value: object) -> bool:
+    """A plain AppImage file name: no folders, no control characters."""
+    return (
+        isinstance(value, str)
+        and 9 < len(value) <= 255
+        and value.casefold().endswith(".appimage")
+        and not value.startswith(".")
+        and not any(ord(c) < 32 or ord(c) == 127 or c in "/\\" for c in value)
+    )
+
+
+def manual_app(name: str, file: str, *, app_id: str | None = None) -> App:
+    """An app added from a file. Its id is `file-` and 12 random hex digits.
+
+    Repository ids are bundled names or start with `github-`, so the two can never meet.
+    """
+    title = name.strip()
+    if not title or len(title) > 128 or any(ord(c) < 32 or ord(c) == 127 for c in title):
+        raise ValueError("Use an application name of 1–128 characters, without control characters.")
+    if not valid_file_name(file):
+        raise ValueError("Choose a file whose name ends in .AppImage.")
+    if app_id is not None and not MANUAL_ID.fullmatch(app_id):
+        raise ValueError("Invalid application id.")
+    return App(app_id or f"file-{secrets.token_hex(6)}", title, "", "", file=file)
+
+
 def valid_app_id(value: object) -> bool:
     """An id AppGlider could have given an app: a bundled one or github-owner__name."""
     if not isinstance(value, str):
@@ -130,6 +179,8 @@ def valid_app_id(value: object) -> bool:
 
 def default_id(app: App) -> str:
     """The id the app's current repository would get, which differs once it has moved."""
+    if app.manual:
+        return app.id
     return custom_app(app.repo).id
 
 
@@ -218,6 +269,12 @@ def _load_apps(path: Path) -> tuple[App, ...]:
             raise ValueError("Expected a list of up to 100 repositories.")
         apps: list[App] = []
         for item in data:
+            if isinstance(item, dict) and "file" in item:
+                app = _load_manual(item)
+                if any(known.id == app.id for known in apps):
+                    raise ValueError(f"Duplicate file entry: {app.file}.")
+                apps.append(app)
+                continue
             if (
                 not isinstance(item, dict)
                 or not isinstance(item.get("repo"), str)
@@ -230,10 +287,23 @@ def _load_apps(path: Path) -> tuple[App, ...]:
                 raise ValueError("Invalid repository entry.")
             app = custom_app(item["repo"], item["name"], description=description, app_id=app_id)
             if any(
-                known.repo.casefold() == app.repo.casefold() or known.id == app.id for known in apps
+                (not known.manual and known.repo.casefold() == app.repo.casefold())
+                or known.id == app.id
+                for known in apps
             ):
                 raise ValueError(f"Duplicate repository: {app.repo}.")
             apps.append(app)
         return tuple(apps)
     except (OSError, ValueError) as error:
         raise ValueError(f"Cannot read {path}. The file was preserved: {error}") from error
+
+
+def _load_manual(item: dict[str, object]) -> App:
+    """An entry written for an app added from a file: `id`, `name` and `file`."""
+    name, file, app_id = item.get("name"), item.get("file"), item.get("id")
+    if not isinstance(name, str) or not isinstance(file, str) or not isinstance(app_id, str):
+        raise ValueError("Invalid file entry.")
+    app = manual_app(name, file, app_id=app_id)
+    if app_id != app.id:
+        raise ValueError("Invalid file entry.")
+    return app

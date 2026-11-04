@@ -1,5 +1,6 @@
 """The Add app page: inspect a public GitHub repository, then add it to the library."""
 
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING
@@ -22,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from appglider import APP_ICON
-from appglider.core.catalog import App, custom_app
+from appglider.core.catalog import OWN_REPO_NOTE, App, custom_app, is_own_repo, manual_app
 from appglider.github.assets import Release, variant_label
 from appglider.github.download import Progress, latest_release
 from appglider.github.http import RepositoryMoved
@@ -34,15 +35,31 @@ from appglider.github.icons import (
 )
 from appglider.github.release_info import remember_release
 from appglider.github.versions import architecture
+from appglider.install.place import FileDetails, describe_appimage
 from appglider.ui.controls import Segmented
 from appglider.ui.jobs import Task, TaskResult
-from appglider.ui.pages.app_page import SettingRow, VersionValue, add_setting_rows, panel
+from appglider.ui.pages.app_page import (
+    SettingRow,
+    VersionValue,
+    add_setting_rows,
+    format_size,
+    panel,
+)
 
 if TYPE_CHECKING:
     from appglider.ui.window import LauncherWindow
 
 PROMPT = "Inspect this repository before adding it."
 MAX_WIDTH = 720
+FILE_NOTE = "AppGlider cannot check apps added from a file for updates."
+
+
+@dataclass(frozen=True)
+class ChosenFile:
+    """An AppImage picked on this computer, with what was read from inside it."""
+
+    source: Path
+    details: FileDetails
 
 
 class AddPage(QScrollArea):
@@ -64,6 +81,7 @@ class AddPage(QScrollArea):
         self.adding = False
         self.build_override: str | None = None
         self.inspection_app: App | None = None
+        self.manual: ChosenFile | None = None
         self.setObjectName("addPage")
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -97,7 +115,7 @@ class AddPage(QScrollArea):
         self.name.setAccessibleName("Application name")
         self.name.setMinimumWidth(300)
         self.url.textChanged.connect(lambda _: self.invalidate_preview())
-        self.name.textChanged.connect(lambda _: self.invalidate_preview())
+        self.name.textChanged.connect(lambda _: self.name_edited())
         self.url.returnPressed.connect(self.inspect_repository)
         self.release_channel = Segmented(("Stable", "Preview"))
         self.release_channel.setAccessibleName("Release preference")
@@ -141,6 +159,18 @@ class AddPage(QScrollArea):
         layout.addWidget(self.busy_bar)
         column.addWidget(frame)
 
+        frame, layout, _ = panel("Add a file from this computer")
+        self.file_frame = frame
+        file_note = QLabel(FILE_NOTE)
+        file_note.setObjectName("muted")
+        file_note.setWordWrap(True)
+        layout.addWidget(file_note)
+        self.file_button = QPushButton("Choose AppImage…")
+        self.file_button.setAutoDefault(False)
+        self.file_button.clicked.connect(self.choose_file)
+        layout.addWidget(self.file_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        column.addWidget(frame)
+
         self.build_group, layout, _ = panel("Build")
         self.build_combo = QComboBox()
         self.build_combo.setAccessibleName("AppImage build variant")
@@ -160,7 +190,7 @@ class AddPage(QScrollArea):
         column.addWidget(self.build_group)
         self.build_group.hide()
 
-        self.release_preview, layout, _ = panel("Available release")
+        self.release_preview, layout, self.release_heading = panel("Available release")
         self.version_label = VersionValue()
         self.version = self.version_label.text
         self.filename = QLabel("—")
@@ -170,6 +200,7 @@ class AddPage(QScrollArea):
         self.checksum = QLabel("Not checked")
         self.checksum.setWordWrap(True)
         self.checksum.setObjectName("muted")
+        self.captions: dict[str, QLabel] = {}
         for caption, value in (
             ("Version", self.version_label),
             ("Download", self.filename),
@@ -178,6 +209,7 @@ class AddPage(QScrollArea):
             line = QHBoxLayout()
             line.setSpacing(10)
             label = QLabel(caption)
+            self.captions[caption] = label
             label.setObjectName("captionLabel")
             label.setFixedWidth(84)
             line.addWidget(label, alignment=Qt.AlignmentFlag.AlignTop)
@@ -261,9 +293,28 @@ class AddPage(QScrollArea):
         if self.task is None and self.adding:
             self.invalidate_preview(clear_icons=False)
 
+    @property
+    def ready(self) -> bool:
+        """Whether there is something to add: an inspected release or a chosen file."""
+        return self.release is not None or self.manual is not None
+
+    def name_edited(self) -> None:
+        if self.manual is None:
+            self.invalidate_preview()
+        elif self.task is None:
+            self.set_busy(False)  # a file needs a name before it can be added
+
+    def show_captions(self, release_heading: str, download: str, verification: str) -> None:
+        self.release_heading.setText(release_heading.upper())
+        self.release_heading.setAccessibleName(release_heading)
+        self.captions["Download"].setText(download)
+        self.captions["Verification"].setText(verification)
+
     def invalidate_preview(self, *, clear_build: bool = True, clear_icons: bool = True) -> None:
         self.candidate = None
         self.release = None
+        self.manual = None
+        self.show_captions("Available release", "Download", "Verification")
         self.icon_target = None
         if clear_icons:
             self.set_icon_options(())
@@ -314,6 +365,8 @@ class AddPage(QScrollArea):
                 self.release_channel.currentIndex() == 1,
                 self.build_override or "",
             )
+            if is_own_repo(app.repo):
+                raise ValueError(OWN_REPO_NOTE)
             if any(known.repo.casefold() == app.repo.casefold() for known in self.library.apps):
                 raise ValueError("This repository is already in the catalog.")
         except (OSError, ValueError) as error:
@@ -336,6 +389,8 @@ class AddPage(QScrollArea):
             except RepositoryMoved as moved:
                 # Add it under its new address, so the old name is never used again.
                 target = custom_app(moved.new, app.name, app.include_prereleases, app.build_variant)
+                if is_own_repo(target.repo):
+                    raise ValueError(f"{moved} {OWN_REPO_NOTE}") from moved
                 if target.repo.casefold() in known:
                     raise ValueError(
                         f"{moved} It is already in your library under its new address."
@@ -370,9 +425,12 @@ class AddPage(QScrollArea):
         self.name.setEnabled(not busy)
         self.inspect_button.setEnabled(not blocked)
         self.inspect_button.setText("Inspecting…" if busy else "Inspect repository")
-        self.add_button.setEnabled(not blocked and self.release is not None)
-        self.release_preview.setVisible(self.release is not None)
-        self.icon_group.setVisible(self.icon_target is not None and self.release is not None)
+        self.file_button.setEnabled(not blocked)
+        self.add_button.setEnabled(
+            not blocked and self.ready and (self.manual is None or bool(self.name.text().strip()))
+        )
+        self.release_preview.setVisible(self.ready)
+        self.icon_group.setVisible(self.icon_target is not None and self.ready)
         self.choose_icon_button.setEnabled(not blocked and self.icon_target is not None)
         self.icon_choices.setEnabled(not blocked and self.icon_target is not None)
 
@@ -439,7 +497,131 @@ class AddPage(QScrollArea):
         if self.task is not None and message and not self.closing:
             self.status.setText(message)
 
+    def choose_file(self) -> None:
+        if self.task is not None or not self.adding or self.launcher.task is not None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose an AppImage",
+            "",
+            "AppImage files (*.AppImage *.appimage);;All files (*)",
+        )
+        if path:
+            self.inspect_file(Path(path))
+
+    def inspect_file(self, source: Path) -> None:
+        """Read the name, version and icon from inside the file, off the Qt thread."""
+        self.invalidate_preview()
+
+        def operation(cancel: Event, progress: Progress) -> TaskResult:
+            progress(f"Reading {source.name}…", 0, 0)
+            return TaskResult("", chosen=ChosenFile(source, describe_appimage(source)))
+
+        self.task = Task(operation)
+        self.task.signals.progress.connect(self.task_progress)
+        self.task.signals.finished.connect(self.file_inspected)
+        self.task.signals.failed.connect(self.file_inspection_failed)
+        self.set_busy(True)
+        self.status.setText(f"Reading {source.name}…")
+        QThreadPool.globalInstance().start(self.task)
+
+    def file_inspected(self, result: TaskResult) -> None:
+        self.task = None
+        if self.closing:
+            self.closing = False
+            self.invalidate_preview()
+            self.set_busy(False)
+            return
+        chosen = result.chosen
+        if not isinstance(chosen, ChosenFile):
+            self.file_inspection_failed(result.message)
+            return
+        details = chosen.details
+        try:
+            target = manual_app(details.name, chosen.source.name)
+        except ValueError as error:
+            self.file_inspection_failed(str(error))
+            return
+        self.manual = chosen
+        self.release = self.candidate = None
+        self.url.blockSignals(True)
+        self.url.clear()
+        self.url.blockSignals(False)
+        self.name.blockSignals(True)
+        self.name.setText(details.name)
+        self.name.blockSignals(False)
+        self.icon_target = target
+        self.show_captions("Selected file", "File", "Check")
+        self.version_label.set_version(f"v{details.version}" if details.version else "Unknown")
+        self.filename.setText(f"{chosen.source.name} · {format_size(details.size)}")
+        self.checksum.setText("A type 2 AppImage for this computer. " + FILE_NOTE)
+        self.set_icon_options(
+            (IconCandidate("Icon from the AppImage", details.icon),) if details.icon else ()
+        )
+        self.status.setText(
+            "Ready to add. The file is copied; the original stays where it is."
+            + ("" if details.icon else " No icon was found in it, so the default icon is used.")
+        )
+        self.set_busy(False)
+        QTimer.singleShot(0, self, lambda: self.ensureWidgetVisible(self.add_button))
+
+    def file_inspection_failed(self, error: str) -> None:
+        self.task = None
+        if self.closing:
+            self.closing = False
+            self.invalidate_preview()
+        else:
+            self.invalidate_preview()
+            self.status.setText(error)
+        self.set_busy(False)
+
+    def add_file(self) -> None:
+        chosen = self.manual
+        if chosen is None or self.task is not None or self.launcher.task is not None:
+            return
+        try:
+            app = manual_app(self.name.text(), chosen.source.name)
+        except ValueError as error:
+            self.status.setText(str(error))
+            return
+        png, version = self.selected_icon, chosen.details.version
+
+        def operation(cancel: Event, progress: Progress) -> TaskResult:
+            progress(f"Copying {chosen.source.name}…", 0, 0)
+            warning = self.library.add_file(app, chosen.source, version, png)
+            return TaskResult(warning, added=app)
+
+        self.task = Task(operation)
+        self.task.signals.progress.connect(self.task_progress)
+        self.task.signals.finished.connect(self.file_added)
+        self.task.signals.failed.connect(self.file_add_failed)
+        self.set_busy(True)
+        self.status.setText(f"Copying {chosen.source.name}…")
+        QThreadPool.globalInstance().start(self.task)
+
+    def file_added(self, result: TaskResult) -> None:
+        self.task = None
+        if self.closing:
+            self.closing = False
+            self.invalidate_preview()
+            self.set_busy(False)
+            return
+        app = result.added
+        self.manual = None
+        self.set_busy(False)
+        if app is not None:
+            self.added.emit(app.id, result.message)
+
+    def file_add_failed(self, error: str) -> None:
+        self.task = None
+        self.closing = False
+        self.set_busy(False)
+        self.status.setText(error)
+
     def add_repository(self) -> None:
+        if self.manual is not None:
+            self.add_file()
+            return
         if (
             self.task is not None
             or self.candidate is None

@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -90,8 +91,14 @@ from appglider.github.release_info import (
 )
 from appglider.github.versions import Cancelled, check_cancel, version_key
 from appglider.install import self_update
-from appglider.install.appimage import check_appimage, clean_environment
+from appglider.install.appimage import (
+    check_appimage,
+    clean_environment,
+    fuse_explanation,
+    log_tail,
+)
 from appglider.install.library import Installed, Library, Orphan
+from appglider.install.place import describe_appimage, place_appimage
 from appglider.ui.app_status import WAITING
 from appglider.ui.controls import MessageBox
 from appglider.ui.jobs import Lookup, StepSignals, Task, TaskResult
@@ -694,6 +701,7 @@ class LauncherWindow(TrayMixin):
         card.force_close_requested.connect(self.force_close_app)
         card.running_check = self.app_running
         card.install_requested.connect(self.install_app)
+        card.replace_requested.connect(self.replace_file)
         card.shortcut_requested.connect(self.create_shortcut)
         card.rollback_requested.connect(self.rollback_app)
         card.remove_requested.connect(self.remove_app)
@@ -1111,7 +1119,8 @@ class LauncherWindow(TrayMixin):
         app = next((app for app in self.apps if app.id == app_id), None)
         self.open_app(app_id)
         if app is not None:
-            self.footer.setText(f"Added {app.name}. Install it from its page.{warning}")
+            tail = "" if app.manual else " Install it from its page."
+            self.footer.setText(f"Added {app.name}.{tail}{warning}")
 
     def choose_build(self, app_id: str) -> None:
         """Open the App page and ask which build of the app to use."""
@@ -1192,6 +1201,8 @@ class LauncherWindow(TrayMixin):
                 self.apps = apps
             cache_dir = self.library.data_dir / "release-cache"
             for app in apps:
+                if app.manual:
+                    continue  # no repository, so no release information
                 paths = (info_path(app, cache_dir), release_cache_path(app, cache_dir))
                 stamps = tuple(file_stamp(path) for path in paths)
                 fresh = self.cache_stamps.get(app.id) != (paths, stamps)
@@ -1232,10 +1243,15 @@ class LauncherWindow(TrayMixin):
             code = process.poll()
             if code is not None and code != 0:
                 self.footer.setText(f"{app.name} exited with code {code}. See {log}")
+                tail = log_tail(log)
+                parts = [fuse_explanation(tail), f"The application exited with code {code}."]
+                if tail:
+                    parts.append(f"The end of its diagnostic log:\n{tail}")
+                parts.append(f"The full log is:\n{log}")
                 MessageBox.warning(
                     self,
                     f"{app.name} could not start",
-                    f"The application exited with code {code}.\nIts diagnostic log is:\n{log}",
+                    "\n\n".join(part for part in parts if part),
                 )
 
         QTimer.singleShot(1800, self, check_startup)
@@ -1422,6 +1438,8 @@ class LauncherWindow(TrayMixin):
         self.footer.setText(self.with_move_notice(result.message))
         if result.downloaded is not None:
             self.self_update_downloaded(result.downloaded)
+        if result.placed is not None:
+            self.self_moved(result.placed)
         if result.build_choices and not self.close_after_task:
             self.choose_build(next(iter(result.build_choices)))
         if result.running and not self.close_after_task:
@@ -1672,39 +1690,72 @@ class LauncherWindow(TrayMixin):
         """Point the menu and login entries at the new file and offer the restart."""
         self_update.record(self.settings, done)
         self.self_ready = self_update.Ready(done.new, done.version)
+        self.footer.setText(" ".join([self.footer.text(), *self.point_entries_at(done.new)]))
+        self.refresh()
+        self.settings_page.update_self_update()
+
+    def point_entries_at(self, image: Path) -> list[str]:
+        """Repoint the menu and login entries; returns what could not be updated."""
         problems = []
         try:
-            self.library.create_launcher_shortcut([str(done.new)])
+            self.library.create_launcher_shortcut([str(image)])
         except (OSError, ValueError) as error:
             problems.append(f"The menu shortcut was not updated: {error}")
         try:
             if self.library.autostart_enabled():
-                self.library.enable_autostart([str(done.new)])
+                self.library.enable_autostart([str(image)])
         except (OSError, ValueError) as error:
             problems.append(f"The login entry was not updated: {error}")
+        return problems
+
+    def move_self(self, folder: Path) -> None:
+        """Copy the running AppImage into `folder`, then start the copy, which removes this one."""
+        image = self_update.running_image()
+        if image is None or self.task is not None or self.checks.busy:
+            return
+
+        def operation(cancel: Event, progress: Progress) -> TaskResult:
+            try:
+                placed = place_appimage(image, folder)
+            except (OSError, ValueError) as error:
+                return TaskResult(f"Couldn't move AppGlider: {error}")
+            return TaskResult(f"AppGlider is now in {folder}.", placed=placed)
+
+        self.start_task("Moving AppGlider…", operation)
+
+    def self_moved(self, placed: Path) -> None:
+        """Remember the old file for removal, repoint the entries and start the copy."""
+        image = self_update.running_image()
+        if image is None:
+            return
+        self_update.record_move(self.settings, image, placed)
+        problems = self.point_entries_at(placed)
         self.footer.setText(" ".join([self.footer.text(), *problems]))
-        self.refresh()
-        self.settings_page.update_self_update()
+        self.start_image(placed, "AppGlider in its new folder")
 
     def restart_self(self) -> None:
         """Start the downloaded AppGlider, which waits for this one to quit, then quit."""
         ready = self.self_ready
         if ready is None or self.task is not None or self.checks.busy:
             return
+        self.start_image(ready.path, f"AppGlider {ready.version}")
+
+    def start_image(self, path: Path, name: str) -> None:
+        """Start another AppGlider file, which waits for this one to quit, then quit."""
         try:
-            check_appimage(ready.path)
-            if not os.access(ready.path, os.X_OK):
+            check_appimage(path)
+            if not os.access(path, os.X_OK):
                 raise ValueError("The new file is not executable.")
         except (OSError, ValueError) as error:
-            self.footer.setText(f"Couldn't start AppGlider {ready.version}: {error}")
+            self.footer.setText(f"Couldn't start {name}: {error}")
             return
         try:
             # Like app launches: a new session with no inherited descriptors. An inherited
             # handle on this image's mount would keep the old file busy, so it could not be
             # removed once the new version runs.
             subprocess.Popen(
-                [str(ready.path), self_update.AFTER_UPDATE_FLAG],
-                cwd=ready.path.parent,
+                [str(path), self_update.AFTER_UPDATE_FLAG],
+                cwd=path.parent,
                 env=clean_environment(),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -1712,7 +1763,7 @@ class LauncherWindow(TrayMixin):
                 start_new_session=True,
             )
         except OSError as error:
-            self.footer.setText(f"Couldn't start AppGlider {ready.version}: {error}")
+            self.footer.setText(f"Couldn't start {name}: {error}")
             return
         self.quit_launcher()
 
@@ -1742,7 +1793,9 @@ class LauncherWindow(TrayMixin):
     def checkable_app(self, app_id: str) -> App | None:
         if app_id not in self.installed:
             return None
-        return next((app for app in self.apps if app.id == app_id), None)
+        app = next((app for app in self.apps if app.id == app_id), None)
+        # An app added from a file has no repository: it is never checked.
+        return None if app is None or app.manual else app
 
     def release_check_started(self, app_id: str) -> None:
         if self.task is None:
@@ -1829,6 +1882,8 @@ class LauncherWindow(TrayMixin):
 
     def install_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
+        if app.manual:
+            return
         installed = self.installed.get(app_id)
 
         def install(app: App, cancel: Event, progress: Progress) -> TaskResult:
@@ -1910,6 +1965,31 @@ class LauncherWindow(TrayMixin):
         working[apps[0].id] = "Updating"
         self.start_task("Updating installed apps…", operation, working=working)
 
+    def replace_file(self, app_id: str) -> None:
+        """Ask for a newer AppImage and make it the app's file; the old one stays for Roll back."""
+        app = next((app for app in self.apps if app.id == app_id), None)
+        if app is None or not app.manual or self.task is not None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Choose a newer file for {app.name}",
+            "",
+            "AppImage files (*.AppImage *.appimage);;All files (*)",
+        )
+        if not path:
+            return
+        source = Path(path)
+
+        def operation(cancel: Event, progress: Progress) -> TaskResult:
+            progress(f"Reading {source.name}…", 0, 0)
+            details = describe_appimage(source)
+            check_cancel(cancel)
+            progress(f"Copying {source.name}…", 0, 0)
+            self.library.replace_file(app, source, details.version)
+            return TaskResult(f"Replaced {app.name} with {source.name}. The old file is kept.")
+
+        self.start_task(f"Replacing {app.name}…", operation, working={app_id: "Replacing"})
+
     def rollback_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
 
@@ -1922,18 +2002,27 @@ class LauncherWindow(TrayMixin):
 
     def remove_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
-        answer = MessageBox.question(
-            self,
-            f"Remove {app.name}?",
-            "Remove this app and its previous version from AppGlider?\n"
-            "Your documents and application settings will be kept.",
-        )
+        if app.manual:
+            question = (
+                f"Remove {app.name} and its previous file from AppGlider?\n"
+                "The original file you added is not touched. "
+                "Your documents and application settings will be kept."
+            )
+        else:
+            question = (
+                "Remove this app and its previous version from AppGlider?\n"
+                "Your documents and application settings will be kept."
+            )
+        answer = MessageBox.question(self, f"Remove {app.name}?", question)
         if answer != QMessageBox.StandardButton.Yes:
             return
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             check_cancel(cancel)
-            self.library.remove(app)
+            if app.manual:
+                self.library.remove_file_app(app)  # nothing is left to install, so it goes too
+            else:
+                self.library.remove(app)
             return TaskResult(f"Removed the managed {app.name} installation.")
 
         self.start_task(f"Removing {app.name}…", operation)
@@ -1947,12 +2036,19 @@ class LauncherWindow(TrayMixin):
             self,
             f"Forget the missing {app.name} copy?",
             f"AppGlider will stop tracking the AppImage it installed at\n{missing.path}\n"
-            "No files are deleted. You can install the app again afterwards.",
+            "No files are deleted. "
+            + (
+                f"{app.name} is removed from the library."
+                if app.manual
+                else "You can install the app again afterwards."
+            ),
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
             self.library.forget_missing(app_id)
+            if app.manual:
+                self.library.remove_repository(app_id)
         except (OSError, ValueError) as error:
             MessageBox.warning(self, "Cannot forget the copy", str(error))
             return

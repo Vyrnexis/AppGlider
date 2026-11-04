@@ -25,6 +25,24 @@ class AppStatus:
     build_required: bool
 
 
+MANUAL_TEXT = "◇ Manual"
+
+
+def manual_status(
+    installed: Installed | None, working: str, missing: Installed | None
+) -> AppStatus:
+    """An app added from a file has no releases: it is launched, replaced or removed."""
+    if working:
+        return AppStatus("cancel", "busy", f"{working}…", "", False)
+    if installed:
+        tooltip = "Added from a file\nAppGlider cannot check it for updates"
+        return AppStatus("launch", "none", MANUAL_TEXT, tooltip, False)
+    if missing:
+        tooltip = f"The AppImage is no longer at {missing.path}\nChoose a file to replace it"
+        return AppStatus("replace", "missing", "⚠ File missing", tooltip, False)
+    return AppStatus("replace", "none", "Not installed", "", False)
+
+
 def app_status(
     app: App,
     installed: Installed | None,
@@ -37,6 +55,8 @@ def app_status(
     missing: Installed | None = None,
 ) -> AppStatus:
     """`missing` is AppGlider's record of an installation whose file has since gone."""
+    if app.manual:
+        return manual_status(installed, working, missing)
     held = bool(installed and app.hold_updates)
     newer_release = bool(installed and release and release.newer_than(installed.version))
     newer = newer_release and not held

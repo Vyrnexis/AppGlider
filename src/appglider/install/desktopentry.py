@@ -260,3 +260,80 @@ def extract_desktop_groups(path: Path, app: App, environment: Mapping[str, str])
             return keep_known(parse_groups(text)) if text is not None else None
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
+
+
+MAX_ICON_FILE = 2 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class AppImageIdentity:
+    """What an AppImage says about itself: its name, version and icon (raw PNG or SVG)."""
+
+    name: str = ""
+    version: str = ""
+    icon: bytes | None = None
+
+
+def _extract_file(
+    path: Path, root: Path, directory: Path, environment: Mapping[str, str], relative: Path
+) -> Path | None:
+    """Extract one named file, and the target of a link to it that stays inside the tree."""
+    _extract(path, relative.as_posix(), directory, environment)
+    for _ in range(2):
+        found = root / relative
+        if not found.is_symlink():
+            return relative if found.is_file() else None
+        link = os.readlink(found)
+        target = Path(os.path.normpath(relative.parent / link))
+        if os.path.isabs(link) or target.parts[:1] in ((), ("..",), (".",)):
+            return None
+        _extract(path, target.as_posix(), directory, environment)
+        relative = target
+    return None
+
+
+def read_identity(path: Path, environment: Mapping[str, str]) -> AppImageIdentity:
+    """Read the name, `X-AppImage-Version` and icon from the AppImage's own files.
+
+    Runs the file's type 2 runtime as `--appimage-extract <name>` for one file at a time in a
+    temporary directory, like `extract_desktop_groups`. Call it only on a file that passed
+    `check_appimage` and is executable. Whatever cannot be read is left empty.
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="appglider-identity-") as temporary:
+            directory = Path(temporary)
+            _extract(path, "*.desktop", directory, environment)
+            root = directory / "squashfs-root"
+            names = sorted(entry.name for entry in root.glob("*.desktop"))
+            found = (
+                _extract_file(path, root, directory, environment, Path(names[0])) if names else None
+            )
+            text = _read_regular(root, found) if found is not None else None
+            entry = parse_groups(text).get("Desktop Entry", {}) if text else {}
+            name = _text(entry.get("Name", ""), 128)
+            version = _text(entry.get("X-AppImage-Version", ""), 128)
+            icon_name = entry.get("Icon", "").strip()
+            candidates = [f"{icon_name}.png", f"{icon_name}.svg"] if _icon_name(icon_name) else []
+            for relative in (*candidates, ".DirIcon"):
+                found = _extract_file(path, root, directory, environment, Path(relative))
+                if found is None:
+                    continue
+                try:
+                    with (root / found).open("rb") as source:
+                        data = source.read(MAX_ICON_FILE + 1)
+                except OSError:
+                    continue
+                if 0 < len(data) <= MAX_ICON_FILE:
+                    return AppImageIdentity(name, version, data)
+            return AppImageIdentity(name, version)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return AppImageIdentity()
+
+
+def _icon_name(value: str) -> bool:
+    """A bare icon name; a path or an odd name is not looked up."""
+    return (
+        bool(value)
+        and value not in (".", "..")
+        and re.fullmatch(r"[A-Za-z0-9._+\-]{1,100}", value) is not None
+    )
