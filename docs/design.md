@@ -63,8 +63,22 @@ confirmations, file pickers and choices that block an action (such as choosing a
   Uninstall while the app is installed or Remove from library once it is not, never both,
   and Forget missing copy when the installed file has gone. A row that does not apply is
   hidden, not disabled; a running task disables what is shown (except Force close). Hold and Menu shortcut show once the app is installed.
+- **Manual app** (added from a file, no repository): the header names the file it came from
+  instead of a repository link and has no update action. There is no What's new or Versions
+  column. Preferences hide release channel, hold and build, and add **Replace with a newer
+  file…**, which keeps the old file as the roll-back copy; with those two columns gone,
+  Preferences take the full width. In Manage, Uninstall (and Forget missing copy) also
+  remove a manual app from the library, since it could not be installed again.
+- **Add app page**: the repository form (address, optional name, Inspect repository), then
+  an **Add a file from this computer** section with a one-line note that AppGlider cannot
+  check such apps for updates and a **Choose AppImage…** button. A chosen file fills the
+  same details (name, version, file and size, icon) from the AppImage itself, and **Add to
+  library** copies it into the install folder; the original is left where it was.
 - **Settings page**: a secondary list (General, Updates, Catalogs, Storage, About)
   and panels of setting rows. Changes apply immediately; there is no Save or Cancel.
+  Storage has a **Move AppGlider here** row under the install folder, shown only when the
+  AppImage of AppGlider runs from another folder; it copies AppGlider there, restarts from
+  the copy and removes the old file.
   Storage also has a read-only Space used panel: the total, one bar split into the versions
   in use and the copies kept for roll back, and every installed app largest first with its
   own bar. It has no actions.
@@ -91,7 +105,7 @@ Minimum window size 860 × 560. Nothing may require horizontal scrolling at that
 A row is 60 px tall: a drag handle (six dots in `faint`, `muted` on hover, open-hand
 cursor, "Drag to reorder" tooltip; hidden but still taking its space whenever reordering is
 off, and the only place a drag starts), icon (40 px, 9 px radius), name in semibold with a gold ★ when pinned
-and a one-line muted subtitle (the description, else `owner/repo`), installed version in
+and a one-line muted subtitle (the description, else `owner/repo`, or "Added from a file" for a manual app), installed version in
 tabular figures, one status chip, one primary button (84 px wide) and a ⋯ menu.
 
 Status chips, one per row, in priority order:
@@ -109,6 +123,8 @@ Status chips, one per row, in priority order:
 | Release check failed | Check failed | danger | Launch |
 | File missing | ⚠ File missing | danger | Reinstall |
 | Not installed | Not installed | neutral | Install |
+| Added from a file | ◇ Manual | neutral | Launch |
+| Manual app, file missing | ⚠ File missing | danger | Replace… |
 
 When GitHub cannot be reached at all, rows keep their last known chip (Check failed is for
 real failures) and the sidebar GitHub status reads **GitHub: offline** instead.
