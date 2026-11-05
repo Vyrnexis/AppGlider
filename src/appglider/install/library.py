@@ -42,15 +42,18 @@ from appglider.github.assets import Release
 from appglider.github.download import Progress, download
 from appglider.github.http import RepositoryMoved, file_stamp
 from appglider.github.icons import MAX_ICON_BYTES, normalise_icon
-from appglider.github.versions import VERSION, check_cancel, version_key
+from appglider.github.versions import VERSION, check_cancel, release_version, version_key
 from appglider.install.appimage import FREE_SPACE_MARGIN as FREE_SPACE_MARGIN  # re-exported
 from appglider.install.appimage import check_appimage, clean_environment
+from appglider.install.desktopentry import read_identity
 from appglider.install.launch_options import LaunchOptions, load_launch_options, options_json
-from appglider.install.place import place_appimage
+from appglider.install.place import name_from_file, place_appimage
 from appglider.install.shortcuts import DEFAULT_DATA_DIRS, ShortcutsMixin
 
 MAX_LOG_BYTES = 5 * 1024 * 1024
 STALE_STAGE_SECONDS = 24 * 60 * 60
+# Version folders made by an old bug carry two "+" signs; they are still owned, never created.
+LEGACY_FOLDER = r"[0-9]+(?:\.[0-9]+){1,3}(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+){2}"
 LOCK_WAIT_SECONDS = 3.0
 MAX_APPS = 100
 # How long a force-closed app may take to close by itself before it is killed.
@@ -634,7 +637,28 @@ class Library(ShortcutsMixin):
             records = self.records()
             if app_id not in self.missing(records):
                 raise ValueError("Only an installation whose file is missing can be forgotten.")
+            stale = records[app_id]
             self._forget(app_id, records)
+            app = next((known for known in self.apps if known.id == app_id), None)
+            if app is not None and app.manual:
+                self._discard_manual_files(app, stale)
+
+    def _discard_manual_files(self, app: App, stale: Installed) -> None:
+        """Remove what is left of an app added from a file, once nothing points at it.
+
+        Such an app has no repository to install it again from, so its roll-back copy and
+        folder would otherwise stay on disk unreachable. Only paths AppGlider owns go.
+        """
+        for path in dict.fromkeys(p for p in (stale.path, stale.previous) if p is not None):
+            try:
+                root = self._owned(app, path)
+            except ValueError:
+                continue
+            with contextlib.suppress(OSError, ValueError):
+                self._remove_file(app, path)
+            with contextlib.suppress(OSError):
+                path.parent.rmdir()
+            self._remove_empty_root(root)
 
     def _forget(self, app_id: str, records: dict[str, Installed]) -> None:
         # Called with the lock held. Only the record and AppGlider's own files about it go.
@@ -933,7 +957,10 @@ class Library(ShortcutsMixin):
             or root.is_symlink()
             or path.parent.is_symlink()
             or path.is_symlink()
-            or not re.fullmatch(VERSION, path.parent.name)
+            or not (
+                re.fullmatch(VERSION, path.parent.name)
+                or re.fullmatch(LEGACY_FOLDER, path.parent.name)
+            )
             or path.suffix.lower() != ".appimage"
             or not self._has_marker(root, app)
         ):
@@ -1215,10 +1242,20 @@ class Library(ShortcutsMixin):
                 (old.version or "") if app.manual else None,
             )
             moved = self._carry_portable(app, old.path, old.previous, "the restored version")
+            apps = self.apps
             try:
+                if app.manual and old.previous.name != app.file:
+                    # The header names the file in use, so it follows the restored one.
+                    self._save_repositories(
+                        tuple(
+                            replace(known, file=old.previous.name) if known.id == app.id else known
+                            for known in apps
+                        )
+                    )
                 self._save(records)
             except BaseException:
                 self._undo_moves(moved)
+                self._save_repositories(apps)
                 raise
             self.save_desktop_metadata(app, metadata)
             self._shortcut(app, old.previous)
@@ -1334,17 +1371,28 @@ class Library(ShortcutsMixin):
         """Where a file of this version goes under the app's folder; never an existing one."""
         name = version or "0.0"
         if not version or os.path.lexists(root / name):
-            name = f"{name}+{digest[:8]}"
+            # A version allows only one "+"; after it the digest follows a dot.
+            name = f"{name}{'.' if '+' in name else '+'}{digest[:8]}"
         folder = root / name
         if os.path.lexists(folder):
             raise ValueError("A copy of this file is already kept for this app.")
         return folder
 
-    def add_file(self, app: App, source: Path, version: str, icon: bytes | None) -> str:
+    def add_file(
+        self,
+        app: App,
+        source: Path,
+        version: str,
+        icon: bytes | None,
+        cancel: Event | None = None,
+        identify: bool = False,
+    ) -> str:
         """Copy an AppImage from this computer into the library as a new app.
 
         The copy is made in `<apps>/<id>/<version>/` under AppGlider's marker, so it is owned
         like any install; the original is never changed. Returns a warning to show, or "".
+        With `identify`, the name (when it is still the one from the file name), version and
+        icon are read from the placed copy, which runs its runtime. `cancel` stops the copy.
         """
         if app != manual_app(app.name, app.file, app_id=app.id) or source.name != app.file:
             raise ValueError("Invalid file details.")
@@ -1365,9 +1413,12 @@ class Library(ShortcutsMixin):
             root.mkdir(parents=True)
             (root / ".appglider").write_text(self._marker(app))
         folder = root
+        committed = False
         try:
             folder = self._manual_folder(root, version, digest)
-            placed = place_appimage(source, folder)
+            placed = place_appimage(source, folder, cancel)
+            if identify:
+                app, version, png = self._identified(app, source, placed, version, png, cancel)
             metadata = self.read_desktop_metadata(app, placed, placed)
             warning = ""
             with self._lock():
@@ -1382,18 +1433,25 @@ class Library(ShortcutsMixin):
                 except BaseException:
                     self._save_repositories(apps)
                     raise
+                committed = True  # from here the app is in the library; nothing is undone
                 if png is not None:
                     try:
                         self._write_icon(app, png)
                     except (OSError, ValueError) as error:
                         warning = f" Icon could not be saved: {error}"
-                self.save_desktop_metadata(app, metadata)
+                try:
+                    self.save_desktop_metadata(app, metadata)
+                except (OSError, ValueError) as error:
+                    warning += f" Its menu details could not be saved: {error}"
                 try:
                     self._shortcut(app, placed)
-                except OSError as error:
+                except (OSError, ValueError) as error:
                     warning += f" Its menu shortcut could not be saved: {error}"
-            self.update_desktop_database()
+            with contextlib.suppress(OSError, subprocess.SubprocessError):
+                self.update_desktop_database()
         except BaseException:
+            if committed:
+                raise
             if folder != root:
                 with contextlib.suppress(OSError):
                     (folder / source.name).unlink(missing_ok=True)
@@ -1402,17 +1460,49 @@ class Library(ShortcutsMixin):
             raise
         return warning
 
+    def _identified(
+        self,
+        app: App,
+        source: Path,
+        placed: Path,
+        version: str,
+        png: bytes | None,
+        cancel: Event | None,
+    ) -> tuple[App, str, bytes | None]:
+        """Name, version and icon read from the placed copy; what it lacks stays as given."""
+        identity = read_identity(placed, clean_environment())
+        if cancel is not None:
+            check_cancel(cancel)
+        if identity.name and app.name == name_from_file(source.name):
+            with contextlib.suppress(ValueError):
+                app = manual_app(identity.name, app.file, app_id=app.id)
+        found = release_version(identity.version)
+        if found and re.fullmatch(VERSION, found):
+            version = found
+        if png is None and identity.icon:
+            with contextlib.suppress(ValueError):
+                png = normalise_icon(identity.icon)
+        return app, version, png
+
     def _write_icon(self, app: App, png: bytes) -> None:
         directory = self.data_dir / "icons"
         if directory.is_symlink():
             raise ValueError("The icon folder is a symbolic link; it was left untouched.")
         atomic_bytes(directory / f"{app.id}.png", png)
 
-    def replace_file(self, app: App, source: Path, version: str) -> None:
+    def replace_file(
+        self,
+        app: App,
+        source: Path,
+        version: str,
+        cancel: Event | None = None,
+        identify: bool = False,
+    ) -> None:
         """Make a newer AppImage from this computer the active file, keeping the old one.
 
         The old file becomes the roll-back copy (the one before it is removed), exactly as
-        after an update, and portable-mode folders follow the active file.
+        after an update, and portable-mode folders follow the active file. With `identify`, the
+        version is read from the placed copy (which runs its runtime); `cancel` stops the copy.
         """
         version = self._manual_version(version)
         if not valid_file_name(source.name):
@@ -1434,7 +1524,9 @@ class Library(ShortcutsMixin):
         self._require_closed(current, old.path, folder / source.name, "the new file")
         activated = False
         try:
-            placed = place_appimage(source, folder)
+            placed = place_appimage(source, folder, cancel)
+            if identify:
+                version = self._identified(current, source, placed, version, None, cancel)[1]
             metadata = self.read_desktop_metadata(current, placed, placed)
             with self._lock():
                 records = self.records()

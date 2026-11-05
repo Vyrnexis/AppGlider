@@ -74,6 +74,8 @@ confirmations, file pickers and choices that block an action (such as choosing a
   check such apps for updates and a **Choose AppImage…** button. A chosen file fills the
   same details (name, version, file and size, icon) from the AppImage itself, and **Add to
   library** copies it into the install folder; the original is left where it was.
+  When the details could not be read without running the file, a muted note under Verification
+  says they come from the file name and are read once the file is added.
 - **Settings page**: a secondary list (General, Updates, Catalogs, Storage, About)
   and panels of setting rows. Changes apply immediately; there is no Save or Cancel.
   Storage has a **Move AppGlider here** row under the install folder, shown only when the

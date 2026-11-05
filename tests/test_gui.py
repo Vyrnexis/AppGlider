@@ -10,7 +10,7 @@ from contextlib import ExitStack
 from dataclasses import asdict, replace
 from pathlib import Path
 from threading import Event
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -68,6 +68,7 @@ from appglider.core.storage import atomic_json
 from appglider.github import http
 from appglider.github import status as github_status
 from appglider.github.assets import Release
+from appglider.github.http import RateLimited
 from appglider.github.release_info import ReleaseInfo, ReleaseOption, info_path
 from appglider.install.library import Installed, Library, previous_copy
 from appglider.ui.controls import SpaceBar
@@ -1453,7 +1454,7 @@ class LibraryTests(unittest.TestCase):
         ):
             process = launch.return_value
             process.poll.return_value = 1
-            window.library.processes[APP.id] = process
+            launch.side_effect = lambda *args: window.library.processes.update({APP.id: process})
             try:
                 window.launch_app(APP.id)
             finally:
@@ -2049,7 +2050,12 @@ class LibraryTests(unittest.TestCase):
                 self.assertEqual(card.action_button.text(), "Launch")
                 self.assertTrue(self.window.installed[APP.id].managed)
             self.assertTrue(card.rollback_action.isEnabled())
-            card.rollback_requested.emit(APP.id)
+            with patch(
+                "appglider.ui.window.MessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ) as ask:
+                card.rollback_requested.emit(APP.id)
+            self.assertEqual(ask.call_args.args[1], f"Roll back {APP.name}?")
             self.wait_for_task()
             self.assertEqual(self.window.installed[APP.id].version, "1.0.0")
             self.assertEqual(card.action_button.text(), "Update")
@@ -2066,7 +2072,7 @@ class LibraryTests(unittest.TestCase):
         newer_payload = appimage_bytes(b"1.1.0")
         newer = release_for("1.1.0", newer_payload)
         with patch("appglider.ui.window.MessageBox.warning") as warning:
-            for latest, expected, version in ((first, "Updated 0 apps.", "1.0.0"),):
+            for latest, expected, version in ((first, "No apps were updated.", "1.0.0"),):
                 self.window.releases[APP.id] = newer
                 self.window.refresh()
                 with patch("appglider.ui.window.latest_release", return_value=latest):
@@ -2082,10 +2088,126 @@ class LibraryTests(unittest.TestCase):
             ):
                 self.window.update_all()
                 self.wait_for_task()
-            self.assertEqual(self.window.footer.text(), "Updated 1 apps.")
+            self.assertEqual(self.window.footer.text(), "Updated 1 app.")
             self.assertEqual(self.window.installed[APP.id].version, "1.1.0")
             self.assertTrue(card.rollback_action.isEnabled())
             warning.assert_not_called()
+
+    def outdated_pair(self) -> tuple[App, App, bytes]:
+        window = self.window
+        first, second = APPS[0], APPS[1]
+        old, new = appimage_bytes(b"1.0.0"), appimage_bytes(b"1.1.0")
+        for app in (first, second):
+            name = f"{app.id}-1.0.0.AppImage"
+            current = replace(
+                release_for("1.0.0", old),
+                name=name,
+                url=f"https://github.com/{app.repo}/releases/download/v1.0.0/{name}",
+            )
+            with patch("appglider.github.http.request", return_value=io.BytesIO(old)):
+                window.library.install(app, current, Event(), lambda *a: None)
+            name = f"{app.id}-1.1.0.AppImage"
+            window.releases[app.id] = replace(
+                release_for("1.1.0", new),
+                name=name,
+                url=f"https://github.com/{app.repo}/releases/download/v1.1.0/{name}",
+            )
+        window.scan_installed()
+        return first, second, new
+
+    def test_update_all_stops_once_on_a_rate_limit(self) -> None:
+        window = self.window
+        first, second, new = self.outdated_pair()
+        calls: list[str] = []
+
+        def latest(app: App, cancel: Event, cache: Path) -> Release:
+            calls.append(app.id)
+            if app.id == second.id:
+                raise RateLimited("api.github.com", time.time() + 61)
+            return window.releases[app.id]
+
+        with (
+            patch("appglider.ui.window.latest_release", side_effect=latest),
+            patch("appglider.github.http.request", side_effect=lambda *a, **k: io.BytesIO(new)),
+            patch("appglider.ui.window.MessageBox.warning") as warning,
+        ):
+            window.update_all()
+            self.wait_for_task()
+        self.assertEqual(calls, [first.id, second.id])
+        warning.assert_not_called()
+        text = window.footer.text()
+        self.assertEqual(text.count("request limit"), 1)
+        self.assertIn("about 2 minutes", text)
+        self.assertIn("Updated 1 app.", text)
+
+    def test_update_all_names_a_failed_app_and_goes_on_with_the_rest(self) -> None:
+        window = self.window
+        first, second, new = self.outdated_pair()
+
+        def latest(app: App, cancel: Event, cache: Path) -> Release:
+            if app.id == first.id:
+                raise RuntimeError("unexpected reply")
+            return window.releases[app.id]
+
+        with (
+            patch("appglider.ui.window.latest_release", side_effect=latest),
+            patch("appglider.github.http.request", side_effect=lambda *a, **k: io.BytesIO(new)),
+            patch("appglider.ui.window.MessageBox.warning") as warning,
+        ):
+            window.update_all()
+            self.wait_for_task()
+        self.assertEqual(window.installed[second.id].version, "1.1.0")
+        self.assertEqual(window.installed[first.id].version, "1.0.0")
+        self.assertEqual(window.footer.text(), "Updated 1 app. 1 could not be updated.")
+        title, text = warning.call_args.args[1:3]
+        self.assertEqual(title, "Couldn't update all apps")
+        self.assertEqual(text, f"{first.name}: unexpected reply")
+
+    def test_a_second_launch_while_running_says_so_in_the_footer(self) -> None:
+        window = self.window
+        window.installed[APP.id] = Installed(Path(self.temp.name) / "app.AppImage", "1.0.0", True)
+        running = Mock()
+        running.poll.return_value = None
+        window.library.processes[APP.id] = running
+        with (
+            patch.object(window.library, "launch") as launch,
+            patch("appglider.ui.window.MessageBox.warning") as warning,
+        ):
+            window.launch_app(APP.id)
+        launch.assert_not_called()
+        warning.assert_not_called()
+        self.assertEqual(window.footer.text(), f"{APP.name} is already running.")
+
+    def test_a_late_start_failure_goes_to_the_footer_after_leaving_the_page(self) -> None:
+        window = self.window
+        window.installed[APP.id] = Installed(Path(self.temp.name) / "app.AppImage", "1.0.0", True)
+        single_shot = QTimer.singleShot
+        process = Mock()
+        process.poll.return_value = 3
+        for leave in (False, True):
+            window.library.processes.clear()
+            window.show_page(window.pages.widget(0))
+            with (
+                patch.object(
+                    window.library,
+                    "launch",
+                    side_effect=lambda *a: (
+                        window.library.processes.update({APP.id: process}) or Path("/tmp/log")
+                    ),
+                ),
+                patch(
+                    "appglider.ui.window.QTimer.singleShot",
+                    side_effect=lambda delay, *args: single_shot(0, *args),
+                ),
+                patch("appglider.ui.window.MessageBox.warning") as warning,
+            ):
+                window.launch_app(APP.id)
+                if leave:
+                    window.show_page(window.settings_page)
+                self.qt.processEvents()
+                QTest.qWait(20)
+            self.assertEqual(warning.call_count, 0 if leave else 1)
+            self.assertIn("exited with code 3", window.footer.text())
 
     def test_update_all_shows_each_app_as_it_finishes(self) -> None:
         window = self.window

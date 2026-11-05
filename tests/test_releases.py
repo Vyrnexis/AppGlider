@@ -121,7 +121,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(http.request("https://api.github.com/").url, "ok")
             self.assertEqual(sleep.call_count, 2)
             opener.return_value.open.side_effect = [unavailable] * 3
-            with self.assertRaisesRegex(ValueError, "temporarily unavailable.*503"):
+            with self.assertRaisesRegex(ValueError, "problem on its side.*503"):
                 http.request("https://api.github.com/")
             opener.return_value.open.side_effect = URLError(OSError("Name or service not known"))
             opener.return_value.open.reset_mock()
@@ -352,7 +352,7 @@ class ReleaseTests(unittest.TestCase):
             patch.object(pages, "page_release") as fallback,
         ):
             opener.return_value.open.side_effect = error
-            with self.assertRaisesRegex(ValueError, "denied access"):
+            with self.assertRaisesRegex(ValueError, "refused this request"):
                 download.latest_release(APP, Event(), self.cache)
             fallback.assert_not_called()
         self.assertEqual(http._RETRY_AFTER, {})

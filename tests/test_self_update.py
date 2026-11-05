@@ -1072,8 +1072,10 @@ class WindowTests(unittest.TestCase):
         with (
             patch("appglider.install.self_update.latest_release", return_value=release) as latest,
             patch("appglider.github.http.request", return_value=io.BytesIO(data)),
+            patch("appglider.ui.window.MessageBox.warning") as warning,
         ):
             self.latest = latest
+            self.warning = warning
             self.window.self_update_button.click()
             self.finish_task()
 
@@ -1176,6 +1178,7 @@ class WindowTests(unittest.TestCase):
                 self.update(case)
                 self.assert_still_offered()
                 self.assertIn("Couldn't update AppGlider", self.window.footer.text())
+                self.assertEqual(self.warning.call_args.args[1], "Couldn't update AppGlider")
                 self.assertEqual(self.latest.call_count, 1)
 
     def test_a_cancelled_update_leaves_nothing_and_can_be_tried_again(self) -> None:
@@ -1317,10 +1320,14 @@ class WindowTests(unittest.TestCase):
                 side_effect=PermissionError("Permission denied"),
             ),
             patch.object(window, "quit_launcher") as quit_launcher,
+            patch("appglider.ui.window.MessageBox.warning") as warning,
         ):
             window.self_update_button.click()
         quit_launcher.assert_not_called()
         self.assertEqual(window.footer.text(), "Couldn't start AppGlider 0.9.1: Permission denied")
+        self.assertEqual(
+            warning.call_args.args[1:], ("Couldn't start AppGlider 0.9.1", "Permission denied")
+        )
         self.assertEqual(window.self_update_button.text(), "Restart now")
 
     def test_restart_now_refuses_a_file_that_is_gone_or_not_an_appimage(self) -> None:
@@ -1331,10 +1338,12 @@ class WindowTests(unittest.TestCase):
             with (
                 patch("appglider.ui.window.subprocess.Popen") as process,
                 patch.object(window, "quit_launcher") as quit_launcher,
+                patch("appglider.ui.window.MessageBox.warning") as warning,
             ):
                 window.restart_self()
             process.assert_not_called()
             quit_launcher.assert_not_called()
+            warning.assert_called_once()
             self.assertIn("Couldn't start AppGlider 0.9.1", window.footer.text())
 
     def test_restart_now_refuses_while_a_task_or_a_release_check_runs(self) -> None:

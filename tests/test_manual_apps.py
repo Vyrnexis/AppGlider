@@ -6,6 +6,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -14,10 +15,11 @@ from catalog_fixture import APPS, stock
 from gui_helpers import close_window
 from PySide6.QtCore import QSettings
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QBoxLayout, QMessageBox
 from test_library import appimage_bytes
 
 from appglider.core.catalog import load_apps, manual_app, valid_app_id
+from appglider.github.versions import Cancelled
 from appglider.install.desktopentry import read_identity
 from appglider.install.library import AppRunning, Library, previous_copy
 from appglider.install.place import FileDetails, name_from_file, version_from_name
@@ -288,6 +290,59 @@ class ManualGuiTests(Base):
         self.assertEqual((app.name, app.file), ("My Sketchpad", NAME))
         self.assertTrue(source.exists())
         self.assertEqual(self.window.footer.text(), "Added My Sketchpad.")
+
+    def test_adding_a_file_still_reports_when_the_page_was_left(self) -> None:
+        page, window = self.window.add_page, self.window
+        self.choose(self.source())
+        page.name.setText("My Sketchpad")
+        with patch.object(self.library, "add_file", wraps=self.library.add_file) as add:
+            page.add_button.click()
+            page.leave()  # the user goes elsewhere while the copy runs
+            window.show_page(window.settings_page)
+            self.wait(lambda: page.task is None)
+        add.assert_called_once()
+        self.assertEqual([app.name for app in self.library.apps][-1], "My Sketchpad")
+        self.assertIn(self.library.apps[-1].id, window.cards)
+        self.assertIs(window.pages.currentWidget(), window.settings_page)  # not pulled away
+        self.assertEqual(window.footer.text(), "Added My Sketchpad.")
+
+    def test_the_inspect_button_becomes_cancel_while_a_repository_is_checked(self) -> None:
+        page = self.window.add_page
+        self.window.open_add_app()
+        release = Event()
+        self.addCleanup(release.set)
+
+        def slow(app, cancel, cache):
+            cancel.wait(5)
+            raise Cancelled("stopped")
+
+        page.url.setText("https://github.com/someone/sketchpad")
+        with patch("appglider.ui.pages.add_page.latest_release", side_effect=slow):
+            page.inspect_button.click()
+            self.assertEqual(page.inspect_button.text(), "Cancel")
+            self.assertTrue(page.inspect_button.isEnabled())
+            page.inspect_button.click()
+            self.assertEqual(page.inspect_button.text(), "Cancelling…")
+            self.assertFalse(page.inspect_button.isEnabled())
+            self.wait(lambda: page.task is None)
+        self.assertEqual(page.inspect_button.text(), "Inspect repository")
+        self.assertTrue(page.inspect_button.isEnabled())
+        self.assertEqual(page.status.text(), "Inspection cancelled.")
+
+    def test_a_manual_app_page_keeps_one_column_stretch_in_either_direction(self) -> None:
+        page = self.window.app_page
+        columns = page.columns
+        for left_empty in (False, True):
+            for direction, wide in (
+                (QBoxLayout.Direction.LeftToRight, True),
+                (QBoxLayout.Direction.TopToBottom, False),
+            ):
+                with self.subTest(left_empty=left_empty, wide=wide):
+                    columns.setDirection(direction)
+                    page.left_empty = left_empty
+                    page.apply_column_stretch()
+                    self.assertEqual(columns.stretch(0), 13 if wide and not left_empty else 0)
+                    self.assertEqual(columns.stretch(1), 10 if wide else 0)
 
     def test_a_bad_or_duplicate_file_shows_a_plain_message(self) -> None:
         page = self.window.add_page

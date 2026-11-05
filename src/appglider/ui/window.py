@@ -77,6 +77,8 @@ from appglider.github.assets import BuildChoiceRequired, Release
 from appglider.github.download import Progress, cached_release, latest_release, release_cache_path
 from appglider.github.http import (
     UNREACHABLE,
+    RateLimited,
+    Unreachable,
     file_stamp,
     github_request_status,
     restore_rate_limits,
@@ -97,13 +99,14 @@ from appglider.install.appimage import (
     fuse_explanation,
     log_tail,
 )
-from appglider.install.library import Installed, Library, Orphan
+from appglider.install.library import AppRunning, Installed, Library, Orphan, previous_copy
 from appglider.install.place import describe_appimage, place_appimage
 from appglider.ui.app_status import WAITING
 from appglider.ui.controls import MessageBox
+from appglider.ui.errors import describe_error
 from appglider.ui.jobs import Lookup, StepSignals, Task, TaskResult
 from appglider.ui.pages.add_page import AddPage
-from appglider.ui.pages.app_page import AppPage, link_button
+from appglider.ui.pages.app_page import AppPage, link_button, version_text
 from appglider.ui.pages.settings_page import SettingsPage
 from appglider.ui.release_checks import ReleaseChecks
 from appglider.ui.rows import AppList, AppRow, DragHandle, StatusMessage
@@ -202,6 +205,19 @@ def banner_close(tooltip: str) -> QToolButton:
     return button
 
 
+def update_all_message(updated: int, failed: int, stopped: str = "") -> str:
+    """The footer line after Update all: what was updated, and why it stopped or failed."""
+    if updated:
+        text = f"Updated {updated} app{'' if updated == 1 else 's'}."
+    else:
+        text = "No apps were updated."
+    if failed:
+        text += f" {failed} could not be updated."
+    if stopped:
+        text = f"{stopped} {text}"
+    return text
+
+
 class LauncherWindow(TrayMixin):
     def __init__(self, settings: QSettings | None = None, library: Library | None = None) -> None:
         super().__init__()
@@ -243,6 +259,7 @@ class LauncherWindow(TrayMixin):
         self.close_after_release = False
         self.task: Task | None = None
         self.working: dict[str, str] = {}
+        self.failure = ""  # names the running task in the dialog that reports its failure
         self.close_after_task = False
         self.quitting = False
         self.self_state = self_update.SelfUpdate()
@@ -840,7 +857,7 @@ class LauncherWindow(TrayMixin):
         try:
             self.library.set_update_hold(app_id, held)
         except (OSError, ValueError) as error:
-            MessageBox.warning(self, "Cannot change update hold", str(error))
+            MessageBox.warning(self, "Cannot change update hold", describe_error(error))
             return
         self.scan_installed()
         self.footer.setText(
@@ -1117,7 +1134,8 @@ class LauncherWindow(TrayMixin):
     def app_added(self, app_id: str, warning: str) -> None:
         self.catalog_changed()
         app = next((app for app in self.apps if app.id == app_id), None)
-        self.open_app(app_id)
+        if self.pages.currentWidget() is self.add_page:
+            self.open_app(app_id)  # not when the user left the page while the file was copied
         if app is not None:
             tail = "" if app.manual else " Install it from its page."
             self.footer.setText(f"Added {app.name}.{tail}{warning}")
@@ -1135,7 +1153,7 @@ class LauncherWindow(TrayMixin):
             try:
                 self.library.discard_orphans(dialog.selected())
             except (OSError, ValueError) as error:
-                MessageBox.warning(self, "Cannot update the library", str(error))
+                MessageBox.warning(self, "Cannot update the library", describe_error(error))
             self.scan_installed()
         dialog.deleteLater()
 
@@ -1163,7 +1181,7 @@ class LauncherWindow(TrayMixin):
             orphans = self.library.orphans()
             self.library.reap_processes()
         except (OSError, ValueError) as error:
-            self.footer.setText(str(error))
+            self.footer.setText(describe_error(error))
         else:
             self.orphans = orphans
             self.orphans_button.setVisible(bool(orphans))
@@ -1231,18 +1249,25 @@ class LauncherWindow(TrayMixin):
         if installed is None:
             self.scan_installed()
             return
+        self.library.reap_processes()
+        if self.library.processes.get(app_id) is not None:
+            self.footer.setText(f"{app.name} is already running.")
+            return
         try:
             log = self.library.launch(app, installed)
         except (OSError, ValueError) as error:
-            MessageBox.warning(self, f"Cannot launch {app.name}", str(error))
+            MessageBox.warning(self, f"Cannot launch {app.name}", describe_error(error))
             return
         process = self.library.processes[app_id]
         self.footer.setText(f"Launched {app.name} · Log: {log}")
+        page, page_app = self.pages.currentWidget(), self.app_page.app_id
 
         def check_startup() -> None:
             code = process.poll()
             if code is not None and code != 0:
                 self.footer.setText(f"{app.name} exited with code {code}. See {log}")
+                if self.pages.currentWidget() is not page or self.app_page.app_id != page_app:
+                    return  # the user has moved on; the footer says it
                 tail = log_tail(log)
                 parts = [fuse_explanation(tail), f"The application exited with code {code}."]
                 if tail:
@@ -1263,9 +1288,11 @@ class LauncherWindow(TrayMixin):
         *,
         page: AppPage | None = None,
         working: dict[str, str] | None = None,
+        failure: str = "",
     ) -> None:
         if self.task is not None:
             return
+        self.failure = failure or f"Couldn't finish: {message.rstrip('…. ')}"
         self.working = working or {}
         self.task = Task(operation)
         self.task.signals.progress.connect(self.task_progress)
@@ -1299,7 +1326,12 @@ class LauncherWindow(TrayMixin):
             )
             return TaskResult("Release checked.", release_infos={app.id: info})
 
-        self.start_task(f"Checking releases for {app.name}…", operation, page=page)
+        self.start_task(
+            f"Checking releases for {app.name}…",
+            operation,
+            page=page,
+            failure=f"Couldn't check releases for {app.name}",
+        )
 
     def create_shortcut(self, app_id: str) -> None:
         """Write the menu entry off the Qt thread: it may start the app's runtime to read it."""
@@ -1445,8 +1477,11 @@ class LauncherWindow(TrayMixin):
         if result.running and not self.close_after_task:
             self.offer_force_close(result.running, result.message)
         if result.errors and not self.close_after_task:
-            errors = "\n\n".join(f"{key}: {value}" for key, value in result.errors.items())
-            MessageBox.warning(self, "Some operations could not finish", errors)
+            names = {app.id: app.name for app in self.apps}
+            errors = "\n\n".join(
+                f"{names.get(key, key)}: {value}" for key, value in result.errors.items()
+            )
+            MessageBox.warning(self, self.failure or "Some operations could not finish", errors)
         if self.close_after_task:
             self.close()
 
@@ -1482,11 +1517,13 @@ class LauncherWindow(TrayMixin):
     def task_failed(self, error: str) -> None:
         self.show_moves()
         self.reset_task()
-        self.footer.setText(self.with_move_notice(error))
+        self.footer.setText(
+            self.with_move_notice(f"{self.failure}: {error}" if self.failure else error)
+        )
         if self.close_after_task:
             self.close()
         else:
-            MessageBox.warning(self, "Operation could not finish", error)
+            MessageBox.warning(self, self.failure or "Operation could not finish", error)
 
     def cancel_task(self) -> None:
         if self.task is not None:
@@ -1676,15 +1713,12 @@ class LauncherWindow(TrayMixin):
         cache_dir = self.library.data_dir / "release-cache"
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
-            try:
-                done = self_update.download_update(image, tag, cache_dir, cancel, progress)
-            except Cancelled:
-                raise
-            except Exception as error:
-                return TaskResult(f"Couldn't update AppGlider: {error}")
+            done = self_update.download_update(image, tag, cache_dir, cancel, progress)
             return TaskResult(f"AppGlider {done.version} is ready.", downloaded=done)
 
-        self.start_task(f"Downloading AppGlider {version}…", operation)
+        self.start_task(
+            f"Downloading AppGlider {version}…", operation, failure="Couldn't update AppGlider"
+        )
 
     def self_update_downloaded(self, done: self_update.Downloaded) -> None:
         """Point the menu and login entries at the new file and offer the restart."""
@@ -1700,12 +1734,12 @@ class LauncherWindow(TrayMixin):
         try:
             self.library.create_launcher_shortcut([str(image)])
         except (OSError, ValueError) as error:
-            problems.append(f"The menu shortcut was not updated: {error}")
+            problems.append(f"The menu shortcut was not updated: {describe_error(error)}")
         try:
             if self.library.autostart_enabled():
                 self.library.enable_autostart([str(image)])
         except (OSError, ValueError) as error:
-            problems.append(f"The login entry was not updated: {error}")
+            problems.append(f"The login entry was not updated: {describe_error(error)}")
         return problems
 
     def move_self(self, folder: Path) -> None:
@@ -1715,13 +1749,10 @@ class LauncherWindow(TrayMixin):
             return
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
-            try:
-                placed = place_appimage(image, folder)
-            except (OSError, ValueError) as error:
-                return TaskResult(f"Couldn't move AppGlider: {error}")
+            placed = place_appimage(image, folder)
             return TaskResult(f"AppGlider is now in {folder}.", placed=placed)
 
-        self.start_task("Moving AppGlider…", operation)
+        self.start_task("Moving AppGlider…", operation, failure="Couldn't move AppGlider")
 
     def self_moved(self, placed: Path) -> None:
         """Remember the old file for removal, repoint the entries and start the copy."""
@@ -1747,7 +1778,7 @@ class LauncherWindow(TrayMixin):
             if not os.access(path, os.X_OK):
                 raise ValueError("The new file is not executable.")
         except (OSError, ValueError) as error:
-            self.footer.setText(f"Couldn't start {name}: {error}")
+            self.start_failed(name, error)
             return
         try:
             # Like app launches: a new session with no inherited descriptors. An inherited
@@ -1763,9 +1794,15 @@ class LauncherWindow(TrayMixin):
                 start_new_session=True,
             )
         except OSError as error:
-            self.footer.setText(f"Couldn't start {name}: {error}")
+            self.start_failed(name, error)
             return
         self.quit_launcher()
+
+    def start_failed(self, name: str, error: Exception) -> None:
+        """AppGlider's new file did not start: a dialog, since the user must act on it."""
+        text = describe_error(error)
+        self.footer.setText(f"Couldn't start {name}: {text}")
+        MessageBox.warning(self, f"Couldn't start {name}", text)
 
     def refresh_releases(self, *, force: bool = False) -> None:
         if self.checks.busy or self.close_after_release:
@@ -1908,6 +1945,7 @@ class LauncherWindow(TrayMixin):
             f"Preparing {app.name}…",
             operation,
             working={app_id: "Updating" if installed else "Installing"},
+            failure=f"Couldn't {'update' if installed else 'install'} {app.name}",
         )
 
     def update_all(self) -> None:
@@ -1938,8 +1976,9 @@ class LauncherWindow(TrayMixin):
             return release
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
-            result = TaskResult("Updates finished.")
+            result = TaskResult("")
             updated: list[str] = []
+            stopped = ""
             for app in apps:
                 check_cancel(cancel)
                 progress(f"Checking {app.name}…", 0, 0)
@@ -1951,19 +1990,31 @@ class LauncherWindow(TrayMixin):
                     part.releases[app.id] = release
                     if release.newer_than(versions[app.id]):
                         updated.append(app.id)
+                except (Cancelled, AppRunning):
+                    raise
                 except BuildChoiceRequired as error:
                     result.build_choices[app.id] = error
-                except (OSError, ValueError) as error:
-                    part.errors[app.id] = str(error)
+                except (RateLimited, Unreachable) as error:
+                    # The next apps would fail the same way: stop, and say so once.
+                    stopped = str(error)
+                    steps.emit(app.id, part)
+                    break
+                except Exception as error:
+                    part.errors[app.id] = describe_error(error)
                 result.releases.update(part.releases)
                 result.errors.update(part.errors)
                 steps.emit(app.id, part)
-            result.message = f"Updated {len(updated)} apps."
+            result.message = update_all_message(len(updated), len(result.errors), stopped)
             return result
 
         working = {app.id: WAITING for app in apps}
         working[apps[0].id] = "Updating"
-        self.start_task("Updating installed apps…", operation, working=working)
+        self.start_task(
+            "Updating installed apps…",
+            operation,
+            working=working,
+            failure="Couldn't update all apps",
+        )
 
     def replace_file(self, app_id: str) -> None:
         """Ask for a newer AppImage and make it the app's file; the old one stays for Roll back."""
@@ -1985,20 +2036,38 @@ class LauncherWindow(TrayMixin):
             details = describe_appimage(source)
             check_cancel(cancel)
             progress(f"Copying {source.name}…", 0, 0)
-            self.library.replace_file(app, source, details.version)
+            self.library.replace_file(
+                app, source, details.version, cancel, identify=bool(details.note)
+            )
             return TaskResult(f"Replaced {app.name} with {source.name}. The old file is kept.")
 
-        self.start_task(f"Replacing {app.name}…", operation, working={app_id: "Replacing"})
+        self.start_task(
+            f"Replacing {app.name}…",
+            operation,
+            working={app_id: "Replacing"},
+            failure=f"Couldn't replace {app.name}",
+        )
 
     def rollback_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
+        previous = previous_copy(self.installed.get(app_id))
+        answer = MessageBox.question(
+            self,
+            f"Roll back {app.name}?",
+            f"Go back to {version_text(previous.version) if previous else 'the previous version'}"
+            f" of {app.name}? The current version is kept, so you can switch back to it.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             check_cancel(cancel)
             self.library.rollback(app)
             return TaskResult(f"Restored the previous {app.name} version.")
 
-        self.start_task(f"Restoring {app.name}…", operation)
+        self.start_task(
+            f"Restoring {app.name}…", operation, failure=f"Couldn't roll back {app.name}"
+        )
 
     def remove_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
@@ -2023,9 +2092,9 @@ class LauncherWindow(TrayMixin):
                 self.library.remove_file_app(app)  # nothing is left to install, so it goes too
             else:
                 self.library.remove(app)
-            return TaskResult(f"Removed the managed {app.name} installation.")
+            return TaskResult(f"Removed {app.name}.")
 
-        self.start_task(f"Removing {app.name}…", operation)
+        self.start_task(f"Removing {app.name}…", operation, failure=f"Couldn't remove {app.name}")
 
     def forget_missing(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
@@ -2036,11 +2105,11 @@ class LauncherWindow(TrayMixin):
             self,
             f"Forget the missing {app.name} copy?",
             f"AppGlider will stop tracking the AppImage it installed at\n{missing.path}\n"
-            "No files are deleted. "
             + (
-                f"{app.name} is removed from the library."
+                f"{app.name} is removed from the library, and its kept previous file and "
+                "folder in AppGlider's apps folder are deleted."
                 if app.manual
-                else "You can install the app again afterwards."
+                else "No files are deleted. You can install the app again afterwards."
             ),
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -2053,7 +2122,11 @@ class LauncherWindow(TrayMixin):
             MessageBox.warning(self, "Cannot forget the copy", str(error))
             return
         self.scan_installed()
-        self.footer.setText(f"Forgot the missing {app.name} copy. No files were deleted.")
+        self.footer.setText(
+            f"Removed {app.name} from the library."
+            if app.manual
+            else f"Forgot the missing {app.name} copy. No files were deleted."
+        )
 
     def remove_from_library(self, app_id: str) -> None:
         """Remove a repository whose app is not installed, after a confirmation."""
@@ -2070,7 +2143,7 @@ class LauncherWindow(TrayMixin):
         try:
             self.library.remove_repository(app_id)
         except (OSError, ValueError) as error:
-            MessageBox.warning(self, "Cannot remove the app", str(error))
+            MessageBox.warning(self, "Cannot remove the app", describe_error(error))
             return
         self.catalog_changed()
         self.footer.setText(

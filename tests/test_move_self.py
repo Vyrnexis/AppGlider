@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from gui_helpers import close_window
 from PySide6.QtCore import QSettings
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from test_library import appimage_bytes
 
 from appglider.core.catalog import OWN_REPO, OWN_REPO_NOTE, custom_app
@@ -175,6 +175,28 @@ class MoveSelfTests(unittest.TestCase):
             self.page.apply_folder()
             self.assertFalse(self.page.move_row.isHidden())
 
+    def click_move(self, answer=QMessageBox.StandardButton.Yes):
+        with patch(
+            "appglider.ui.pages.settings_page.MessageBox.question", return_value=answer
+        ) as ask:
+            self.page.move_button.click()
+        return ask
+
+    def test_moving_asks_first_and_says_what_will_happen(self) -> None:
+        with (
+            patch("appglider.install.self_update.running_image", return_value=self.image),
+            patch.object(self.window, "move_self") as move,
+        ):
+            ask = self.click_move(QMessageBox.StandardButton.No)
+            move.assert_not_called()
+            title, text = ask.call_args.args[1:3]
+            self.assertEqual(title, "Move AppGlider here?")
+            self.assertIn("restarts", text)
+            self.assertIn(str(self.image), text)
+            self.assertIn("removed", text)
+            self.click_move()
+            move.assert_called_once()
+
     def test_moving_copies_records_and_starts_the_copy(self) -> None:
         started: list[tuple[Path, str]] = []
         with (
@@ -184,7 +206,7 @@ class MoveSelfTests(unittest.TestCase):
             ),
             patch.object(self.window, "point_entries_at", return_value=[]),
         ):
-            self.page.move_button.click()
+            self.click_move()
             deadline = time.monotonic() + 5
             while self.window.task is not None and time.monotonic() < deadline:
                 QTest.qWait(10)
@@ -199,12 +221,15 @@ class MoveSelfTests(unittest.TestCase):
         with (
             patch("appglider.install.self_update.running_image", return_value=self.image),
             patch.object(self.window, "start_image") as start,
+            patch("appglider.ui.window.MessageBox.warning") as warning,
         ):
-            self.page.move_button.click()
+            self.click_move()
             deadline = time.monotonic() + 5
             while self.window.task is not None and time.monotonic() < deadline:
                 QTest.qWait(10)
         start.assert_not_called()
+        self.assertEqual(warning.call_args.args[1], "Couldn't move AppGlider")
+        self.assertIn("already exists", warning.call_args.args[2])
         self.assertIn("Couldn't move AppGlider", self.window.footer.text())
         self.assertIn("already exists", self.window.footer.text())
         self.assertFalse(self.settings.contains(self_update.REPLACED_KEY))

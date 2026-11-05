@@ -37,6 +37,7 @@ from appglider.github.release_info import remember_release
 from appglider.github.versions import architecture
 from appglider.install.place import FileDetails, describe_appimage
 from appglider.ui.controls import Segmented
+from appglider.ui.errors import describe_error
 from appglider.ui.jobs import Task, TaskResult
 from appglider.ui.pages.app_page import (
     SettingRow,
@@ -78,6 +79,9 @@ class AddPage(QScrollArea):
         self.icon_options: tuple[IconCandidate, ...] = ()
         self.selected_icon: bytes | None = None
         self.closing = False
+        self.inspecting = False  # the running task is a repository inspection
+        self.cancelling = False  # the user pressed Cancel on it
+        self.copying = False  # a file is being copied into the library
         self.adding = False
         self.build_override: str | None = None
         self.inspection_app: App | None = None
@@ -138,7 +142,7 @@ class AddPage(QScrollArea):
         self.inspect_button = QPushButton("Inspect repository")
         self.inspect_button.setObjectName("primary")
         self.inspect_button.setAutoDefault(False)
-        self.inspect_button.clicked.connect(self.inspect_repository)
+        self.inspect_button.clicked.connect(self.inspect_or_cancel)
         layout.addWidget(self.inspect_button, alignment=Qt.AlignmentFlag.AlignLeft)
         self.status = QLabel(PROMPT)
         self.status.setTextFormat(Qt.TextFormat.PlainText)
@@ -279,7 +283,8 @@ class AddPage(QScrollArea):
         if self.task is None:
             return True
         self.closing = True
-        self.task.cancel.set()
+        if not self.copying:  # a copy in progress finishes; the app is then reported
+            self.task.cancel.set()
         self.status.setText("Stopping… one moment.")
         return False
 
@@ -354,6 +359,17 @@ class AddPage(QScrollArea):
         self.build_override = str(self.build_combo.currentData())
         self.inspect_repository()
 
+    def inspect_or_cancel(self) -> None:
+        """The button inspects, and while an inspection runs it cancels it."""
+        if self.task is not None and self.inspecting:
+            if not (self.cancelling or self.closing):
+                self.cancelling = True
+                self.task.cancel.set()
+                self.status.setText("Cancelling…")
+                self.set_busy(True)
+            return
+        self.inspect_repository()
+
     def inspect_repository(self) -> None:
         if self.task is not None or not self.adding or self.launcher.task is not None:
             return
@@ -370,7 +386,7 @@ class AddPage(QScrollArea):
             if any(known.repo.casefold() == app.repo.casefold() for known in self.library.apps):
                 raise ValueError("This repository is already in the catalog.")
         except (OSError, ValueError) as error:
-            self.status.setText(str(error))
+            self.status.setText(describe_error(error))
             return
         self.name.blockSignals(True)
         self.name.setText(app.name)
@@ -405,10 +421,12 @@ class AddPage(QScrollArea):
                 if lookup_icons:
                     result.icons = discover_icons(target, cancel, lambda text: progress(text, 0, 0))
             except (OSError, ValueError) as error:
-                result.errors[app.id] = f"Icon lookup unavailable: {error}"
+                result.errors[app.id] = f"Icon lookup unavailable: {describe_error(error)}"
             return result
 
         self.task = Task(operation)
+        self.inspecting = True
+        self.cancelling = False
         self.task.signals.progress.connect(self.task_progress)
         self.task.signals.finished.connect(self.inspection_finished)
         self.task.signals.failed.connect(self.inspection_failed)
@@ -423,8 +441,13 @@ class AddPage(QScrollArea):
         self.release_channel.setEnabled(not busy)
         self.url.setEnabled(not busy)
         self.name.setEnabled(not busy)
-        self.inspect_button.setEnabled(not blocked)
-        self.inspect_button.setText("Inspecting…" if busy else "Inspect repository")
+        if busy and self.inspecting:
+            stopping = self.cancelling or self.closing
+            self.inspect_button.setEnabled(not stopping)
+            self.inspect_button.setText("Cancelling…" if stopping else "Cancel")
+        else:
+            self.inspect_button.setEnabled(not blocked)
+            self.inspect_button.setText("Inspecting…" if busy else "Inspect repository")
         self.file_button.setEnabled(not blocked)
         self.add_button.setEnabled(
             not blocked and self.ready and (self.manual is None or bool(self.name.text().strip()))
@@ -436,10 +459,16 @@ class AddPage(QScrollArea):
 
     def inspection_finished(self, result: TaskResult) -> None:
         self.task = None
+        self.inspecting = False
+        cancelled, self.cancelling = self.cancelling, False
         if self.closing:
             self.closing = False
             self.invalidate_preview()
             self.set_busy(False)
+            return
+        if cancelled and not result.releases and not result.build_choices:
+            self.set_busy(False)
+            self.status.setText("Inspection cancelled.")
             return
         moved, old = result.moved, self.inspection_app.repo if self.inspection_app else ""
         if moved is not None:
@@ -554,7 +583,11 @@ class AddPage(QScrollArea):
         self.show_captions("Selected file", "File", "Check")
         self.version_label.set_version(f"v{details.version}" if details.version else "Unknown")
         self.filename.setText(f"{chosen.source.name} · {format_size(details.size)}")
-        self.checksum.setText("A type 2 AppImage for this computer. " + FILE_NOTE)
+        self.checksum.setText(
+            "A type 2 AppImage for this computer. "
+            + FILE_NOTE
+            + (f"\n{details.note}" if details.note else "")
+        )
         self.set_icon_options(
             (IconCandidate("Icon from the AppImage", details.icon),) if details.icon else ()
         )
@@ -588,9 +621,12 @@ class AddPage(QScrollArea):
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             progress(f"Copying {chosen.source.name}…", 0, 0)
-            warning = self.library.add_file(app, chosen.source, version, png)
+            warning = self.library.add_file(
+                app, chosen.source, version, png, cancel, identify=bool(chosen.details.note)
+            )
             return TaskResult(warning, added=app)
 
+        self.copying = True
         self.task = Task(operation)
         self.task.signals.progress.connect(self.task_progress)
         self.task.signals.finished.connect(self.file_added)
@@ -601,19 +637,26 @@ class AddPage(QScrollArea):
 
     def file_added(self, result: TaskResult) -> None:
         self.task = None
+        self.copying = False
+        app = result.added
         if self.closing:
+            # The page was left meanwhile, but the app is in the library: tell the window.
             self.closing = False
             self.invalidate_preview()
             self.set_busy(False)
+            if app is not None:
+                self.added.emit(app.id, result.message)
             return
-        app = result.added
-        self.manual = None
         self.set_busy(False)
-        if app is not None:
-            self.added.emit(app.id, result.message)
+        if app is None:  # cancelled: the file stays chosen
+            self.status.setText(result.message)
+            return
+        self.manual = None
+        self.added.emit(app.id, result.message)
 
     def file_add_failed(self, error: str) -> None:
         self.task = None
+        self.copying = False
         self.closing = False
         self.set_busy(False)
         self.status.setText(error)
@@ -637,9 +680,9 @@ class AddPage(QScrollArea):
                 try:
                     self.library.set_icon(app, png)
                 except (OSError, ValueError) as error:
-                    warning = f" Icon could not be saved: {error}"
+                    warning = f" Icon could not be saved: {describe_error(error)}"
         except (OSError, ValueError) as error:
-            self.status.setText(str(error))
+            self.status.setText(describe_error(error))
             return
         self.add_button.setEnabled(False)
         self.release = None
@@ -699,7 +742,7 @@ class AddPage(QScrollArea):
             with Path(path).open("rb") as source:
                 png = normalise_icon(source.read(MAX_ICON_BYTES + 1))
         except (OSError, ValueError) as error:
-            self.status.setText(str(error))
+            self.status.setText(describe_error(error))
             return
         self.set_icon_options((IconCandidate(Path(path).name, png),))
         self.select_icon(0)

@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import math
 import re
 import time
 from collections.abc import Callable
@@ -94,13 +95,32 @@ class RateLimited(ValueError):
     def __init__(self, host: str, retry_at: float) -> None:
         self.host = host
         self.retry_at = retry_at
-        wait = max(1, int(retry_at - time.time()))
+        minutes = max(1, math.ceil((retry_at - time.time()) / 60))
+        unit = "minute" if minutes == 1 else "minutes"
         super().__init__(
-            f"GitHub's request limit was reached. Retry in about {wait // 60 + 1} minutes."
+            f"GitHub's request limit was reached. Try again in about {minutes} {unit}. "
+            "Apps you have installed keep working."
         )
 
 
 UNREACHABLE = "Could not reach GitHub. Check your connection and try again."
+
+
+class Unreachable(ValueError):
+    """GitHub could not be reached at all; the text is `UNREACHABLE`."""
+
+    def __init__(self) -> None:
+        super().__init__(UNREACHABLE)
+
+
+def status_text(code: int) -> str:
+    """A plain sentence for an HTTP error status from GitHub."""
+    if code >= 500:
+        return (
+            f"GitHub is having a problem on its side (HTTP {code}). "
+            "Nothing is wrong with your setup; try again later."
+        )
+    return f"GitHub answered HTTP {code}."
 
 
 def timed_out(error: Exception) -> bool:
@@ -127,15 +147,13 @@ def request(url: str, *, method: str = "GET", etag: str = "") -> Any:
                 if attempt < len(RETRY_DELAYS):
                     time.sleep(RETRY_DELAYS[attempt])
                     continue
-                raise ValueError(
-                    f"GitHub is temporarily unavailable (HTTP {error.code}). Try again shortly."
-                ) from error
+                raise ValueError(status_text(error.code)) from error
             raise
         except (URLError, OSError, HTTPException) as error:
             if timed_out(error) and attempt < len(RETRY_DELAYS):
                 time.sleep(RETRY_DELAYS[attempt])
                 continue
-            raise ValueError(UNREACHABLE) from error
+            raise Unreachable from error
     raise AssertionError("unreachable")  # pragma: no cover
 
 
@@ -179,7 +197,10 @@ def _open(req: Request, host: str) -> Any:
                 error.close()
                 raise RateLimited(host, retry_at) from error
             error.close()
-            raise ValueError("GitHub denied access to this resource (HTTP 403).") from error
+            raise ValueError(
+                "GitHub refused this request (HTTP 403). The repository may be private or "
+                "removed, or your network may be blocked. Check the address, then try again later."
+            ) from error
         if error.code == 404:
             error.close()
             raise MissingResource("No published release was found in this repository.") from error
@@ -264,9 +285,9 @@ def _fetch(url: str, headers: dict[str, str], limit: int) -> tuple[bytes, str]:
     except HTTPError as error:
         code = error.code
         error.close()
-        raise ValueError(f"GitHub answered HTTP {code}.") from error
+        raise ValueError(status_text(code)) from error
     except (URLError, OSError, HTTPException) as error:
-        raise ValueError(UNREACHABLE) from error
+        raise Unreachable from error
     if len(body) > limit:
         raise ValueError("The file is larger than the allowed size.")
     return body, final
@@ -472,9 +493,9 @@ def read_metadata(url: str) -> bytes:
             return str(stored["body"]).encode()
         code = error.code
         error.close()
-        raise ValueError(f"GitHub answered HTTP {code}.") from error
+        raise ValueError(status_text(code)) from error
     except (OSError, HTTPException) as error:
-        raise ValueError(UNREACHABLE) from error
+        raise Unreachable from error
     if len(data) > MAX_METADATA:
         raise MetadataTooLarge("The release metadata is too large.")
     if urlsplit(url).netloc == "api.github.com":

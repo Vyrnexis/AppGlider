@@ -263,6 +263,7 @@ def extract_desktop_groups(path: Path, app: App, environment: Mapping[str, str])
 
 
 MAX_ICON_FILE = 2 * 1024 * 1024
+MAX_LINK_HOPS = 8
 
 
 @dataclass(frozen=True)
@@ -277,9 +278,10 @@ class AppImageIdentity:
 def _extract_file(
     path: Path, root: Path, directory: Path, environment: Mapping[str, str], relative: Path
 ) -> Path | None:
-    """Extract one named file, and the target of a link to it that stays inside the tree."""
+    """Extract one named file, following a chain of links that stays inside the tree."""
     _extract(path, relative.as_posix(), directory, environment)
-    for _ in range(2):
+    seen = {relative}
+    for _ in range(MAX_LINK_HOPS):
         found = root / relative
         if not found.is_symlink():
             return relative if found.is_file() else None
@@ -287,6 +289,9 @@ def _extract_file(
         target = Path(os.path.normpath(relative.parent / link))
         if os.path.isabs(link) or target.parts[:1] in ((), ("..",), (".",)):
             return None
+        if target in seen:
+            return None
+        seen.add(target)
         _extract(path, target.as_posix(), directory, environment)
         relative = target
     return None

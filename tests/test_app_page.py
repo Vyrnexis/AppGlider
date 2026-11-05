@@ -148,6 +148,10 @@ class AppPageTests(unittest.TestCase):
             patch.object(library, "rollback", side_effect=blocked),
             patch.object(library, "force_close", return_value=False) as force_close,
             self.answer("Force close…", "Force close"),
+            patch(
+                "appglider.ui.window.MessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
         ):
             window.rollback_app(APP.id)
             self.wait_for_task()
@@ -605,6 +609,23 @@ class AppPageTests(unittest.TestCase):
                 self.assertTrue(button.isEnabled())
                 button.click()
                 called.assert_called_once_with(APP.id)
+
+    def test_rolling_back_asks_first_and_says_the_current_version_is_kept(self) -> None:
+        window = self.window
+        self.install("1.0.0", "1.1.0")
+        with (
+            patch(
+                "appglider.ui.window.MessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ) as ask,
+            patch.object(self.library, "rollback") as rollback,
+        ):
+            window.rollback_app(APP.id)
+            ask.assert_called_once()
+            rollback.assert_not_called()
+        self.assertIsNone(window.task)
+        self.assertIn("v1.0.0", ask.call_args.args[2])
+        self.assertIn("current version is kept", ask.call_args.args[2])
 
     def test_removing_from_the_library_asks_first_and_returns_to_the_list(self) -> None:
         window = self.window

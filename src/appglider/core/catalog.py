@@ -145,7 +145,7 @@ def valid_file_name(value: object) -> bool:
     """A plain AppImage file name: no folders, no control characters."""
     return (
         isinstance(value, str)
-        and 9 < len(value) <= 255
+        and 9 < len(value.encode("utf-8", "surrogatepass")) <= 255  # NAME_MAX counts bytes
         and value.casefold().endswith(".appimage")
         and not value.startswith(".")
         and not any(ord(c) < 32 or ord(c) == 127 or c in "/\\" for c in value)

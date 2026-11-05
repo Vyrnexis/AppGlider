@@ -181,6 +181,49 @@ class ExtractionTests(unittest.TestCase):
         self.assertIn("appglider-desktop-", calls[0][0])
         self.assertFalse(Path(calls[0][0]).exists())
 
+    def test_an_icon_behind_a_chain_of_links_is_read(self) -> None:
+        path = self.script(
+            """\
+            mkdir -p squashfs-root/usr/share/icons
+            case "$2" in
+              '*.desktop') printf '[Desktop Entry]\\nName=Chain\\n' > squashfs-root/c.desktop ;;
+              .DirIcon) ln -s app.png squashfs-root/.DirIcon ;;
+              app.png) ln -s usr/share/icons/app.png squashfs-root/app.png ;;
+              usr/share/icons/app.png) printf PNGDATA > squashfs-root/usr/share/icons/app.png ;;
+            esac
+            """
+        )
+        identity = desktopentry.read_identity(path, clean_environment())
+        self.assertEqual(identity.icon, b"PNGDATA")
+
+    def test_a_loop_of_links_ends_without_an_icon(self) -> None:
+        path = self.script(
+            """\
+            mkdir -p squashfs-root
+            case "$2" in
+              '*.desktop') printf '[Desktop Entry]\\nName=Loop\\n' > squashfs-root/c.desktop ;;
+              .DirIcon) ln -s a.png squashfs-root/.DirIcon ;;
+              a.png) ln -s b.png squashfs-root/a.png ;;
+              b.png) ln -s a.png squashfs-root/b.png ;;
+            esac
+            """
+        )
+        identity = desktopentry.read_identity(path, clean_environment())
+        self.assertEqual((identity.name, identity.icon), ("Loop", None))
+
+    def test_a_link_leaving_the_tree_is_not_followed(self) -> None:
+        path = self.script(
+            """\
+            mkdir -p squashfs-root
+            case "$2" in
+              '*.desktop') printf '[Desktop Entry]\\nName=Out\\n' > squashfs-root/c.desktop ;;
+              .DirIcon) ln -s a.png squashfs-root/.DirIcon ;;
+              a.png) ln -s ../outside.png squashfs-root/a.png ;;
+            esac
+            """
+        )
+        self.assertIsNone(desktopentry.read_identity(path, clean_environment()).icon)
+
     def test_a_plain_top_level_file_needs_one_call(self) -> None:
         (self.source / "a.desktop").write_text("[Desktop Entry]\nCategories=Office;\n")
         path = self.script(

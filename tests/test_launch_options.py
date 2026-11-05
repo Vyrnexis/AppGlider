@@ -336,6 +336,24 @@ class StartupRefreshTests(LibraryCase):
         read.assert_not_called()
         self.assertFalse(self.shortcut.exists())
 
+    def test_the_menu_is_scanned_once_for_the_whole_refresh(self) -> None:
+        self.install("1.0.0")
+        self.shortcut.write_text(OLD_ENTRY)
+        with (
+            patch("appglider.install.shortcuts.extract_desktop_groups", return_value=GROUPS),
+            patch("appglider.install.shortcuts.shutil.which", return_value=None),
+            patch.object(type(self.library), "_foreign_names", return_value=set()) as names,
+        ):
+            self.assertEqual(self.library.refresh_shortcuts(), 1)
+        names.assert_called_once()
+
+    def test_an_undecodable_foreign_entry_is_skipped(self) -> None:
+        folder = self.library.desktop_dir
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "bad.desktop").write_bytes(b"[Desktop Entry]\nName=\xff\xfe\n")
+        (folder / "good.desktop").write_text("[Desktop Entry]\nName=Other\n")
+        self.assertEqual(self.library._foreign_names(), {"other"})
+
     def test_entries_from_the_previous_marker_gain_the_launcher_bypass(self) -> None:
         installed = self.install("1.0.0")
         self.shortcut.write_text(

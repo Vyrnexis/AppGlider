@@ -144,6 +144,7 @@ class ShortcutsMixin:
         Run it away from the Qt thread: it starts each app's runtime to read the entry.
         """
         changed = 0
+        foreign: set[str] | None = None  # read once, when the first entry needs rewriting
         for app in self.apps:
             if cancel is not None and cancel.is_set():
                 break
@@ -167,7 +168,9 @@ class ShortcutsMixin:
                         continue
                     if METADATA_MARKER in shortcut.read_text().splitlines():
                         continue
-                    self._shortcut(app, installed.path)
+                    if foreign is None:
+                        foreign = self._foreign_names()
+                    self._shortcut(app, installed.path, foreign)
                 changed += 1
             except (OSError, ValueError, UnicodeDecodeError):
                 continue
@@ -462,7 +465,8 @@ class ShortcutsMixin:
             self.update_desktop_database()
         return changed
 
-    def _shortcut(self, app: App, path: Path) -> str:
+    def _shortcut(self, app: App, path: Path, foreign: set[str] | None = None) -> str:
+        """Write the app's menu entry; `foreign` is a batch's precomputed `_foreign_names()`."""
         self.desktop_dir.mkdir(parents=True, exist_ok=True)
         shortcut = self.desktop_dir / f"appglider-{app.id}.desktop"
         if shortcut.is_symlink() or (
@@ -479,7 +483,7 @@ class ShortcutsMixin:
             options = self.launch_options(app.id)
         except ValueError:
             options = LaunchOptions()  # launching reports the unreadable file
-        name = self._menu_name(app, self._foreign_names())
+        name = self._menu_name(app, self._foreign_names() if foreign is None else foreign)
         text = shortcut_text(app, path, icon, self._desktop_metadata(app, path), options, name)
         atomic_bytes(shortcut, text.encode())
         return name

@@ -151,15 +151,37 @@ def download_update(
     return Downloaded(image, target, version)
 
 
+def _discard_pending(settings: QSettings, image: Path, keep: Path) -> None:
+    """Remove the files an earlier, unfinished update or move left recorded.
+
+    A new record overwrites the old one, so what it named would otherwise stay on disk for good.
+    Only a file that passes the same checks as `cleanup`, and is not running, is deleted.
+    """
+    moved = bool(settings.value(MOVED_KEY, False, type=bool))
+    for key, allow_other_folder in ((REPLACED_KEY, moved), (READY_KEY, True)):
+        value = str(settings.value(key, "", type=str))
+        if not value:
+            continue
+        path = Path(value)
+        if path.absolute() in (image.absolute(), keep.absolute()) or same_file(path, keep):
+            continue
+        if eligible(path, image, allow_other_folder) and not library.running(path):
+            with contextlib.suppress(OSError):
+                path.unlink()
+
+
 def record(settings: QSettings, done: Downloaded) -> None:
+    _discard_pending(settings, done.old, done.new)
     settings.setValue(REPLACED_KEY, str(done.old))
     settings.setValue(READY_KEY, str(done.new))
     settings.setValue(VERSION_KEY, done.version)
+    settings.remove(MOVED_KEY)
     settings.sync()
 
 
 def record_move(settings: QSettings, old: Path, new: Path) -> None:
     """Remember a move to another folder, so the next start removes the file left behind."""
+    _discard_pending(settings, old, new)
     settings.setValue(REPLACED_KEY, str(old))
     settings.setValue(READY_KEY, str(new))
     settings.setValue(MOVED_KEY, True)

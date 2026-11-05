@@ -15,6 +15,7 @@ from appglider.github.release_info import ReleaseInfo
 from appglider.github.versions import Cancelled
 from appglider.install.library import AppRunning
 from appglider.install.self_update import Downloaded
+from appglider.ui.errors import describe_error
 
 
 @dataclass
@@ -62,7 +63,7 @@ class Task(QRunnable):
         except AppRunning as error:
             self.signals.finished.emit(TaskResult(str(error), running=error.app_id))
         except Exception as error:
-            self.signals.failed.emit(str(error))
+            self.signals.failed.emit(describe_error(error))
         else:
             self.signals.finished.emit(result)
 
@@ -85,6 +86,6 @@ class Lookup(QRunnable):
         try:
             answer = self.operation(self.cancel)
         except Exception as error:
-            self.signals.failed.emit(str(error))
+            self.signals.failed.emit(describe_error(error))
         else:
             self.signals.finished.emit(answer)

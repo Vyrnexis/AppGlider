@@ -63,6 +63,7 @@ from appglider.install.launch_options import (
 from appglider.install.library import PreviousCopy, previous_copy
 from appglider.ui.app_status import app_status
 from appglider.ui.controls import MessageBox, Segmented, Switch, repolish
+from appglider.ui.errors import describe_error
 from appglider.ui.jobs import TaskResult
 
 if TYPE_CHECKING:
@@ -344,6 +345,7 @@ class AppPage(QScrollArea):
         right.setSpacing(16)
         self.columns.addLayout(left, stretch=13)
         self.columns.addLayout(right, stretch=10)
+        self.left_empty = False
         root.addLayout(self.columns)
         root.addStretch()
         self.build_notes(left)
@@ -367,8 +369,13 @@ class AppPage(QScrollArea):
         direction = QBoxLayout.Direction.LeftToRight if wide else QBoxLayout.Direction.TopToBottom
         if self.columns.direction() != direction:
             self.columns.setDirection(direction)
-            self.columns.setStretch(0, 13 if wide else 0)
-            self.columns.setStretch(1, 10 if wide else 0)
+            self.apply_column_stretch()
+
+    def apply_column_stretch(self) -> None:
+        # Side by side the left column takes 13 parts, unless it is empty (a manual app).
+        side_by_side = self.columns.direction() == QBoxLayout.Direction.LeftToRight
+        self.columns.setStretch(0, 13 if side_by_side and not self.left_empty else 0)
+        self.columns.setStretch(1, 10 if side_by_side else 0)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -716,7 +723,8 @@ class AppPage(QScrollArea):
         # Nothing to look up for an app added from a file: no releases, no versions column.
         self.notes_frame.setVisible(not app.manual)
         self.versions_frame.setVisible(not app.manual)
-        self.columns.setStretch(0, 0 if app.manual else 13)
+        self.left_empty = app.manual
+        self.apply_column_stretch()
         self.rollback_row.label.setText(
             f"Roll back to {version_text(previous.version)}" if previous else "Roll back"
         )
@@ -1072,7 +1080,7 @@ class AppPage(QScrollArea):
                 self.launcher.refresh_desktop_database()
                 self.launcher.footer.setText(f"Saved launch options for {app.name}.")
         except (OSError, ValueError) as error:
-            self.launch_error.setText(str(error))
+            self.launch_error.setText(describe_error(error))
             self.launch_error.show()
             return
         self.launch_error.hide()
@@ -1110,7 +1118,7 @@ class AppPage(QScrollArea):
         try:
             self.launcher.library.set_release_preference(app.id, index == 1)
         except (OSError, ValueError) as error:
-            self.launcher.footer.setText(str(error))
+            self.launcher.footer.setText(describe_error(error))
             self.refresh()
             return
         self.message = "Release preference saved. Check the available release."
@@ -1277,7 +1285,7 @@ class AppPage(QScrollArea):
             with Path(path).open("rb") as source:
                 png = normalise_icon(source.read(MAX_ICON_BYTES + 1))
         except (OSError, ValueError) as error:
-            MessageBox.warning(self, "Cannot use this icon", str(error))
+            MessageBox.warning(self, "Cannot use this icon", describe_error(error))
             return
         self.save_icon(png)
 
@@ -1292,8 +1300,8 @@ class AppPage(QScrollArea):
         try:
             self.launcher.library.set_icon(app, png)
         except (OSError, ValueError) as error:
-            self.launcher.footer.setText(f"Icon could not be saved: {error}")
-            MessageBox.warning(self, "Cannot save the icon", str(error))
+            self.launcher.footer.setText(f"Icon could not be saved: {describe_error(error)}")
+            MessageBox.warning(self, "Cannot save the icon", describe_error(error))
             return
         self.launcher.catalog_changed()
         self.launcher.footer.setText(f"Saved icon for {app.name}.")

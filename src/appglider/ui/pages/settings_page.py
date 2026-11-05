@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -41,7 +42,8 @@ from appglider.core.preferences import (
 from appglider.core.storage import atomic_bytes
 from appglider.install import self_update
 from appglider.install.library import appimagelauncher_folder, previous_copy
-from appglider.ui.controls import Segmented, SpaceBar, SpaceSwatch, Switch
+from appglider.ui.controls import MessageBox, Segmented, SpaceBar, SpaceSwatch, Switch
+from appglider.ui.errors import describe_error
 from appglider.ui.pages.app_page import (
     SettingRow,
     add_setting_rows,
@@ -253,7 +255,7 @@ class SettingsPage(QWidget):
             else:
                 library.disable_autostart()
         except (OSError, ValueError) as error:
-            self.autostart_error.setText(str(error))
+            self.autostart_error.setText(describe_error(error))
             self.autostart_error.show()
             with QSignalBlocker(self.autostart):
                 self.autostart.setChecked(not checked)
@@ -698,7 +700,7 @@ class SettingsPage(QWidget):
             catalog = read(source)
             plan = library.plan_import(catalog.entries)
         except (CatalogError, OSError, ValueError) as error:
-            self.say(f"Cannot import {source.name}: {error}")
+            self.say(f"Cannot import {source.name}: {describe_error(error)}")
             return
         preview = CatalogPreviewDialog(catalog, plan, self)
         accepted = preview.exec() == QDialog.DialogCode.Accepted
@@ -708,7 +710,7 @@ class SettingsPage(QWidget):
         try:
             added = library.import_catalog(plan.new)
         except (OSError, ValueError) as error:
-            self.say(f"Nothing was imported: {error}")
+            self.say(f"Nothing was imported: {describe_error(error)}")
             return
         self.launcher.catalog_changed()
         count = len(added.new)
@@ -729,7 +731,7 @@ class SettingsPage(QWidget):
             entries = self.launcher.library.export_entries()
             atomic_bytes(Path(path), render(entries, "My AppGlider catalog").encode("utf-8"))
         except (OSError, ValueError) as error:
-            self.say(f"Cannot export the catalog: {error}")
+            self.say(f"Cannot export the catalog: {describe_error(error)}")
             return
         self.say(f"Exported {len(entries)} apps to {Path(path).name}.")
 
@@ -800,5 +802,15 @@ class SettingsPage(QWidget):
             )
 
     def move_self(self) -> None:
-        if self.move_source() is not None and self.apply_folder():
+        image = self.move_source()
+        if image is None:
+            return
+        folder = Path(self.folder.text()).expanduser()
+        answer = MessageBox.question(
+            self,
+            "Move AppGlider here?",
+            f"AppGlider copies itself to {folder} and restarts from the new copy. "
+            f"The old file, {image}, is then removed.",
+        )
+        if answer == QMessageBox.StandardButton.Yes and self.apply_folder():
             self.launcher.move_self(Path(self.applied_folder).expanduser())
