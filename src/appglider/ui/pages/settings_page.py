@@ -4,6 +4,7 @@ Every control saves as it changes; there is no Save or Cancel.
 """
 
 import contextlib
+import os
 import shutil
 import stat
 from pathlib import Path
@@ -80,6 +81,11 @@ def checked_folder(text: str) -> tuple[Path | None, str]:
         return None, "Enter an absolute path or use Browse."
     if folder.exists() and not folder.is_dir():
         return None, "The selected path is a file."
+    parent = folder
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    if not os.access(parent, os.W_OK | os.X_OK):
+        return None, f"AppGlider can't write to {folder}."
     return folder, ""
 
 
@@ -638,16 +644,18 @@ class SettingsPage(QWidget):
 
     def update_state(self) -> None:
         """Catalog changes and the folder wait for a running task; the rest stays usable."""
-        idle = self.launcher.task is None
+        idle = not self.launcher.busy
         for widget in (
             self.import_button,
             self.example_button,
             self.export_button,
             self.folder,
             self.browse_button,
-            self.move_button,
         ):
             widget.setEnabled(idle)
+        self.move_button.setEnabled(idle and not self.launcher.checks.busy)
+        if not idle and self.folder.text() != self.applied_folder:
+            self.folder.setText(self.applied_folder)
         if self.isVisible() and self.current_section() == "Storage":
             self.update_space_used()
 
@@ -682,7 +690,7 @@ class SettingsPage(QWidget):
         self.launcher.footer.setText(message)
 
     def import_catalog(self) -> None:
-        if self.launcher.task is not None:
+        if self.launcher.busy:
             return
         path, _ = QFileDialog.getOpenFileName(
             self, "Import catalog", "", "AppGlider catalogs (*.toml);;All files (*)"
@@ -691,7 +699,7 @@ class SettingsPage(QWidget):
             self.import_from(Path(path))
 
     def import_example_catalog(self) -> None:
-        if self.launcher.task is None:
+        if not self.launcher.busy:
             self.import_from(EXAMPLE_CATALOG)
 
     def import_from(self, source: Path) -> None:
@@ -720,7 +728,7 @@ class SettingsPage(QWidget):
         )
 
     def export_catalog(self) -> None:
-        if self.launcher.task is not None:
+        if self.launcher.busy:
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Export catalog", "appglider-catalog.toml", "AppGlider catalogs (*.toml)"
@@ -762,7 +770,7 @@ class SettingsPage(QWidget):
 
     def apply_folder(self) -> bool:
         """Use the entered folder if it is valid; otherwise explain and keep the previous one."""
-        if self.launcher.task is not None:
+        if self.launcher.busy:
             return False
         folder, problem = checked_folder(self.folder.text())
         self.folder_error.setText(problem)
@@ -805,7 +813,12 @@ class SettingsPage(QWidget):
         image = self.move_source()
         if image is None:
             return
-        folder = Path(self.folder.text()).expanduser()
+        if self.launcher.checks.busy:
+            self.say("Wait for the update check to finish, then try again.")
+            return
+        if not self.apply_folder():
+            return
+        folder = Path(self.applied_folder).expanduser()
         text = (
             f"AppGlider copies itself to {folder} and restarts from the new copy. "
             f"The old file, {image}, is then removed."
@@ -813,5 +826,5 @@ class SettingsPage(QWidget):
         if (folder / image.name).exists():
             text += f" The copy of {image.name} already in that folder is replaced."
         answer = MessageBox.question(self, "Move AppGlider here?", text)
-        if answer == QMessageBox.StandardButton.Yes and self.apply_folder():
+        if answer == QMessageBox.StandardButton.Yes:
             self.launcher.move_self(Path(self.applied_folder).expanduser())

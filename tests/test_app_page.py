@@ -764,6 +764,48 @@ class AppPageTests(unittest.TestCase):
         self.assertTrue(self.page.uninstall_row.isVisibleTo(self.page))
         self.assertFalse(self.page.uninstall_button.isEnabled())
 
+    def test_busy_buttons_say_why_they_wait(self) -> None:
+        self.install("1.0.0")
+        self.window.open_app(APP.id)
+        self.assertEqual(self.page.uninstall_button.toolTip(), "")
+        with patch.object(self.window, "task", object()):
+            self.page.refresh()
+        self.assertEqual(
+            self.page.uninstall_button.toolTip(), "Wait for the current task to finish."
+        )
+        self.assertEqual(self.page.check_button.toolTip(), "Wait for the current task to finish.")
+        self.page.refresh()
+        self.assertEqual(self.page.uninstall_button.toolTip(), "")
+
+    def test_launch_waits_only_while_this_app_is_worked_on(self) -> None:
+        self.install("1.0.0")
+        self.window.open_app(APP.id)
+        self.assertTrue(self.page.launch_button.isEnabled())
+        with patch.object(self.window, "working", {"other": "Updating"}):
+            self.page.refresh()
+        self.assertTrue(self.page.launch_button.isEnabled())
+        with patch.object(self.window, "working", {APP.id: "Updating"}):
+            self.page.refresh()
+        self.assertFalse(self.page.launch_button.isEnabled())
+
+    def test_forget_hint_matches_what_is_deleted(self) -> None:
+        self.install("1.0.0")
+        self.window.open_app(APP.id)
+        self.assertEqual(self.page.forget_row.hint.text(), "No files are deleted")
+        manual = replace(APP, file="App.AppImage")
+        with patch.object(self.page, "current_app", return_value=manual):
+            self.page.refresh()
+        self.assertIn("deletes", self.page.forget_row.hint.text())
+
+    def test_checking_label_follows_the_running_check_after_switching_apps(self) -> None:
+        self.install("1.0.0")
+        self.window.open_app(APP.id)
+        with patch.object(self.window.checks, "is_checking", return_value=True):
+            self.page.show_app(APP.id, "Library")
+        self.assertEqual(self.page.check_button.text(), "Checking…")
+        self.page.refresh()
+        self.assertEqual(self.page.check_button.text(), "Check now")
+
     def test_focus_moves_to_remove_when_the_focused_uninstall_button_disappears(self) -> None:
         self.install("1.0.0")
         self.window.open_app(APP.id)

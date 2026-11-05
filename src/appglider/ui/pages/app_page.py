@@ -72,6 +72,8 @@ if TYPE_CHECKING:
 NOTES_PREVIEW_LINES = 5
 WEB_SCHEMES = ("http", "https")
 RUNNING_CHECK_MS = 3000
+WAIT_TIP = "Wait for the current task to finish."
+CHECK_TIP = "Look up stable and preview releases again without downloading anything."
 
 
 def version_text(version: str | None) -> str:
@@ -508,9 +510,7 @@ class AppPage(QScrollArea):
         self.checked_value = QLabel()
         self.checked_value.setObjectName("versionValue")
         self.check_button = link_button("Check now")
-        self.check_button.setToolTip(
-            "Look up stable and preview releases again without downloading anything."
-        )
+        self.check_button.setToolTip(CHECK_TIP)
         self.check_button.clicked.connect(self.check_now)
         checked.addWidget(self.checked_value)
         checked.addWidget(self.check_button)
@@ -680,7 +680,8 @@ class AppPage(QScrollArea):
 
     def show_app(self, app_id: str, back_label: str) -> None:
         self.app_id = app_id
-        self.pending = ""
+        if self.pending_app != app_id:
+            self.pending = ""
         self.icon_key = None
         self.message = ""
         self.shown_notes = None
@@ -702,7 +703,7 @@ class AppPage(QScrollArea):
         installed = launcher.installed.get(app.id)
         release = launcher.releases.get(app.id)
         info = launcher.release_infos.get(app.id)
-        busy = launcher.task is not None
+        busy = launcher.busy
         managed = bool(installed and installed.managed)
         status = app_status(
             app,
@@ -725,6 +726,11 @@ class AppPage(QScrollArea):
         self.versions_frame.setVisible(not app.manual)
         self.left_empty = app.manual
         self.apply_column_stretch()
+        self.forget_row.hint.setText(
+            "Removes the app and deletes its kept previous copy"
+            if app.manual
+            else "No files are deleted"
+        )
         self.rollback_row.label.setText(
             f"Roll back to {version_text(previous.version)}" if previous else "Roll back"
         )
@@ -740,7 +746,9 @@ class AppPage(QScrollArea):
         earlier = False
         for row, button, visible in rows:
             row.setVisible(visible)
-            button.setEnabled(not busy or button is self.force_button)
+            waiting = busy and button is not self.force_button
+            button.setEnabled(not waiting)
+            button.setToolTip(WAIT_TIP if waiting else "")
             if row in self.manage_dividers:
                 self.manage_dividers[row].setVisible(visible and earlier)
             earlier = earlier or visible
@@ -782,8 +790,11 @@ class AppPage(QScrollArea):
         release = launcher.releases.get(app.id)
         self.mode = mode
         self.launch_button.setVisible(installed is not None)
-        self.launch_button.setEnabled(installed is not None)
-        self.launch_button.setToolTip(f"Launch {installed.path}" if installed else "")
+        working = app.id in launcher.working
+        self.launch_button.setEnabled(installed is not None and not working)
+        self.launch_button.setToolTip(
+            WAIT_TIP if working else f"Launch {installed.path}" if installed else ""
+        )
         self.launch_button.setAccessibleName(f"Launch {app.name}")
         launch_only = mode == "launch"
         set_object_name(self.launch_button, "primary" if launch_only else "")
@@ -819,8 +830,9 @@ class AppPage(QScrollArea):
         }[mode]
         self.action_button.setText(text)
         self.action_button.setAccessibleName(accessible)
-        self.action_button.setToolTip(tooltip)
-        self.action_button.setEnabled(mode == "cancel" or not busy)
+        waiting = busy and mode != "cancel"
+        self.action_button.setToolTip(WAIT_TIP if waiting else tooltip)
+        self.action_button.setEnabled(not waiting)
 
     def refresh_notes(
         self, app: App, release: Release | None, info: ReleaseInfo | None, installed: bool
@@ -921,9 +933,12 @@ class AppPage(QScrollArea):
             self.show_option("preview", preview, False)
         checked = info.checked_at if info else None
         self.checked_value.setText(checked_text(checked))
-        checking = self.pending == "check" and busy
+        checking = launcher.checks.is_checking(app.id) or (
+            self.pending == "check" and self.pending_app == app.id and busy
+        )
         self.check_button.setText("Checking…" if checking else "Check now")
         self.check_button.setEnabled(not busy)
+        self.check_button.setToolTip(CHECK_TIP if not busy else WAIT_TIP)
         error = launcher.release_errors.get(app.id) or launcher.check_errors.get(app.id, "")
         self.note.setText(error or self.message)
         self.note.setVisible(bool(self.note.text()))
@@ -1112,7 +1127,7 @@ class AppPage(QScrollArea):
 
     def change_channel(self, index: int) -> None:
         app = self.current_app()
-        if app is None or self.launcher.task is not None:
+        if app is None or self.launcher.busy:
             self.refresh()
             return
         try:
@@ -1144,7 +1159,7 @@ class AppPage(QScrollArea):
         self.launcher.start_task(message, operation, page=self)
 
     def check_now(self) -> None:
-        if self.launcher.task is None and self.app_id:
+        if not self.launcher.busy and self.app_id:
             self.pending = "check"
             self.pending_app = self.app_id
             self.message = ""
@@ -1153,7 +1168,7 @@ class AppPage(QScrollArea):
     def choose_build(self) -> None:
         """Look up the builds a release offers and let the person choose one."""
         app = self.current_app()
-        if app is not None and self.launcher.task is None:
+        if app is not None and not self.launcher.busy:
             self.inspect_build(app, "")
 
     def inspect_build(self, app: App, variant: str) -> None:
@@ -1177,7 +1192,7 @@ class AppPage(QScrollArea):
 
     def find_existing_icons(self) -> None:
         app = self.current_app()
-        if app is None or self.launcher.task is not None:
+        if app is None or self.launcher.busy:
             return
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
@@ -1274,7 +1289,7 @@ class AppPage(QScrollArea):
         self.save_icon(icons[index].png)
 
     def choose_icon(self) -> None:
-        if self.current_app() is None or self.launcher.task is not None:
+        if self.current_app() is None or self.launcher.busy:
             return
         path, _ = QFileDialog.getOpenFileName(
             self, "Choose application icon", "", "Application icons (*.png *.svg)"
@@ -1290,7 +1305,7 @@ class AppPage(QScrollArea):
         self.save_icon(png)
 
     def use_default_icon(self) -> None:
-        if self.current_app() is not None and self.launcher.task is None:
+        if self.current_app() is not None and not self.launcher.busy:
             self.save_icon(None)
 
     def save_icon(self, png: bytes | None) -> None:

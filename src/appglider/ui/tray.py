@@ -41,7 +41,7 @@ class TrayMixin(QMainWindow):
 
         def quit_launcher(self) -> None: ...
 
-        def check_for_updates(self) -> None: ...
+        def tray_check_for_updates(self) -> None: ...
 
         def scan_installed(self) -> None: ...
 
@@ -59,7 +59,7 @@ class TrayMixin(QMainWindow):
         self.tray_menu = QMenu(self)
         self.tray_menu.addAction("Open AppGlider").triggered.connect(self.show_launcher)
         self.tray_check_action = self.tray_menu.addAction("Check for updates")
-        self.tray_check_action.triggered.connect(self.check_for_updates)
+        self.tray_check_action.triggered.connect(self.tray_check_for_updates)
         self.tray_apps_menu = self.tray_menu.addMenu("Installed apps")
         self.tray_menu.addSeparator()
         self.tray_menu.addAction("Quit AppGlider").triggered.connect(self.quit_launcher)
@@ -81,6 +81,9 @@ class TrayMixin(QMainWindow):
         if (update_count > 0 or bool(own)) != self.tray_has_updates:
             self.tray_has_updates = update_count > 0 or bool(own)
             self.tray.setIcon(self.tray_icons[int(self.tray_has_updates)])
+        self.tray_check_action.setText(
+            "Checking for updates…" if self.checks.busy else "Check for updates"
+        )
         self.tray_check_action.setEnabled(not self.checks.busy and bool(self.installed))
         tray_apps = [
             (app, self.library.icon_path(app))
@@ -103,6 +106,16 @@ class TrayMixin(QMainWindow):
             QSystemTrayIcon.ActivationReason.DoubleClick,
         ):
             self.show_launcher()
+
+    def tray_message(self, title: str, text: str) -> None:
+        """Say something through the tray, but only to a user who cannot see the window."""
+        if (
+            not QSystemTrayIcon.isSystemTrayAvailable()
+            or not self.tray.isVisible()
+            or (self.isVisible() and not self.isMinimized())
+        ):
+            return
+        self.tray.showMessage(title, text, self.tray_icons[0], 15000)
 
     def notify_updates(self) -> None:
         """Tell the user, once per new version, that updates are waiting (opt-in)."""
@@ -141,4 +154,4 @@ class TrayMixin(QMainWindow):
         else:
             more = f", and {len(names) - 3} more" if len(names) > 3 else ""
             text = f"{len(names)} updates are waiting: {', '.join(names[:3])}{more}."
-        self.tray.showMessage("AppGlider: updates available", text, self.tray_icons[1], 15000)
+        self.tray.showMessage("Updates available", text, self.tray_icons[1], 15000)

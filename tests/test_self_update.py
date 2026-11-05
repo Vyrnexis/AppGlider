@@ -11,7 +11,7 @@ from collections import namedtuple
 from contextlib import ExitStack
 from pathlib import Path
 from threading import Event
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -1273,6 +1273,27 @@ class WindowTests(unittest.TestCase):
         self.new_image.chmod(0o755)
         self.window.self_ready = self_update.Ready(self.new_image, "0.9.1")
         self.window.refresh()
+
+    def test_restart_now_waits_for_an_update_check_and_says_why(self) -> None:
+        window = self.window
+        self.ready_window()
+        with (
+            patch.object(type(window.checks), "busy", new_callable=PropertyMock) as busy,
+            patch("appglider.ui.window.subprocess.Popen") as popen,
+        ):
+            busy.return_value = True
+            window.refresh()
+            self.assertFalse(window.self_update_button.isEnabled())
+            self.assertIn("update check", window.self_update_button.toolTip())
+            window.restart_self()
+            popen.assert_not_called()
+            self.assertEqual(
+                window.footer.text(), "Wait for the update check to finish, then try again."
+            )
+            busy.return_value = False
+            window.refresh()
+        self.assertTrue(window.self_update_button.isEnabled())
+        self.assertEqual(window.self_update_button.toolTip(), "")
 
     def test_restart_now_starts_the_new_image_waiting_for_the_lock_then_quits(self) -> None:
         window = self.window

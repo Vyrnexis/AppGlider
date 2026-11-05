@@ -10,7 +10,7 @@ from contextlib import ExitStack
 from dataclasses import asdict, replace
 from pathlib import Path
 from threading import Event
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -70,7 +70,7 @@ from appglider.github import status as github_status
 from appglider.github.assets import Release
 from appglider.github.http import RateLimited
 from appglider.github.release_info import ReleaseInfo, ReleaseOption, info_path
-from appglider.install.library import Installed, Library, previous_copy
+from appglider.install.library import AppRunning, Installed, Library, previous_copy
 from appglider.ui.controls import SpaceBar
 from appglider.ui.jobs import TaskResult
 from appglider.ui.pages.settings_page import SettingsPage, format_space
@@ -923,7 +923,7 @@ class LibraryTests(unittest.TestCase):
         window.notify_updates()
         shown.assert_called_once()
         title, text = shown.call_args.args[:2]
-        self.assertEqual(title, "AppGlider: updates available")
+        self.assertEqual(title, "Updates available")
         self.assertEqual(text, f"{APP.name} 1.1.0 is available.")
         window.notify_updates()
         shown.assert_called_once()  # already told about 1.1.0
@@ -2162,6 +2162,155 @@ class LibraryTests(unittest.TestCase):
         title, text = warning.call_args.args[1:3]
         self.assertEqual(title, "Couldn't update all apps")
         self.assertEqual(text, f"{first.name}: unexpected reply")
+
+    def test_busy_includes_a_file_copy_on_the_add_page(self) -> None:
+        window = self.window
+        self.assertFalse(window.busy)
+        window.add_page.copying = True
+        self.assertTrue(window.busy)
+        window.refresh()
+        self.assertFalse(window.nav_add.isEnabled())
+        self.assertFalse(window.update_all_button.isEnabled())
+        window.start_task("Working…", lambda cancel, progress: TaskResult("ok"))
+        self.assertIsNone(window.task)  # refused while the copy runs
+        window.add_page.copying = False
+        self.assertFalse(window.busy)
+        window.refresh()
+        self.assertTrue(window.nav_add.isEnabled())
+
+    def test_an_app_being_worked_on_is_not_launched(self) -> None:
+        window = self.window
+        window.installed[APP.id] = Installed(Path(self.temp.name) / "app.AppImage", "1.0.0", True)
+        window.working = {APP.id: "Updating"}
+        with patch.object(window.library, "launch") as launch:
+            window.launch_app(APP.id)
+        launch.assert_not_called()
+        self.assertEqual(window.footer.text(), f"Wait for {APP.name} to finish, then launch it.")
+        card = window.cards[APP.id]
+        window.refresh()
+        self.assertFalse(card.launch_action.isEnabled())
+        window.working = {}
+        window.refresh()
+        self.assertTrue(card.launch_action.isEnabled())
+
+    def test_pinning_past_the_limit_says_so_and_resets_the_switch(self) -> None:
+        window = self.window
+        with patch("appglider.ui.window.MAX_PINNED", 1):
+            window.toggle_pin(APPS[0].id)
+            window.open_app(APPS[1].id)
+            window.app_page.pin_switch.setChecked(True)
+            window.toggle_pin(APPS[1].id)
+        self.assertEqual(window.footer.text(), "You can pin up to 1 apps.")
+        self.assertEqual(window.pinned, {APPS[0].id})
+        self.assertFalse(window.app_page.pin_switch.isChecked())
+
+    def test_update_all_names_a_running_app_and_goes_on_with_the_rest(self) -> None:
+        window = self.window
+        first, second, new = self.outdated_pair()
+
+        def latest(app: App, cancel: Event, cache: Path) -> Release:
+            if app.id == first.id:
+                raise AppRunning(first.id, f"{first.name} is running. Close it first.")
+            return window.releases[app.id]
+
+        with (
+            patch("appglider.ui.window.latest_release", side_effect=latest),
+            patch("appglider.github.http.request", side_effect=lambda *a, **k: io.BytesIO(new)),
+            patch("appglider.ui.window.MessageBox.warning") as warning,
+        ):
+            window.update_all()
+            self.wait_for_task()
+        self.assertEqual(window.installed[second.id].version, "1.1.0")
+        self.assertEqual(window.installed[first.id].version, "1.0.0")
+        self.assertEqual(window.footer.text(), "Updated 1 app. 1 could not be updated.")
+        self.assertEqual(
+            warning.call_args.args[2], f"{first.name}: {first.name} is running. Close it first."
+        )
+
+    def test_a_check_from_the_tray_reports_to_a_hidden_window(self) -> None:
+        window = self.window
+        shown = self.notifier()
+        hidden = patch.object(window, "isVisible", return_value=False)
+        hidden.start()
+        self.addCleanup(hidden.stop)
+        self.waiting_update()
+        window.tray_check_pending = True
+        window.release_checks_drained()
+        self.assertFalse(window.tray_check_pending)
+        self.assertEqual(shown.call_args.args[:2], ("Update check", "1 update available."))
+        window.releases.clear()
+        window.tray_check_result()
+        self.assertEqual(shown.call_args.args[1], "Everything is up to date.")
+        window.release_errors[APP.id] = "offline"
+        window.tray_check_result()
+        self.assertEqual(shown.call_args.args[1], "Couldn't check for updates. Try again later.")
+        count = shown.call_count
+        with patch.object(window, "isVisible", return_value=True):
+            window.tray_check_result()
+        self.assertEqual(shown.call_count, count)  # the visible window shows the result itself
+
+    def test_the_tray_check_item_reads_checking_while_a_check_runs(self) -> None:
+        window = self.window
+        with patch.object(type(window.checks), "busy", new_callable=PropertyMock) as busy:
+            busy.return_value = True
+            window.refresh()
+            self.assertEqual(window.tray_check_action.text(), "Checking for updates…")
+            busy.return_value = False
+            window.refresh()
+        self.assertEqual(window.tray_check_action.text(), "Check for updates")
+
+    def test_a_finished_task_tells_a_hidden_window_through_the_tray(self) -> None:
+        window = self.window
+        shown = self.notifier()
+        hidden = patch.object(window, "isVisible", return_value=False)
+        hidden.start()
+        self.addCleanup(hidden.stop)
+        window.start_task("Working…", lambda cancel, progress: TaskResult("Updated 2 apps."))
+        self.wait_for_task()
+        self.assertEqual(shown.call_args.args[:2], ("Finished", "Updated 2 apps."))
+
+    def test_a_scheduled_notification_waits_for_a_running_task(self) -> None:
+        window = self.window
+        shown = self.notifier()
+        self.settings.setValue("notifications/updates", True)
+        self.waiting_update()
+        window.notified = {}
+        gate = Event()
+        self.addCleanup(gate.set)
+        window.start_task(
+            "Working…", lambda cancel, progress: TaskResult("Done.") if gate.wait(5) else None
+        )
+        window.notify_pending = True
+        window.notify_when_idle()
+        shown.assert_not_called()
+        self.assertTrue(window.notify_pending)
+        gate.set()
+        self.wait_for_task()
+        self.assertFalse(window.notify_pending)
+        self.assertIn("Updates available", [call.args[0] for call in shown.call_args_list])
+
+    def test_rollback_and_remove_hide_cancel_but_other_tasks_keep_it(self) -> None:
+        window = self.window
+        gate = Event()
+        self.addCleanup(gate.set)
+        for cancellable in (True, False):
+            gate.clear()
+            window.start_task(
+                "Working…",
+                lambda cancel, progress: TaskResult("ok") if gate.wait(5) else None,
+                cancellable=cancellable,
+            )
+            self.assertEqual(window.cancel_button.isHidden(), not cancellable)
+            gate.set()
+            self.wait_for_task()
+
+    def test_uninstall_asks_with_the_same_word_as_its_button(self) -> None:
+        window = self.window
+        with patch(
+            "appglider.ui.window.MessageBox.question", return_value=QMessageBox.StandardButton.No
+        ) as ask:
+            window.remove_app(APP.id)
+        self.assertEqual(ask.call_args.args[1], f"Uninstall {APP.name}?")
 
     def test_a_second_launch_while_running_says_so_in_the_footer(self) -> None:
         window = self.window

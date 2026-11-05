@@ -401,7 +401,7 @@ class AppRow(QFrame):
         for action, visible in shown:
             action.setVisible(visible)
             action.setEnabled(not busy)
-        self.launch_action.setEnabled(True)
+        self.launch_action.setEnabled(not working)
         self.hold_action.setText(
             "Release hold" if self.app.hold_updates else "Hold at current version"
         )

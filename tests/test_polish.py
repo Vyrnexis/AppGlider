@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from appglider.install.library import Library
+from appglider.ui.pages.settings_page import checked_folder
 from appglider.ui.theme import THEMES, stylesheet
 from appglider.ui.window import LauncherWindow
 
@@ -182,6 +183,41 @@ class PolishTests(unittest.TestCase):
         self.assertNotIn("Application preferences", texts)
         window.refresh()
         self.assertEqual(window.tray.toolTip(), "AppGlider · Updates: 0")
+
+    def test_unwritable_folder_is_refused(self) -> None:
+        folder = Path(self.temp.name) / "locked"
+        folder.mkdir()
+        folder.chmod(0o500)
+        self.addCleanup(folder.chmod, 0o700)
+        if os.access(folder, os.W_OK):
+            self.skipTest("Permissions are not enforced for this user")
+        chosen, problem = checked_folder(str(folder / "apps" / "deeper"))
+        self.assertIsNone(chosen)
+        self.assertIn("can't write", problem)
+        self.assertIsNotNone(checked_folder(str(Path(self.temp.name) / "new" / "apps"))[0])
+
+    def test_busy_resets_an_unapplied_folder_edit(self) -> None:
+        page = self.window.settings_page
+        applied = page.applied_folder
+        page.folder.setText("/somewhere/else")
+        with patch.object(self.window, "task", object()):
+            page.update_state()
+        self.assertEqual(page.folder.text(), applied)
+
+    def test_move_waits_for_the_update_check(self) -> None:
+        page = self.window.settings_page
+        with (
+            patch.object(self.window.checks, "tasks", {"x": object()}),
+            patch.object(page, "move_source", return_value=Path("/tmp/AppGlider.AppImage")),
+            patch.object(self.window, "move_self") as move,
+        ):
+            page.update_state()
+            self.assertFalse(page.move_button.isEnabled())
+            page.move_self()
+        move.assert_not_called()
+        self.assertEqual(
+            self.window.footer.text(), "Wait for the update check to finish, then try again."
+        )
 
 
 class StylesheetPathTests(unittest.TestCase):

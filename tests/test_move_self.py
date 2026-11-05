@@ -5,7 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -248,6 +248,36 @@ class MoveSelfTests(unittest.TestCase):
         new = self.apps / NAME
         self.assertEqual([p for p, _ in started], [new])
         self.assertEqual(new.read_bytes(), self.image.read_bytes())
+
+    def test_cancelling_the_move_changes_nothing_and_does_not_restart(self) -> None:
+        def cancel_then_place(source, folder, cancel=None, **kwargs):
+            self.window.cancel_task()
+            return place_appimage(source, folder, cancel, **kwargs)
+
+        with (
+            patch("appglider.install.self_update.running_image", return_value=self.image),
+            patch("appglider.ui.window.place_appimage", side_effect=cancel_then_place),
+            patch.object(self.window, "start_image") as start,
+        ):
+            self.click_move()
+            deadline = time.monotonic() + 5
+            while self.window.task is not None and time.monotonic() < deadline:
+                QTest.qWait(10)
+        start.assert_not_called()
+        self.assertEqual(list(self.apps.iterdir()), [])
+        self.assertFalse(self.settings.contains(self_update.REPLACED_KEY))
+
+    def test_moving_while_an_update_check_runs_says_to_wait(self) -> None:
+        with (
+            patch("appglider.install.self_update.running_image", return_value=self.image),
+            patch.object(type(self.window.checks), "busy", new_callable=PropertyMock) as busy,
+        ):
+            busy.return_value = True
+            self.window.move_self(self.apps)
+        self.assertIsNone(self.window.task)
+        self.assertEqual(
+            self.window.footer.text(), "Wait for the update check to finish, then try again."
+        )
 
     def test_a_running_copy_in_the_folder_is_not_replaced(self) -> None:
         (self.apps / NAME).write_bytes(appimage_bytes(b"older"))

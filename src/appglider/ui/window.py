@@ -100,7 +100,6 @@ from appglider.install.appimage import (
     log_tail,
 )
 from appglider.install.library import (
-    AppRunning,
     Installed,
     Library,
     Orphan,
@@ -123,6 +122,7 @@ from appglider.ui.tray import TrayMixin
 SIDEBAR_WIDTH = 210
 LEGACY_SECTIONS = {0: "General", 1: "Catalogs", 2: "Storage", 3: "Updates", 4: "About"}
 CHECK_TOOLTIP = "Check for updates"
+WAIT_FOR_CHECK = "Wait for the update check to finish, then try again."
 # Waits before automatic checks retry when GitHub was unreachable, e.g. at login.
 OFFLINE_RETRY_SECONDS = (15, 30, 60, 120, 300)
 
@@ -253,6 +253,7 @@ class LauncherWindow(TrayMixin):
         self.release_infos: dict[str, ReleaseInfo] = {}
         self.cache_stamps: dict[str, object] = {}
         self.tray_key = None
+        self.tray_check_pending = False
         self.release_errors: dict[str, str] = {}
         self.checks = ReleaseChecks(
             self.checkable_app,
@@ -418,6 +419,8 @@ class LauncherWindow(TrayMixin):
         self.pages.addWidget(self.settings_page)
         self.add_page = AddPage(self)
         self.add_page.added.connect(self.app_added)
+        self.add_page.copy_changed.connect(self.copy_changed)
+        self.add_page.copy_failed.connect(self.copy_failed)
         self.pages.addWidget(self.add_page)
         self.pages.currentChanged.connect(self.page_changed)
         self.list_scroll = 0
@@ -667,7 +670,7 @@ class LauncherWindow(TrayMixin):
         self.refresh_menu_names()
         self.automatic_self_check(notify=True)
         if (
-            self.task is None
+            not self.busy
             and not self.checks.busy
             and not self.close_after_release
             and not self.quitting
@@ -853,12 +856,14 @@ class LauncherWindow(TrayMixin):
             self.pinned.discard(app_id)
         elif len(self.pinned) < MAX_PINNED:
             self.pinned.add(app_id)
+        else:
+            self.footer.setText(f"You can pin up to {MAX_PINNED} apps.")
         self.settings.setValue("library/pinned", json.dumps(sorted(self.pinned)))
         self.refresh()
 
     def toggle_hold(self, app_id: str) -> None:
         app = next((app for app in self.apps if app.id == app_id), None)
-        if app is None or self.task is not None:
+        if app is None or self.busy:
             return
         held = not app.hold_updates
         try:
@@ -917,7 +922,7 @@ class LauncherWindow(TrayMixin):
             card.set_state(
                 self.installed.get(app_id),
                 self.releases.get(app_id),
-                self.task is not None,
+                self.busy,
                 self.check_errors.get(app_id, ""),
                 self.release_infos.get(app_id),
                 self.checks.is_checking(app_id),
@@ -943,7 +948,7 @@ class LauncherWindow(TrayMixin):
             row.move_down_action.setEnabled(
                 reorder and index + 1 < len(shown) and shown[index + 1].pinned == row.pinned
             )
-        self.nav_add.setEnabled(self.task is None)
+        self.nav_add.setEnabled(not self.busy)
         self.settings_page.update_state()
         self.add_page.update_state()
         self.search.setPlaceholderText(
@@ -958,7 +963,7 @@ class LauncherWindow(TrayMixin):
                 for app_id, item in self.installed.items()
             )
         )
-        self.update_all_button.setEnabled(self.task is None)
+        self.update_all_button.setEnabled(not self.busy)
         self.review_button.setVisible(not updates_view)
         self.banner_close_button.setVisible(not updates_view)
         self.show_self_banner()
@@ -989,9 +994,9 @@ class LauncherWindow(TrayMixin):
         self.scroll_area.setVisible(bool(visible))
         self.empty.setVisible(not visible and bool(self.apps))
         self.welcome.setVisible(not self.apps)
-        self.welcome_add_button.setEnabled(self.task is None)
-        self.welcome_import_button.setEnabled(self.task is None)
-        self.welcome_example_button.setEnabled(self.task is None)
+        self.welcome_add_button.setEnabled(not self.busy)
+        self.welcome_import_button.setEnabled(not self.busy)
+        self.welcome_example_button.setEnabled(not self.busy)
         if self.app_page.app_id is not None:
             if any(app.id == self.app_page.app_id for app in self.apps):
                 self.app_page.refresh()
@@ -1011,6 +1016,13 @@ class LauncherWindow(TrayMixin):
             self.empty.setText("No apps are installed.\nChoose Install from All to get started.")
         else:
             self.empty.setText("No apps match your search.\nTry another name or clear the search.")
+
+    @property
+    def busy(self) -> bool:
+        """A window task or an Add-page file copy is running; actions that change files wait."""
+        # The pages are built after the first reads of this, so the Add page may not exist yet.
+        add_page = getattr(self, "add_page", None)
+        return self.task is not None or (add_page is not None and add_page.copying)
 
     @property
     def installed_only(self) -> bool:
@@ -1131,12 +1143,22 @@ class LauncherWindow(TrayMixin):
             self.settings_page.focus_section()
 
     def open_add_app(self) -> None:
-        if self.task is not None:
+        if self.busy:
             return
         self.add_page.start()
         self.show_page(self.add_page)
         self.add_page.url.setFocus()
         self.nav_add.setChecked(True)
+
+    def copy_changed(self) -> None:
+        """A file copy on the Add page started or ended: other actions wait, or may go on."""
+        self.refresh()
+        self.notify_when_idle()
+
+    def copy_failed(self, error: str) -> None:
+        """The Add page was left before its file copy failed, so its status line is not seen."""
+        self.footer.setText(f"Couldn't add the file: {error}")
+        MessageBox.warning(self, "Couldn't add the file", error)
 
     def app_added(self, app_id: str, warning: str) -> None:
         self.catalog_changed()
@@ -1153,7 +1175,7 @@ class LauncherWindow(TrayMixin):
         self.app_page.choose_build()
 
     def review_orphans(self) -> None:
-        if self.task is not None:
+        if self.busy:
             return
         dialog = OrphansDialog(self.orphans, self)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected():
@@ -1256,6 +1278,9 @@ class LauncherWindow(TrayMixin):
         if installed is None:
             self.scan_installed()
             return
+        if app_id in self.working:
+            self.footer.setText(f"Wait for {app.name} to finish, then launch it.")
+            return
         self.library.reap_processes()
         if self.library.processes.get(app_id) is not None:
             self.footer.setText(f"{app.name} is already running.")
@@ -1296,8 +1321,9 @@ class LauncherWindow(TrayMixin):
         page: AppPage | None = None,
         working: dict[str, str] | None = None,
         failure: str = "",
+        cancellable: bool = True,
     ) -> None:
-        if self.task is not None:
+        if self.busy:
             return
         self.failure = failure or f"Couldn't finish: {message.rstrip('…. ')}"
         self.working = working or {}
@@ -1314,14 +1340,14 @@ class LauncherWindow(TrayMixin):
         self.progress_bar.show()
         self.cancel_button.setText("Cancel")
         self.cancel_button.setEnabled(True)
-        self.cancel_button.show()
+        self.cancel_button.setVisible(cancellable)
         self.refresh()
         QThreadPool.globalInstance().start(self.task)
 
     def check_releases(self, app_id: str, page: AppPage | None = None) -> None:
         """A full release check of one app, even an uninstalled one (never downloads the app)."""
         app = next((app for app in self.apps if app.id == app_id), None)
-        if app is None or self.task is not None:
+        if app is None or self.busy:
             return
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
@@ -1475,6 +1501,8 @@ class LauncherWindow(TrayMixin):
         self.apply_results(result)
         self.reset_task()
         self.footer.setText(self.with_move_notice(result.message))
+        if result.message and not self.close_after_task and not self.quitting:
+            self.tray_message("Finished", result.message)
         if result.downloaded is not None:
             self.self_update_downloaded(result.downloaded)
         if result.placed is not None:
@@ -1491,6 +1519,8 @@ class LauncherWindow(TrayMixin):
             MessageBox.warning(self, self.failure or "Some operations could not finish", errors)
         if self.close_after_task:
             self.close()
+        else:
+            self.notify_when_idle()
 
     def apply_results(self, result: TaskResult) -> None:
         """Take in what a task (or one app of Update all) found and installed."""
@@ -1531,6 +1561,7 @@ class LauncherWindow(TrayMixin):
             self.close()
         else:
             MessageBox.warning(self, self.failure or "Operation could not finish", error)
+            self.notify_when_idle()
 
     def cancel_task(self) -> None:
         if self.task is not None:
@@ -1574,6 +1605,24 @@ class LauncherWindow(TrayMixin):
         self.refresh_menu_names()
         self.start_self_check(explicit=True)
         self.refresh_releases(force=True)
+
+    def tray_check_for_updates(self) -> None:
+        """The tray command: as the toolbar's, and a hidden window gets the result as a message."""
+        self.tray_check_pending = True
+        self.check_for_updates()
+        if not self.checks.busy:
+            self.tray_check_pending = False
+
+    def tray_check_result(self) -> None:
+        """Tell a user who started a check from the tray, with the window hidden, how it went."""
+        count = sum(self.has_update(app.id) for app in self.apps)
+        if any(app_id in self.installed for app_id in self.release_errors):
+            text = "Couldn't check for updates. Try again later."
+        elif count:
+            text = f"{count} update{'s' if count != 1 else ''} available."
+        else:
+            text = "Everything is up to date."
+        self.tray_message("Update check", text)
 
     def automatic_self_check(self, *, notify: bool = False) -> None:
         """Startup and scheduled checks of AppGlider itself; none when updates are manual."""
@@ -1661,7 +1710,7 @@ class LauncherWindow(TrayMixin):
         if self.offline_timer.isActive():
             return
         if (self.notify_pending or self.self_notify) and self.self_task is None:
-            if not self.checks.busy:
+            if not self.checks.busy and not self.busy:
                 self.notify_pending = self.self_notify = False
                 self.notify_updates()
 
@@ -1684,7 +1733,10 @@ class LauncherWindow(TrayMixin):
             self.self_notes_button.hide()
             self.self_update_button.setText("Restart now")
             self.self_update_button.setAccessibleName(f"Restart now to use AppGlider {version}")
-            self.self_update_button.setEnabled(self.task is None and not self.checks.busy)
+            self.self_update_button.setEnabled(not self.busy and not self.checks.busy)
+            self.self_update_button.setToolTip(
+                "Waits for the update check to finish." if self.checks.busy else ""
+            )
             return
         image = self_update.running_image()
         replaceable = image is not None and self_update.can_replace(image)
@@ -1697,7 +1749,8 @@ class LauncherWindow(TrayMixin):
         self.self_update_button.setAccessibleName(
             "Update AppGlider" if replaceable else "AppGlider releases on GitHub"
         )
-        self.self_update_button.setEnabled(self.task is None or not replaceable)
+        self.self_update_button.setToolTip("")
+        self.self_update_button.setEnabled(not self.busy or not replaceable)
 
     def open_self_release(self) -> None:
         QDesktopServices.openUrl(QUrl(self.self_state.url))
@@ -1715,7 +1768,7 @@ class LauncherWindow(TrayMixin):
             self.open_self_release()
             return
         tag, version = self.self_state.tag, self.self_state.version
-        if self.task is not None or not version:
+        if self.busy or not version:
             return
         cache_dir = self.library.data_dir / "release-cache"
 
@@ -1752,7 +1805,10 @@ class LauncherWindow(TrayMixin):
     def move_self(self, folder: Path) -> None:
         """Copy the running AppImage into `folder`, then start the copy, which removes this one."""
         image = self_update.running_image()
-        if image is None or self.task is not None or self.checks.busy:
+        if image is None or self.busy:
+            return
+        if self.checks.busy:
+            self.footer.setText(WAIT_FOR_CHECK)
             return
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
@@ -1761,7 +1817,7 @@ class LauncherWindow(TrayMixin):
             if older and replaceable(target) and running(target):
                 raise ValueError(f"The copy of AppGlider in {folder} is running. Close it first.")
             # A copy of the same name already there is an older AppGlider: the new one replaces it.
-            placed = place_appimage(image, folder, replace=True)
+            placed = place_appimage(image, folder, cancel, replace=True)
             return TaskResult(f"AppGlider is now in {folder}.", placed=placed)
 
         self.start_task("Moving AppGlider…", operation, failure="Couldn't move AppGlider")
@@ -1779,7 +1835,10 @@ class LauncherWindow(TrayMixin):
     def restart_self(self) -> None:
         """Start the downloaded AppGlider, which waits for this one to quit, then quit."""
         ready = self.self_ready
-        if ready is None or self.task is not None or self.checks.busy:
+        if ready is None or self.busy:
+            return
+        if self.checks.busy:
+            self.footer.setText(WAIT_FOR_CHECK)
             return
         self.start_image(ready.path, f"AppGlider {ready.version}")
 
@@ -1878,6 +1937,9 @@ class LauncherWindow(TrayMixin):
         self.retry_when_offline()
         self.refresh()
         self.notify_when_idle()
+        if self.tray_check_pending:
+            self.tray_check_pending = False
+            self.tray_check_result()
         offline = bool(self.offline_apps())
         if self.task is None and self.offline_timer.isActive():
             seconds = self.offline_timer.remainingTime() // 1000 + 1
@@ -1970,7 +2032,7 @@ class LauncherWindow(TrayMixin):
             and self.installed[app.id].managed
         ]
 
-        if not apps or self.task is not None:
+        if not apps or self.busy:
             return
         versions = {app.id: self.installed[app.id].version for app in apps}
         # Each app is reported as it finishes, so its row changes without waiting for the rest.
@@ -2002,7 +2064,7 @@ class LauncherWindow(TrayMixin):
                     part.releases[app.id] = release
                     if release.newer_than(versions[app.id]):
                         updated.append(app.id)
-                except (Cancelled, AppRunning):
+                except Cancelled:
                     raise
                 except BuildChoiceRequired as error:
                     result.build_choices[app.id] = error
@@ -2031,7 +2093,7 @@ class LauncherWindow(TrayMixin):
     def replace_file(self, app_id: str) -> None:
         """Ask for a newer AppImage and make it the app's file; the old one stays for Roll back."""
         app = next((app for app in self.apps if app.id == app_id), None)
-        if app is None or not app.manual or self.task is not None:
+        if app is None or not app.manual or self.busy:
             return
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -2078,7 +2140,10 @@ class LauncherWindow(TrayMixin):
             return TaskResult(f"Restored the previous {app.name} version.")
 
         self.start_task(
-            f"Restoring {app.name}…", operation, failure=f"Couldn't roll back {app.name}"
+            f"Restoring {app.name}…",
+            operation,
+            failure=f"Couldn't roll back {app.name}",
+            cancellable=False,
         )
 
     def remove_app(self, app_id: str) -> None:
@@ -2094,7 +2159,7 @@ class LauncherWindow(TrayMixin):
                 "Remove this app and its previous version from AppGlider?\n"
                 "Your documents and application settings will be kept."
             )
-        answer = MessageBox.question(self, f"Remove {app.name}?", question)
+        answer = MessageBox.question(self, f"Uninstall {app.name}?", question)
         if answer != QMessageBox.StandardButton.Yes:
             return
 
@@ -2106,12 +2171,17 @@ class LauncherWindow(TrayMixin):
                 self.library.remove(app)
             return TaskResult(f"Removed {app.name}.")
 
-        self.start_task(f"Removing {app.name}…", operation, failure=f"Couldn't remove {app.name}")
+        self.start_task(
+            f"Removing {app.name}…",
+            operation,
+            failure=f"Couldn't remove {app.name}",
+            cancellable=False,
+        )
 
     def forget_missing(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
         missing = self.missing.get(app_id)
-        if self.task is not None or missing is None:
+        if self.busy or missing is None:
             return
         answer = MessageBox.question(
             self,
@@ -2143,7 +2213,7 @@ class LauncherWindow(TrayMixin):
     def remove_from_library(self, app_id: str) -> None:
         """Remove a repository whose app is not installed, after a confirmation."""
         app = next((app for app in self.apps if app.id == app_id), None)
-        if app is None or self.task is not None or app_id in self.installed:
+        if app is None or self.busy or app_id in self.installed:
             return
         answer = MessageBox.question(
             self,

@@ -67,6 +67,8 @@ class AddPage(QScrollArea):
     """Add-an-application flow. Leaving the page cancels a running search and drops its result."""
 
     added = Signal(str, str)  # app id, a warning to append to the footer message
+    copy_changed = Signal()  # a file copy started or ended
+    copy_failed = Signal(str)  # a copy failed after the page was left: the error to show
 
     def __init__(self, launcher: "LauncherWindow") -> None:
         super().__init__()
@@ -641,6 +643,7 @@ class AddPage(QScrollArea):
         self.task.signals.failed.connect(self.file_add_failed)
         self.set_busy(True)
         self.status.setText(f"Copying {chosen.source.name}…")
+        self.copy_changed.emit()
         QThreadPool.globalInstance().start(self.task)
 
     def cancel_copy(self) -> None:
@@ -655,6 +658,7 @@ class AddPage(QScrollArea):
     def file_added(self, result: TaskResult) -> None:
         self.task = None
         self.copying = False
+        self.copy_changed.emit()
         cancelled, self.cancelling = self.cancelling, False
         app = result.added
         if self.closing:
@@ -679,9 +683,15 @@ class AddPage(QScrollArea):
         self.task = None
         self.copying = False
         self.cancelling = False
+        left = self.closing or self.launcher.pages.currentWidget() is not self
         self.closing = False
+        if left:
+            self.invalidate_preview()
         self.set_busy(False)
         self.status.setText(error)
+        self.copy_changed.emit()
+        if left:
+            self.copy_failed.emit(error)
 
     def add_repository(self) -> None:
         if self.copying:

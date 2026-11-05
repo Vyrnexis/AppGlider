@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from threading import Event
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -24,6 +24,7 @@ from appglider.install.desktopentry import read_identity
 from appglider.install.library import AppRunning, Library, previous_copy
 from appglider.install.place import FileDetails, name_from_file, version_from_name
 from appglider.ui.app_status import app_status
+from appglider.ui.jobs import TaskResult
 from appglider.ui.window import LauncherWindow
 
 NAME = "Sketchpad-1.2.0-x86_64.AppImage"
@@ -305,6 +306,52 @@ class ManualGuiTests(Base):
         self.assertIn(self.library.apps[-1].id, window.cards)
         self.assertIs(window.pages.currentWidget(), window.settings_page)  # not pulled away
         self.assertEqual(window.footer.text(), "Added My Sketchpad.")
+
+    def test_other_actions_wait_while_a_file_is_copied(self) -> None:
+        page, window = self.window.add_page, self.window
+        self.choose(self.source())
+        page.name.setText("My Sketchpad")
+        release = Event()
+        self.addCleanup(release.set)
+
+        def slow(app, source, version, png, cancel=None, **kwargs):
+            release.wait(5)
+            return ""
+
+        with patch.object(self.library, "add_file", side_effect=slow):
+            page.add_button.click()
+            self.assertTrue(window.busy)
+            self.assertFalse(window.nav_add.isEnabled())
+            window.start_task("Working…", lambda cancel, progress: TaskResult("ok"))
+            self.assertIsNone(window.task)
+            release.set()
+            self.wait(lambda: page.task is None)
+        self.assertFalse(window.busy)
+
+    def failing_copy(self, *, leave: bool) -> Mock:
+        page, window = self.window.add_page, self.window
+        self.choose(self.source())
+        page.name.setText("My Sketchpad")
+        with (
+            patch.object(self.library, "add_file", side_effect=ValueError("No space left.")),
+            patch("appglider.ui.window.MessageBox.warning") as warning,
+        ):
+            page.add_button.click()
+            if leave:
+                window.show_page(window.settings_page)
+                page.leave()
+            self.wait(lambda: page.task is None)
+        return warning
+
+    def test_a_copy_that_fails_after_leaving_the_page_opens_a_dialog(self) -> None:
+        warning = self.failing_copy(leave=True)
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[1:], ("Couldn't add the file", "No space left."))
+
+    def test_a_copy_that_fails_on_the_page_keeps_the_inline_status(self) -> None:
+        warning = self.failing_copy(leave=False)
+        warning.assert_not_called()
+        self.assertEqual(self.window.add_page.status.text(), "No space left.")
 
     def test_the_add_button_becomes_cancel_while_a_file_is_copied(self) -> None:
         page = self.window.add_page
