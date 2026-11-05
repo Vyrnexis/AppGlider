@@ -52,6 +52,20 @@ class PlaceTests(unittest.TestCase):
         self.assertEqual((self.folder / NAME).read_bytes(), b"other")
         self.assertEqual([p.name for p in self.folder.iterdir()], [NAME])
 
+    def test_replace_takes_the_place_of_an_older_appimage_of_the_same_name(self) -> None:
+        self.folder.mkdir()
+        (self.folder / NAME).write_bytes(appimage_bytes(b"older"))
+        placed = place_appimage(self.source, self.folder, replace=True)
+        self.assertEqual(placed.read_bytes(), self.source.read_bytes())
+        self.assertEqual([p.name for p in self.folder.iterdir()], [NAME])
+
+    def test_replace_still_keeps_a_file_that_is_not_an_appimage(self) -> None:
+        self.folder.mkdir()
+        (self.folder / NAME).write_bytes(b"other")
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            place_appimage(self.source, self.folder, replace=True)
+        self.assertEqual((self.folder / NAME).read_bytes(), b"other")
+
     def test_the_same_file_is_not_copied_onto_itself(self) -> None:
         self.assertEqual(place_appimage(self.source, self.source.parent), self.source)
         self.assertEqual([p.name for p in self.source.parent.iterdir()], [NAME])
@@ -215,6 +229,41 @@ class MoveSelfTests(unittest.TestCase):
         self.assertTrue(self.image.exists())
         self.assertEqual(self.settings.value(self_update.REPLACED_KEY), str(self.image))
         self.assertEqual(self.settings.value(self_update.READY_KEY), str(new))
+
+    def test_moving_replaces_an_older_copy_already_in_the_folder(self) -> None:
+        (self.apps / NAME).write_bytes(appimage_bytes(b"older"))
+        started: list[tuple[Path, str]] = []
+        with (
+            patch("appglider.install.self_update.running_image", return_value=self.image),
+            patch("appglider.ui.window.running", return_value=False),
+            patch.object(
+                self.window, "start_image", side_effect=lambda p, n: started.append((p, n))
+            ),
+            patch.object(self.window, "point_entries_at", return_value=[]),
+        ):
+            self.click_move()
+            deadline = time.monotonic() + 5
+            while self.window.task is not None and time.monotonic() < deadline:
+                QTest.qWait(10)
+        new = self.apps / NAME
+        self.assertEqual([p for p, _ in started], [new])
+        self.assertEqual(new.read_bytes(), self.image.read_bytes())
+
+    def test_a_running_copy_in_the_folder_is_not_replaced(self) -> None:
+        (self.apps / NAME).write_bytes(appimage_bytes(b"older"))
+        with (
+            patch("appglider.install.self_update.running_image", return_value=self.image),
+            patch("appglider.ui.window.running", return_value=True),
+            patch.object(self.window, "start_image") as start,
+            patch("appglider.ui.window.MessageBox.warning") as warning,
+        ):
+            self.click_move()
+            deadline = time.monotonic() + 5
+            while self.window.task is not None and time.monotonic() < deadline:
+                QTest.qWait(10)
+        start.assert_not_called()
+        self.assertIn("is running", warning.call_args.args[2])
+        self.assertEqual((self.apps / NAME).read_bytes(), appimage_bytes(b"older"))
 
     def test_a_refused_move_says_so_in_plain_text_and_does_not_restart(self) -> None:
         (self.apps / NAME).write_bytes(b"other")

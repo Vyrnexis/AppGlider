@@ -806,11 +806,12 @@ class SettingsPage(QWidget):
         if image is None:
             return
         folder = Path(self.folder.text()).expanduser()
-        answer = MessageBox.question(
-            self,
-            "Move AppGlider here?",
+        text = (
             f"AppGlider copies itself to {folder} and restarts from the new copy. "
-            f"The old file, {image}, is then removed.",
+            f"The old file, {image}, is then removed."
         )
+        if (folder / image.name).exists():
+            text += f" The copy of {image.name} already in that folder is replaced."
+        answer = MessageBox.question(self, "Move AppGlider here?", text)
         if answer == QMessageBox.StandardButton.Yes and self.apply_folder():
             self.launcher.move_self(Path(self.applied_folder).expanduser())

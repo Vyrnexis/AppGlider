@@ -99,8 +99,15 @@ from appglider.install.appimage import (
     fuse_explanation,
     log_tail,
 )
-from appglider.install.library import AppRunning, Installed, Library, Orphan, previous_copy
-from appglider.install.place import describe_appimage, place_appimage
+from appglider.install.library import (
+    AppRunning,
+    Installed,
+    Library,
+    Orphan,
+    previous_copy,
+    running,
+)
+from appglider.install.place import describe_appimage, place_appimage, replaceable
 from appglider.ui.app_status import WAITING
 from appglider.ui.controls import MessageBox
 from appglider.ui.errors import describe_error
@@ -1749,7 +1756,12 @@ class LauncherWindow(TrayMixin):
             return
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
-            placed = place_appimage(image, folder)
+            target = folder / image.name
+            older = target.exists() and not self_update.same_file(target, image)
+            if older and replaceable(target) and running(target):
+                raise ValueError(f"The copy of AppGlider in {folder} is running. Close it first.")
+            # A copy of the same name already there is an older AppGlider: the new one replaces it.
+            placed = place_appimage(image, folder, replace=True)
             return TaskResult(f"AppGlider is now in {folder}.", placed=placed)
 
         self.start_task("Moving AppGlider…", operation, failure="Couldn't move AppGlider")

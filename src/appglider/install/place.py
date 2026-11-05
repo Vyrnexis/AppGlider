@@ -36,13 +36,16 @@ def _copy_chunks(source: Path, stage: Path, cancel: Event | None) -> None:
         check_cancel(cancel)
 
 
-def place_appimage(source: Path, folder: Path, cancel: Event | None = None) -> Path:
+def place_appimage(
+    source: Path, folder: Path, cancel: Event | None = None, *, replace: bool = False
+) -> Path:
     """Copy `source` into `folder` and return the new file; the source is never changed.
 
     The copy is made under a hidden temporary name, checked and made executable, and only
     then renamed, so a failure leaves nothing behind. A file already there under that name
-    is never replaced; when it is the source itself, nothing is copied. When `cancel` is set
-    during the copy, the temporary file is removed and `Cancelled` is raised.
+    is kept, unless `replace` is set and it is an AppImage itself; when it is the source,
+    nothing is copied. When `cancel` is set during the copy, the temporary file is removed
+    and `Cancelled` is raised.
     """
     if source.is_symlink() or not source.is_file():
         raise ValueError(f"{source.name} is not a plain file.")
@@ -50,7 +53,8 @@ def place_appimage(source: Path, folder: Path, cancel: Event | None = None) -> P
     if os.path.lexists(target):
         if target.is_file() and not target.is_symlink() and target.samefile(source):
             return target
-        raise ValueError(f"{source.name} already exists in {folder}.")
+        if not (replace and replaceable(target)):
+            raise ValueError(f"{source.name} already exists in {folder}.")
     folder.mkdir(parents=True, exist_ok=True)
     if shutil.disk_usage(folder).free < source.stat().st_size + FREE_SPACE_MARGIN:
         raise ValueError(f"There is not enough free disk space in {folder}.")
@@ -65,6 +69,17 @@ def place_appimage(source: Path, folder: Path, cancel: Event | None = None) -> P
     finally:
         stage.unlink(missing_ok=True)
     return target
+
+
+def replaceable(target: Path) -> bool:
+    """Whether `target` is a plain AppImage file that a newer copy may take the place of."""
+    if target.is_symlink() or not target.is_file():
+        return False
+    try:
+        check_appimage(target)
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 # File-name words that come after the application's name: the CPU and the system.
