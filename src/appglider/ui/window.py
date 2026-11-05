@@ -1496,11 +1496,20 @@ class LauncherWindow(TrayMixin):
         notice, self.move_notice = self.move_notice, ""
         return f"{message} {notice}" if notice else message
 
+    @staticmethod
+    def with_warnings(result: TaskResult) -> str:
+        """The result's message, followed by what its after-install commands reported."""
+        if not result.warnings:
+            return result.message
+        found = list(result.warnings.values())
+        extra = found[0] if len(found) == 1 else f"{len(found)} after-install commands failed."
+        return f"{result.message} {extra}".strip()
+
     def task_finished(self, result: TaskResult) -> None:
         self.show_moves()
         self.apply_results(result)
         self.reset_task()
-        self.footer.setText(self.with_move_notice(result.message))
+        self.footer.setText(self.with_move_notice(self.with_warnings(result)))
         if result.message and not self.close_after_task and not self.quitting:
             self.tray_message("Finished", result.message)
         if result.downloaded is not None:
@@ -1511,6 +1520,10 @@ class LauncherWindow(TrayMixin):
             self.choose_build(next(iter(result.build_choices)))
         if result.running and not self.close_after_task:
             self.offer_force_close(result.running, result.message)
+        if result.warnings and not self.close_after_task:
+            MessageBox.warning(
+                self, "An install command needs a look", "\n\n".join(result.warnings.values())
+            )
         if result.errors and not self.close_after_task:
             names = {app.id: app.name for app in self.apps}
             errors = "\n\n".join(
@@ -2002,14 +2015,18 @@ class LauncherWindow(TrayMixin):
             release = latest_release(app, cancel, self.library.data_dir / "release-cache")
             if installed and not release.newer_than(installed.version):
                 return TaskResult(f"{app.name} is already up to date.", {app_id: release})
+            found: list[str] = []
             self.library.install(
                 app,
                 release,
                 cancel,
                 lambda message, done, total: progress(f"{app.name} · {message}", done, total),
+                found,
             )
             return TaskResult(
-                f"{app.name} v{release.version} is ready to launch.", {app_id: release}
+                f"{app.name} v{release.version} is ready to launch.",
+                {app_id: release},
+                warnings={app_id: found[0]} if found else {},
             )
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
@@ -2038,7 +2055,7 @@ class LauncherWindow(TrayMixin):
         # Each app is reported as it finishes, so its row changes without waiting for the rest.
         steps = self.update_steps.step
 
-        def update(app: App, cancel: Event, progress: Progress) -> Release:
+        def update(app: App, cancel: Event, progress: Progress, found: list[str]) -> Release:
             release = latest_release(app, cancel, self.library.data_dir / "release-cache")
             if release.newer_than(versions[app.id]):
                 self.library.install(
@@ -2046,6 +2063,7 @@ class LauncherWindow(TrayMixin):
                     release,
                     cancel,
                     lambda message, done, total: progress(f"{app.name} · {message}", done, total),
+                    found,
                 )
             return release
 
@@ -2057,9 +2075,10 @@ class LauncherWindow(TrayMixin):
                 check_cancel(cancel)
                 progress(f"Checking {app.name}…", 0, 0)
                 part = TaskResult("")
+                found: list[str] = []
                 try:
                     release = self.library.following_moves(
-                        app, lambda app: update(app, cancel, progress)
+                        app, lambda app: update(app, cancel, progress, found)
                     )
                     part.releases[app.id] = release
                     if release.newer_than(versions[app.id]):
@@ -2077,6 +2096,8 @@ class LauncherWindow(TrayMixin):
                     part.errors[app.id] = describe_error(error)
                 result.releases.update(part.releases)
                 result.errors.update(part.errors)
+                if found:
+                    result.warnings[app.id] = found[0]
                 steps.emit(app.id, part)
             result.message = update_all_message(len(updated), len(result.errors), stopped)
             return result
@@ -2110,10 +2131,20 @@ class LauncherWindow(TrayMixin):
             details = describe_appimage(source)
             check_cancel(cancel)
             progress(f"Copying {source.name}…", 0, 0)
+            found: list[str] = []
             self.library.replace_file(
-                app, source, details.version, cancel, identify=bool(details.note)
+                app,
+                source,
+                details.version,
+                cancel,
+                identify=bool(details.note),
+                progress=progress,
+                warnings=found,
             )
-            return TaskResult(f"Replaced {app.name} with {source.name}. The old file is kept.")
+            return TaskResult(
+                f"Replaced {app.name} with {source.name}. The old file is kept.",
+                warnings={app.id: found[0]} if found else {},
+            )
 
         self.start_task(
             f"Replacing {app.name}…",

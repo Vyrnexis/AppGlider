@@ -4,6 +4,8 @@ import json
 
 from PySide6.QtCore import QSettings
 
+from appglider.install.hooks import InstallCommands
+
 SYSTEM_THEME = "System"
 THEME_CHOICES = [SYSTEM_THEME, "Light", "Dark"]
 # Accent -> (dark value, light value).
@@ -32,6 +34,8 @@ CHECK_INTERVALS = (
 )
 DEFAULT_CHECK_HOURS = 6
 MAX_PINNED = 100
+BEFORE_COMMAND_KEY = "install/before-command"
+AFTER_COMMAND_KEY = "install/after-command"
 
 
 def appearance_choice(settings: QSettings) -> tuple[str, str]:
@@ -54,6 +58,19 @@ def check_interval_hours(settings: QSettings) -> int:
     except ValueError:
         return DEFAULT_CHECK_HOURS
     return hours if hours in {value for _, value in CHECK_INTERVALS} else DEFAULT_CHECK_HOURS
+
+
+def _command_text(settings: QSettings, key: str) -> str:
+    value = settings.value(key, "")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def install_commands(settings: QSettings) -> InstallCommands:
+    """The commands to run before and after installing; anything unreadable counts as off."""
+    return InstallCommands(
+        before=_command_text(settings, BEFORE_COMMAND_KEY),
+        after=_command_text(settings, AFTER_COMMAND_KEY),
+    )
 
 
 def pinned_apps(settings: QSettings) -> set[str]:

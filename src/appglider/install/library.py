@@ -46,6 +46,7 @@ from appglider.github.versions import VERSION, check_cancel, release_version, ve
 from appglider.install.appimage import FREE_SPACE_MARGIN as FREE_SPACE_MARGIN  # re-exported
 from appglider.install.appimage import check_appimage, clean_environment
 from appglider.install.desktopentry import read_identity
+from appglider.install.hooks import InstallCommands, run_after, run_before
 from appglider.install.launch_options import LaunchOptions, load_launch_options, options_json
 from appglider.install.place import name_from_file, place_appimage
 from appglider.install.shortcuts import DEFAULT_DATA_DIRS, ShortcutsMixin
@@ -60,6 +61,10 @@ MAX_APPS = 100
 FORCE_CLOSE_GRACE = 2.0
 
 _T = TypeVar("_T")
+
+
+def _ignore_progress(message: str, received: int, total: int) -> None:
+    pass
 
 
 @dataclass(frozen=True)
@@ -385,6 +390,7 @@ class Library(ShortcutsMixin):
         self.autostart_dir = (
             autostart_dir if autostart_dir is not None else xdg_config / "autostart"
         )
+        self.commands = InstallCommands()  # the user's before/after-install commands
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
         # (app name, old repository, new repository) for each move not yet shown.
         self.moves: list[tuple[str, str, str]] = []
@@ -1106,7 +1112,18 @@ class Library(ShortcutsMixin):
                 marker.unlink()
                 root.rmdir()
 
-    def install(self, app: App, release: Release, cancel: Event, progress: Progress) -> Installed:
+    def install(
+        self,
+        app: App,
+        release: Release,
+        cancel: Event,
+        progress: Progress,
+        warnings: list[str] | None = None,
+    ) -> Installed:
+        """Download, verify and activate a release.
+
+        A warning about the after-install command is appended to `warnings`, when given.
+        """
         # The download runs outside the library lock so other changes are not blocked by it.
         with self._lock():
             plan = self._prepare_install(app, release)
@@ -1126,6 +1143,17 @@ class Library(ShortcutsMixin):
                     raise ValueError("There is not enough free disk space for this download.")
                 download(release, stage, cancel, progress)
                 check_appimage(stage)
+            run_before(
+                self.commands,
+                app,
+                stage if stage is not None else plan.destination,
+                release.version,
+                (plan.old.version if plan.old else "") or "",
+                cancel,
+                progress,
+                "Your current version was kept." if plan.old else f"{app.name} was not installed.",
+            )
+            if stage is not None:
                 stage.chmod(0o755)
             check_cancel(cancel)
             # Reading the menu metadata runs the AppImage's own runtime, so it happens here,
@@ -1150,12 +1178,25 @@ class Library(ShortcutsMixin):
                     ) from error
             self.update_desktop_database()
         except BaseException:
+            if stage is not None:
+                stage.unlink(missing_ok=True)  # so a folder made for this install can go
             if plan.made_root and not plan.exists:
                 self._remove_empty_root(plan.root)
             raise
         finally:
             if stage is not None:
                 stage.unlink(missing_ok=True)
+        warning = run_after(
+            self.commands,
+            app,
+            installed.path,
+            release.version,
+            (plan.old.version if plan.old else "") or "",
+            cancel,
+            progress,
+        )
+        if warning and warnings is not None:
+            warnings.append(warning)
         return installed
 
     def _activate_install(
@@ -1386,6 +1427,8 @@ class Library(ShortcutsMixin):
         icon: bytes | None,
         cancel: Event | None = None,
         identify: bool = False,
+        progress: Progress | None = None,
+        warnings: list[str] | None = None,
     ) -> str:
         """Copy an AppImage from this computer into the library as a new app.
 
@@ -1393,6 +1436,8 @@ class Library(ShortcutsMixin):
         like any install; the original is never changed. Returns a warning to show, or "".
         With `identify`, the name (when it is still the one from the file name), version and
         icon are read from the placed copy, which runs its runtime. `cancel` stops the copy.
+        The before-install command runs on the placed copy and can stop the add; a warning
+        about the after-install command is appended to `warnings`, when given.
         """
         if app != manual_app(app.name, app.file, app_id=app.id) or source.name != app.file:
             raise ValueError("Invalid file details.")
@@ -1420,6 +1465,16 @@ class Library(ShortcutsMixin):
             if identify:
                 app, version, png = self._identified(app, source, placed, version, png, cancel)
             metadata = self.read_desktop_metadata(app, placed, placed)
+            run_before(
+                self.commands,
+                app,
+                placed,
+                version,
+                "",
+                cancel or Event(),
+                progress or _ignore_progress,
+                f"{app.name} was not added.",
+            )
             warning = ""
             with self._lock():
                 apps = self.apps
@@ -1449,6 +1504,17 @@ class Library(ShortcutsMixin):
                     warning += f" Its menu shortcut could not be saved: {error}"
             with contextlib.suppress(OSError, subprocess.SubprocessError):
                 self.update_desktop_database()
+            hook_warning = run_after(
+                self.commands,
+                app,
+                placed,
+                version,
+                "",
+                cancel or Event(),
+                progress or _ignore_progress,
+            )
+            if hook_warning and warnings is not None:
+                warnings.append(hook_warning)
         except BaseException:
             if committed:
                 raise
@@ -1497,12 +1563,16 @@ class Library(ShortcutsMixin):
         version: str,
         cancel: Event | None = None,
         identify: bool = False,
+        progress: Progress | None = None,
+        warnings: list[str] | None = None,
     ) -> None:
         """Make a newer AppImage from this computer the active file, keeping the old one.
 
         The old file becomes the roll-back copy (the one before it is removed), exactly as
         after an update, and portable-mode folders follow the active file. With `identify`, the
         version is read from the placed copy (which runs its runtime); `cancel` stops the copy.
+        The before-install command runs on the placed copy and can stop the replacement; a
+        warning about the after-install command is appended to `warnings`, when given.
         """
         version = self._manual_version(version)
         if not valid_file_name(source.name):
@@ -1528,6 +1598,16 @@ class Library(ShortcutsMixin):
             if identify:
                 version = self._identified(current, source, placed, version, None, cancel)[1]
             metadata = self.read_desktop_metadata(current, placed, placed)
+            run_before(
+                self.commands,
+                current,
+                placed,
+                version,
+                old.version or "",
+                cancel or Event(),
+                progress or _ignore_progress,
+                "Your current version was kept.",
+            )
             with self._lock():
                 records = self.records()
                 if records.get(app.id) != old:
@@ -1571,6 +1651,17 @@ class Library(ShortcutsMixin):
                         f"{current.name} was replaced, but its shortcut could not be saved: {error}"
                     ) from error
             self.update_desktop_database()
+            hook_warning = run_after(
+                self.commands,
+                current,
+                placed,
+                version,
+                old.version or "",
+                cancel or Event(),
+                progress or _ignore_progress,
+            )
+            if hook_warning and warnings is not None:
+                warnings.append(hook_warning)
         except BaseException:
             if not activated:
                 with contextlib.suppress(OSError):

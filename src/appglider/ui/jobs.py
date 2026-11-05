@@ -23,6 +23,8 @@ class TaskResult:
     message: str
     releases: dict[str, Release] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
+    # Warnings that need the user's eye, by app id: an after-install command that failed.
+    warnings: dict[str, str] = field(default_factory=dict)
     icons: tuple[IconCandidate, ...] = ()
     release_infos: dict[str, ReleaseInfo] = field(default_factory=dict)
     build_choices: dict[str, BuildChoiceRequired] = field(default_factory=dict)

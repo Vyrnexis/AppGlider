@@ -23,6 +23,7 @@ who want to know exactly what AppGlider does with their system, and for contribu
 - [Renamed and moved repositories](#renamed-and-moved-repositories)
 - [Apps added from a file](#apps-added-from-a-file)
 - [Library recovery](#library-recovery)
+- [Install commands](#install-commands)
 
 ## How release checks work
 
@@ -495,3 +496,20 @@ drops only that entry, AppGlider's own `appglider-<app>.desktop` and the cached 
 plus any entry whose command is the missing path. **Remove from library** does the same as
 part of removing the repository; it still refuses while the managed file exists. Neither
 touches files elsewhere, such as a copy moved to `~/Applications`.
+
+## Install commands
+
+The two commands in **Settings → Updates** (`install/before-command` and
+`install/after-command` in the settings file) are split like a shell would split them, but
+run without a shell. `{file}` is replaced in each argument, or the path is appended when it
+is absent. They run in a clean environment, with the `APPGLIDER_*` variables added.
+
+The before command runs after the download is verified (size and SHA-256 for GitHub
+releases, or the copy for a file) and before the file is made executable or the library
+changes. A non-zero exit, a start failure or the 10 minute timeout stops the install and
+removes what was staged. The after command runs once the new version is active and the
+library is saved; a failure or the 2 minute timeout only produces a warning.
+
+Each command starts in its own process group. On **Cancel** or a timeout the whole group is
+killed, so child processes do not keep running. Rollback and AppGlider's own updates never
+run the commands, and catalog export does not include them.

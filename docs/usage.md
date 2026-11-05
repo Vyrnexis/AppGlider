@@ -30,6 +30,7 @@ sections when you need them. Behind-the-scenes details are in the
 - [Holding a version](#holding-a-version)
 - [Icons](#icons)
 - [Launch options](#launch-options)
+- [Commands before and after installing](#commands-before-and-after-installing)
 
 **AppGlider itself**
 
@@ -386,6 +387,50 @@ as "New window") get the variables but not the arguments. If AppGlider cannot re
 typed, it does not save it and says why. The options are kept when you uninstall the app,
 and are never included when you export a catalog, because a variable can hold a password.
 
+## Commands before and after installing
+
+Under **Settings → Updates** you can name a command to run **before installing** and one to
+run **after installing**. Both are off until you type something. A common use is scanning each
+new AppImage with an antivirus before it is installed. They are the same for every app.
+
+They run for an install, an update, **Update all**, adding an AppImage from a file and
+replacing the file of an app you added by hand. They do not run for **Roll back** or for
+AppGlider's own updates. **Cancel** stops a command that is running.
+
+- **Before installing** runs on the new file once it has been downloaded and checked (its
+  size and checksum), before it is made executable or put in place. If the command fails
+  (exits with an error, takes longer than 10 minutes or cannot start), the install stops and
+  your current version is kept. For an app added from a file, nothing is added.
+- **After installing** runs once the new version is in place. If it fails or takes longer
+  than 2 minutes, you only get a warning; the app stays installed.
+
+Write the command as you would in a terminal. `{file}` is replaced with the path of the
+AppImage; without `{file}`, the path is added at the end. There is no shell, so pipes,
+`&&` and `$VARIABLES` in the command itself do nothing: use `sh -c '…'` for those. The command
+also gets these environment variables, which a script can read:
+
+| Variable | Value |
+| --- | --- |
+| `APPGLIDER_STAGE` | `before` or `after` |
+| `APPGLIDER_FILE` | the path of the AppImage |
+| `APPGLIDER_APP` | the app's name |
+| `APPGLIDER_APP_ID` | the app's identifier |
+| `APPGLIDER_VERSION` | the version being installed |
+| `APPGLIDER_OLD_VERSION` | the version it replaces (empty for a new app) |
+
+Examples:
+
+- Scan with ClamAV before installing: `clamscan --no-summary {file}`. `clamscan` exits with an
+  error when it finds something, so the install stops.
+- Show a notification afterwards:
+  `sh -c 'notify-send "Installed $APPGLIDER_APP $APPGLIDER_VERSION"'`. Or keep a log:
+  `sh -c 'echo "$APPGLIDER_APP $APPGLIDER_VERSION" >> ~/appglider.log'`.
+
+If you type something AppGlider cannot read (for example an unclosed quote), it says why and
+keeps the previous command. The commands run as you, with your permissions, and AppGlider
+only ever runs commands you entered yourself here. They are not included when you export a
+catalog.
+
 ## Settings
 
 Open **Settings** at the bottom of the sidebar. Everything saves as you change it; there is
@@ -395,7 +440,8 @@ no Save button.
 
 1. **Sections**:
    - **General**: theme, accent colour and how the window behaves.
-   - **Updates**: how often to check for updates, and notifications.
+   - **Updates**: how often to check for updates, notifications, and the commands to run
+     before and after installing.
    - **Catalogs**: import a list of apps, add the example list, or export your own.
    - **Storage**: the folder new apps are installed in, moving AppGlider there, and the space
      they use.

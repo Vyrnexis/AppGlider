@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from appglider.core.preferences import install_commands
+from appglider.install.hooks import InstallCommands
 from appglider.install.library import Library
 from appglider.ui.pages.settings_page import checked_folder
 from appglider.ui.theme import THEMES, stylesheet
@@ -203,6 +205,69 @@ class PolishTests(unittest.TestCase):
         with patch.object(self.window, "task", object()):
             page.update_state()
         self.assertEqual(page.folder.text(), applied)
+
+    def test_command_rows_save_and_apply(self) -> None:
+        page = self.window.settings_page
+        page.before_command.setText("  echo {file}  ")
+        page.before_command.editingFinished.emit()
+        page.after_command.setText("echo done")
+        page.after_command.editingFinished.emit()
+        self.assertEqual(self.settings.value("install/before-command"), "echo {file}")
+        self.assertEqual(self.settings.value("install/after-command"), "echo done")
+        self.assertEqual(
+            self.window.library.commands,
+            InstallCommands("echo {file}", "echo done"),
+        )
+        page.after_command.setText("")
+        page.after_command.editingFinished.emit()
+        self.assertEqual(self.window.library.commands.after, "")
+
+    def test_invalid_command_shows_the_problem_and_keeps_the_old_one(self) -> None:
+        page = self.window.settings_page
+        page.before_command.setText("echo {file}")
+        page.before_command.editingFinished.emit()
+        page.before_command.setText("echo 'unclosed")
+        page.before_command.editingFinished.emit()
+        self.assertFalse(page.before_error.isHidden())
+        self.assertNotEqual(page.before_error.text(), "")
+        self.assertEqual(self.settings.value("install/before-command"), "echo {file}")
+        self.assertEqual(self.window.library.commands.before, "echo {file}")
+        page.before_command.setText("echo again")
+        page.before_command.editingFinished.emit()
+        self.assertTrue(page.before_error.isHidden())
+
+    def test_command_rows_wait_for_a_running_task(self) -> None:
+        page = self.window.settings_page
+        page.before_command.setText("echo {file}")
+        page.before_command.editingFinished.emit()
+        page.before_command.setText("echo unapplied")
+        with patch.object(self.window, "task", object()):
+            page.update_state()
+            self.assertFalse(page.before_command.isEnabled())
+            self.assertFalse(page.after_command.isEnabled())
+            self.assertEqual(page.before_command.text(), "echo {file}")
+        page.update_state()
+        self.assertTrue(page.before_command.isEnabled())
+        self.assertTrue(page.after_command.isEnabled())
+
+    def test_saved_commands_apply_at_startup(self) -> None:
+        self.settings.setValue("install/before-command", " echo {file} ")
+        self.settings.setValue("install/after-command", "echo hi")
+        library = Library(
+            Path(self.temp.name) / "data2",
+            Path(self.temp.name) / "apps2",
+            desktop_dir=Path(self.temp.name) / "desktop2",
+        )
+        window = LauncherWindow(self.settings, stock(library))
+        self.addCleanup(close_window, window)
+        self.assertEqual(window.library.commands, InstallCommands("echo {file}", "echo hi"))
+        self.assertEqual(window.settings_page.before_command.text(), "echo {file}")
+
+    def test_install_commands_helper_ignores_bad_values(self) -> None:
+        self.assertEqual(install_commands(self.settings), InstallCommands())
+        self.settings.setValue("install/before-command", ["a", "b"])
+        self.settings.setValue("install/after-command", "  x  ")
+        self.assertEqual(install_commands(self.settings), InstallCommands("", "x"))
 
     def test_move_waits_for_the_update_check(self) -> None:
         page = self.window.settings_page

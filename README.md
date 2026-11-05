@@ -60,6 +60,7 @@ other launchers, are left alone.
 
 - Adds a menu entry for each app, with the category, file types and actions the app asks for.
 - Per-app launch arguments and environment variables.
+- Optional commands to run before and after installing, for example a virus scan.
 - Follows your desktop's light or dark setting, with four accent colours. Can sit in the tray
   and start when you log in.
 - Your own order: drag the rows, or pin favourites to the top.

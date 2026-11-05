@@ -36,7 +36,7 @@ from appglider.github.icons import (
 from appglider.github.release_info import remember_release
 from appglider.github.versions import architecture
 from appglider.install.place import FileDetails, describe_appimage
-from appglider.ui.controls import Segmented
+from appglider.ui.controls import MessageBox, Segmented
 from appglider.ui.errors import describe_error
 from appglider.ui.jobs import Task, TaskResult
 from appglider.ui.pages.app_page import (
@@ -631,10 +631,20 @@ class AddPage(QScrollArea):
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             progress(f"Copying {chosen.source.name}…", 0, 0)
+            found: list[str] = []
             warning = self.library.add_file(
-                app, chosen.source, version, png, cancel, identify=bool(chosen.details.note)
+                app,
+                chosen.source,
+                version,
+                png,
+                cancel,
+                identify=bool(chosen.details.note),
+                progress=progress,
+                warnings=found,
             )
-            return TaskResult(warning, added=app)
+            if found:
+                warning = f"{warning} {found[0]}"
+            return TaskResult(warning, added=app, warnings={app.id: found[0]} if found else {})
 
         self.copying = True
         self.task = Task(operation)
@@ -661,6 +671,10 @@ class AddPage(QScrollArea):
         self.copy_changed.emit()
         cancelled, self.cancelling = self.cancelling, False
         app = result.added
+        if result.warnings:
+            MessageBox.warning(
+                self, "An install command needs a look", "\n\n".join(result.warnings.values())
+            )
         if self.closing:
             # The page was left meanwhile, but the app is in the library: tell the window.
             self.closing = False

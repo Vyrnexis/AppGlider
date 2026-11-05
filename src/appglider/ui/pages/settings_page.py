@@ -35,13 +35,17 @@ from appglider import APP_NAME, APP_VERSION
 from appglider.core.catalogfile import EXAMPLE_CATALOG, CatalogError, read, render
 from appglider.core.preferences import (
     ACCENTS,
+    AFTER_COMMAND_KEY,
+    BEFORE_COMMAND_KEY,
     CHECK_INTERVALS,
     THEME_CHOICES,
     appearance_choice,
     check_interval_hours,
+    install_commands,
 )
 from appglider.core.storage import atomic_bytes
 from appglider.install import self_update
+from appglider.install.hooks import InstallCommands, command_problem
 from appglider.install.library import appimagelauncher_folder, previous_copy
 from appglider.ui.controls import MessageBox, Segmented, SpaceBar, SpaceSwatch, Switch
 from appglider.ui.errors import describe_error
@@ -305,7 +309,86 @@ class SettingsPage(QWidget):
                 notify_row,
             ),
         )
+        saved = install_commands(self.settings)
+        self.launcher.library.commands = saved
+        self.applied_before = saved.before
+        self.applied_after = saved.after
+        self.before_command, self.before_error = self.command_field(
+            layout,
+            "Before installing",
+            "Runs on each new AppImage before it's installed. If it fails, the install stops "
+            "and your current version is kept.",
+            "Before-install command",
+            "Before-install command problem",
+            "clamscan --no-summary {file}",
+            saved.before,
+        )
+        self.after_command, self.after_error = self.command_field(
+            layout,
+            "After installing",
+            "Runs after each app is installed or updated. A failure is shown as a warning.",
+            "After-install command",
+            "After-install command problem",
+            "sh -c 'notify-send \"Installed $APPGLIDER_APP\"'",
+            saved.after,
+        )
+        self.before_command.editingFinished.connect(
+            lambda: self.apply_command("before", self.before_command, self.before_error)
+        )
+        self.after_command.editingFinished.connect(
+            lambda: self.apply_command("after", self.after_command, self.after_error)
+        )
         column.addWidget(frame)
+
+    def command_field(
+        self,
+        layout: QVBoxLayout,
+        title: str,
+        hint: str,
+        name: str,
+        problem_name: str,
+        placeholder: str,
+        text: str,
+    ) -> tuple[QLineEdit, QLabel]:
+        """One command row with its own problem label below it."""
+        field = QLineEdit(text)
+        field.setAccessibleName(name)
+        field.setPlaceholderText(placeholder)
+        field.setCursorPosition(0)
+        field.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        layout.addWidget(SettingRow(title, hint, field, below=True))
+        error = QLabel()
+        error.setObjectName("settingError")
+        error.setTextFormat(Qt.TextFormat.PlainText)
+        error.setWordWrap(True)
+        error.setAccessibleName(problem_name)
+        error.hide()
+        layout.addWidget(error)
+        return field, error
+
+    def apply_command(self, which: str, field: QLineEdit, error: QLabel) -> None:
+        """Save the entered command if it is valid; otherwise explain and keep the saved one."""
+        applied = self.applied_before if which == "before" else self.applied_after
+        if self.launcher.busy:
+            field.setText(applied)
+            return
+        text = field.text().strip()
+        problem = command_problem(text)
+        error.setText(problem)
+        error.setVisible(bool(problem))
+        if problem:
+            return
+        field.setText(text)
+        field.setCursorPosition(0)
+        if text == applied:
+            return
+        if which == "before":
+            self.applied_before = text
+            self.settings.setValue(BEFORE_COMMAND_KEY, text)
+        else:
+            self.applied_after = text
+            self.settings.setValue(AFTER_COMMAND_KEY, text)
+        self.launcher.library.commands = InstallCommands(self.applied_before, self.applied_after)
 
     def build_catalogs(self, column: QVBoxLayout) -> None:
         frame, layout, _ = panel("Catalogs")
@@ -654,6 +737,14 @@ class SettingsPage(QWidget):
         ):
             widget.setEnabled(idle)
         self.move_button.setEnabled(idle and not self.launcher.checks.busy)
+        for field, applied, error in (
+            (self.before_command, self.applied_before, self.before_error),
+            (self.after_command, self.applied_after, self.after_error),
+        ):
+            field.setEnabled(idle)
+            if not idle and field.text() != applied:
+                field.setText(applied)
+                error.hide()
         if not idle and self.folder.text() != self.applied_folder:
             self.folder.setText(self.applied_folder)
         if self.isVisible() and self.current_section() == "Storage":
