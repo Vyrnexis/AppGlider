@@ -449,9 +449,17 @@ class AddPage(QScrollArea):
             self.inspect_button.setEnabled(not blocked)
             self.inspect_button.setText("Inspecting…" if busy else "Inspect repository")
         self.file_button.setEnabled(not blocked)
-        self.add_button.setEnabled(
-            not blocked and self.ready and (self.manual is None or bool(self.name.text().strip()))
-        )
+        if busy and self.copying:
+            stopping = self.cancelling or self.closing
+            self.add_button.setEnabled(not stopping)
+            self.add_button.setText("Cancelling…" if stopping else "Cancel")
+        else:
+            self.add_button.setText("Add to library")
+            self.add_button.setEnabled(
+                not blocked
+                and self.ready
+                and (self.manual is None or bool(self.name.text().strip()))
+            )
         self.release_preview.setVisible(self.ready)
         self.icon_group.setVisible(self.icon_target is not None and self.ready)
         self.choose_icon_button.setEnabled(not blocked and self.icon_target is not None)
@@ -635,9 +643,19 @@ class AddPage(QScrollArea):
         self.status.setText(f"Copying {chosen.source.name}…")
         QThreadPool.globalInstance().start(self.task)
 
+    def cancel_copy(self) -> None:
+        """The Add button cancels a file copy that is running."""
+        if self.task is None or self.cancelling or self.closing:
+            return
+        self.cancelling = True
+        self.task.cancel.set()
+        self.status.setText("Cancelling…")
+        self.set_busy(True)
+
     def file_added(self, result: TaskResult) -> None:
         self.task = None
         self.copying = False
+        cancelled, self.cancelling = self.cancelling, False
         app = result.added
         if self.closing:
             # The page was left meanwhile, but the app is in the library: tell the window.
@@ -649,7 +667,10 @@ class AddPage(QScrollArea):
             return
         self.set_busy(False)
         if app is None:  # cancelled: the file stays chosen
-            self.status.setText(result.message)
+            name = self.manual.source.name if self.manual else "The file"
+            self.status.setText(
+                f"Cancelled. {name} was not added." if cancelled else result.message
+            )
             return
         self.manual = None
         self.added.emit(app.id, result.message)
@@ -657,11 +678,15 @@ class AddPage(QScrollArea):
     def file_add_failed(self, error: str) -> None:
         self.task = None
         self.copying = False
+        self.cancelling = False
         self.closing = False
         self.set_busy(False)
         self.status.setText(error)
 
     def add_repository(self) -> None:
+        if self.copying:
+            self.cancel_copy()
+            return
         if self.manual is not None:
             self.add_file()
             return

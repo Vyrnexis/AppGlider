@@ -306,6 +306,52 @@ class ManualGuiTests(Base):
         self.assertIs(window.pages.currentWidget(), window.settings_page)  # not pulled away
         self.assertEqual(window.footer.text(), "Added My Sketchpad.")
 
+    def test_the_add_button_becomes_cancel_while_a_file_is_copied(self) -> None:
+        page = self.window.add_page
+        self.choose(self.source())
+        page.name.setText("My Sketchpad")
+        started, release = Event(), Event()
+        self.addCleanup(release.set)
+
+        def slow(app, source, version, png, cancel=None, **kwargs):
+            started.set()
+            cancel.wait(5)
+            raise Cancelled("Operation cancelled. Your installed version was kept.")
+
+        before = list(self.library.apps)
+        with patch.object(self.library, "add_file", side_effect=slow):
+            page.add_button.click()
+            self.assertEqual(page.add_button.text(), "Cancel")
+            self.assertTrue(page.add_button.isEnabled())
+            page.add_button.click()
+            self.assertEqual(page.add_button.text(), "Cancelling…")
+            self.assertFalse(page.add_button.isEnabled())
+            self.wait(lambda: page.task is None)
+        self.assertEqual(page.add_button.text(), "Add to library")
+        self.assertTrue(page.add_button.isEnabled())
+        self.assertEqual(page.status.text(), f"Cancelled. {NAME} was not added.")
+        self.assertIsNotNone(page.manual)
+        self.assertEqual(list(self.library.apps), before)
+
+    def test_cancelling_a_real_copy_leaves_nothing_behind(self) -> None:
+        page = self.window.add_page
+        self.choose(self.source())
+        page.name.setText("My Sketchpad")
+        real = self.library.add_file
+
+        def cancel_first(app, source, version, png, cancel=None, **kwargs):
+            cancel.set()
+            return real(app, source, version, png, cancel, **kwargs)
+
+        apps = list(self.library.apps)
+        before = sorted(p for p in self.library.data_dir.rglob("*"))
+        with patch.object(self.library, "add_file", side_effect=cancel_first):
+            page.add_button.click()
+            self.wait(lambda: page.task is None)
+        self.assertEqual(list(self.library.apps), apps)
+        self.assertEqual(sorted(p for p in self.library.data_dir.rglob("*")), before)
+        self.assertIsNotNone(page.manual)
+
     def test_the_inspect_button_becomes_cancel_while_a_repository_is_checked(self) -> None:
         page = self.window.add_page
         self.window.open_add_app()
