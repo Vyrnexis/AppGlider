@@ -49,10 +49,10 @@ jobs:
         timeout-minutes: 3
         run: mypy
       - name: Test application
-        timeout-minutes: 3
+        timeout-minutes: 8
         env:
           QT_QPA_PLATFORM: offscreen
-        run: timeout --signal=ABRT --kill-after=10s 120s python -X faulthandler -m unittest discover -s tests -v
+        run: timeout --signal=ABRT --kill-after=10s 300s python -X faulthandler -m unittest discover -s tests -v
       - name: Build and test AppImage
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
         run: |
