@@ -23,7 +23,8 @@ Every screen should make the most frequent task the most obvious one.
 ## Layout
 
 One main window. No modal dialogs for browsing or settings; dialogs are kept for
-confirmations, file pickers and choices that block an action (such as choosing a build).
+confirmations, file pickers, choices that block an action (such as choosing a build)
+and failures that need the user to act.
 
 ```
 ┌──────────────┬─────────────────────────────────────────────┐
@@ -193,7 +194,10 @@ Section headings in panels are 13 px semibold, upper case, letter-spaced, in `mu
 
 Short and plain. Sentence case. Name the thing, then the action ("Update all", "Roll back
 to v1.3.1"). Say what happened in the status area rather than in a dialog when nothing needs
-deciding. Do not mention GitHub's API; say "GitHub's allowance".
+deciding. A failure that needs the user to act (close a running app, free disk space,
+choose another folder) gets a dialog that names the cause and the next step; the status
+area alone is missed, especially when the window is hidden or another page is open. Do not
+mention GitHub's API; say "GitHub's allowance".
 
 ## What must not change
 
