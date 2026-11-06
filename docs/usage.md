@@ -448,6 +448,9 @@ replacing the file of an app you added by hand. They do not run for **Roll back*
 AppGlider's own updates. **Cancel** stops a command that is running.
 
 Both boxes are in their own **Install commands** panel at the bottom of **Settings → Updates**.
+
+![The Install commands panel, with a virus scan before installing](previews/guide-install-commands.png)
+
 They save when you press **Enter** or leave the box, and say **Saved** next to it for a moment.
 While an install or update is running you can still type, and the command is saved as soon as
 it ends.

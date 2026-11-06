@@ -42,6 +42,18 @@ None of these are approved or scheduled.
 
 Roughly newest first. Where shown, the version is the release that first included the work.
 
+- **Commands before and after installing (0.9.9):** **Settings → Updates** can run your own
+  command before each install, for example a virus scan that stops the install if it fails,
+  and another one after it. Idea from issue #10.
+- **Clearer uninstalling (0.9.9):** **Uninstall** and **Forget** ask whether to also remove the
+  app from your library; without the tick it stays there to install again. **Roll back** sits
+  beside the previous copy and can hold that version.
+- **Easier adding and updating (0.9.9):** **Add and install** in one step, and a file copy can be
+  cancelled. **Update all** skips apps that are open and says why it stopped. A picked AppImage
+  is never run just to read its details.
+- **Readable in every theme (0.9.9):** hints, chips and links are easy to read in light and dark
+  themes with every accent. Failures that need action open a dialog that names the app, and
+  uninstalling no longer pauses while it checks for a running app.
 - **AppImages from a file (0.9.8):** **Add app → Choose AppImage…** adds a file that is
   already on the computer, reading its name, version and icon from inside it. These apps are
   never checked for updates; **Replace with a newer file…** keeps the old one for Roll back.
