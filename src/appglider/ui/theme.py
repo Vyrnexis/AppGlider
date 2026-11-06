@@ -1,5 +1,6 @@
 """Colour themes: tokens, palette, stylesheet and the painted icons that depend on them."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, QStandardPaths, Qt
@@ -16,8 +17,8 @@ THEMES: dict[str, dict[str, str]] = {
         "raised": "#2a303c",
         "line": "#2f3542",
         "text": "#e8eaef",
-        "muted": "#9aa1ae",
-        "faint": "#6c7381",
+        "muted": "#9ba2ae",
+        "faint": "#888f9b",
         "ok": "#6fcf97",
         "warn": "#f0b860",
         "held": "#c7a6ff",
@@ -30,12 +31,12 @@ THEMES: dict[str, dict[str, str]] = {
         "raised": "#eceef3",
         "line": "#dde0e7",
         "text": "#1b1f27",
-        "muted": "#5d6573",
-        "faint": "#8b92a0",
-        "ok": "#1f8a4c",
-        "warn": "#a8670a",
+        "muted": "#5a616f",
+        "faint": "#666d7c",
+        "ok": "#196e3d",
+        "warn": "#8a5408",
         "held": "#7044c4",
-        "danger": "#c53030",
+        "danger": "#b22b2b",
     },
 }
 
@@ -151,11 +152,75 @@ def tint(colour: str, alpha: float) -> str:
     return f"rgba({value.red()}, {value.green()}, {value.blue()}, {round(alpha * 255)})"
 
 
+def _rgb(colour: str) -> tuple[int, int, int]:
+    value = QColor(colour)
+    return value.red(), value.green(), value.blue()
+
+
+def _luminance(rgb: tuple[int, int, int]) -> float:
+    def channel(v: int) -> float:
+        c = v / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (channel(v) for v in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(first: str, second: str) -> float:
+    """WCAG contrast ratio between two opaque hex colours."""
+    high, low = sorted((_luminance(_rgb(first)), _luminance(_rgb(second))), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def blend(colour: str, backdrop: str, alpha: float) -> str:
+    """Return the hex colour of `colour` at the given opacity over an opaque backdrop."""
+    over, under = _rgb(colour), _rgb(backdrop)
+    mixed = (round(o * alpha + u * (1 - alpha)) for o, u in zip(over, under, strict=True))
+    return "#{:02x}{:02x}{:02x}".format(*mixed)
+
+
+def readable(
+    colour: str, backdrops: Callable[[str], list[str]], dark: bool, minimum: float = 4.5
+) -> str:
+    """Nudge a colour's lightness (same hue) until it reaches `minimum` on every backdrop.
+
+    `backdrops` gets the candidate colour, so a tint of the colour itself can be one of
+    them. The lightness moves up on dark themes and down on light ones; a colour that
+    already passes is returned unchanged.
+    """
+    start = QColor(colour)
+    hue, saturation, lightness = start.hslHueF(), start.hslSaturationF(), start.lightnessF()
+    candidate = colour
+    while any(contrast(candidate, backdrop) < minimum for backdrop in backdrops(candidate)):
+        lightness += 0.002 if dark else -0.002
+        if not 0 <= lightness <= 1:
+            break
+        candidate = QColor.fromHslF(hue, saturation, lightness).name()
+    return candidate
+
+
+def accent_roles(tokens: dict[str, str], accent: str, dark: bool) -> tuple[str, str]:
+    """Return (text, fill) variants of an accent that meet 4.5:1 where text sits on them.
+
+    `text` is for links, hover colours and chips on the theme's surfaces and their 14 %
+    tint; `fill` is for filled buttons and selections that carry `on_accent` text.
+    """
+    surfaces = [tokens["bg"], tokens["surface"], tokens["surface2"]]
+    text = readable(
+        accent,
+        lambda c: surfaces + [blend(c, surface, 0.14) for surface in surfaces],
+        dark,
+    )
+    on_accent = tokens["bg"] if dark else "#ffffff"
+    return text, readable(accent, lambda _: [on_accent], dark)
+
+
 def palette(tokens: dict[str, str], accent: str, dark: bool) -> QPalette:
     """Build the application palette from a theme's tokens and the accent colour."""
     background, surface = tokens["bg"], tokens["surface"]
     foreground, muted = tokens["text"], tokens["muted"]
     on_accent = background if dark else "#ffffff"
+    link, fill = accent_roles(tokens, accent, dark)
     result = QPalette()
     for role, color in (
         (QPalette.ColorRole.Window, background),
@@ -167,11 +232,11 @@ def palette(tokens: dict[str, str], accent: str, dark: bool) -> QPalette:
         (QPalette.ColorRole.ButtonText, foreground),
         (QPalette.ColorRole.ToolTipBase, surface),
         (QPalette.ColorRole.ToolTipText, foreground),
-        (QPalette.ColorRole.Highlight, accent),
+        (QPalette.ColorRole.Highlight, fill),
         (QPalette.ColorRole.HighlightedText, on_accent),
         (QPalette.ColorRole.PlaceholderText, muted),
-        (QPalette.ColorRole.Link, accent),
-        (QPalette.ColorRole.LinkVisited, accent),
+        (QPalette.ColorRole.Link, link),
+        (QPalette.ColorRole.LinkVisited, link),
     ):
         result.setColor(role, QColor(color))
     result.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(muted))
@@ -192,6 +257,7 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
     )
     on_accent = background if dark else "#ffffff"
     on_warn = on_accent
+    link, fill = accent_roles(tokens, accent, dark)
     return f"""
             QWidget {{ font-size: 14px; }}
             QMainWindow, QDialog {{ background: {background}; }}
@@ -227,8 +293,8 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
             QProgressBar#meter::chunk {{ background: {accent}; border-radius: 2px; }}
             QPushButton#versionButton {{ background: transparent; border: 1px solid transparent;
                 color: {faint}; font-size: 12px; padding: 3px 8px; }}
-            QPushButton#versionButton:hover {{ border-color: {accent}; color: {accent}; }}
-            QPushButton#versionButton:focus {{ border: 2px solid {accent}; color: {accent}; }}
+            QPushButton#versionButton:hover {{ border-color: {accent}; color: {link}; }}
+            QPushButton#versionButton:focus {{ border: 2px solid {accent}; color: {link}; }}
             QPushButton#segment {{ background: {surface}; color: {muted};
                 border-radius: 0; padding: 8px 12px; }}
             QPushButton#segment[segment="first"] {{ border-top-left-radius: 7px;
@@ -247,7 +313,7 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
             QFrame#selfUpdateBanner QPushButton#linkButton {{ padding: 7px 4px; }}
             QProgressBar {{ background: {background}; border: none; border-radius: 3px; }}
             QProgressBar::chunk {{ background: {accent}; border-radius: 3px; }}
-            QPushButton#backLink {{ background: transparent; border: none; color: {accent};
+            QPushButton#backLink {{ background: transparent; border: none; color: {link};
                 padding: 4px 2px; font-weight: 600; }}
             QPushButton#backLink:hover {{ text-decoration: underline; }}
             QPushButton#backLink:focus {{ border: 2px solid {accent}; border-radius: 6px; }}
@@ -271,7 +337,7 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
             QLabel#chip {{ color: {muted}; background: {tint(muted, 0.14)};
                 border-radius: 11px; padding: 0 10px; font-size: 12px; font-weight: 600; }}
             QLabel#chip[state="busy"], QLabel#chip[state="preview"] {{
-                color: {accent}; background: {tint(accent, 0.14)}; }}
+                color: {link}; background: {tint(link, 0.14)}; }}
             QLabel#chip[state="update"], QLabel#chip[state="build"] {{
                 color: {warn}; background: {tint(warn, 0.14)}; }}
             QLabel#chip[state="held"] {{ color: {held}; background: {tint(held, 0.14)}; }}
@@ -281,12 +347,12 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
             QPushButton[rowAction="true"] {{ padding: 0; font-size: 13px; }}
             QPushButton, QToolButton {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; border-radius: 7px; padding: 9px 14px; }}
-            QPushButton:hover, QToolButton:hover {{ border-color: {accent}; color: {accent}; }}
+            QPushButton:hover, QToolButton:hover {{ border-color: {accent}; color: {link}; }}
             QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus {{
                 border: 2px solid {accent}; }}
             QPushButton:disabled {{ color: {muted}; background: {background}; }}
-            QPushButton#primary {{ background: {accent}; color: {on_accent};
-                border-color: {accent}; font-weight: 600; }}
+            QPushButton#primary {{ background: {fill}; color: {on_accent};
+                border-color: {fill}; font-weight: 600; }}
             QPushButton#primary:hover {{ border-color: {foreground}; }}
             QPushButton#primary:disabled {{ background: {surface}; color: {muted};
                 border-color: {border}; }}
@@ -305,7 +371,7 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
             QLabel#versionValue {{ color: {foreground}; font-size: 13px; }}
             QLabel#releaseTitle {{ font-weight: 600; }}
             QPushButton#linkButton {{ background: transparent; border: 2px solid transparent;
-                color: {accent}; padding: 2px 2px; text-align: left; }}
+                color: {link}; padding: 2px 2px; text-align: left; }}
             QPushButton#linkButton:hover {{ text-decoration: underline;
                 border-color: transparent; }}
             QPushButton#linkButton:focus {{ border: 2px solid {accent}; }}
@@ -320,7 +386,7 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
             QPushButton#segmentedButton:focus {{ border: 2px solid {accent}; }}
             QPushButton#segmentedButton:disabled {{ background: transparent; color: {faint}; }}
             QPushButton#segmentedButton:checked:disabled {{ background: {raised}; }}
-            QAbstractButton#switch {{ qproperty-trackOn: {accent}; qproperty-trackOff: {raised};
+            QAbstractButton#switch {{ qproperty-trackOn: {fill}; qproperty-trackOff: {raised};
                 qproperty-knob: {on_accent}; qproperty-ring: {accent}; }}
             SpaceBar, SpaceSwatch, QWidget#spaceBar, QWidget#spaceSwatch {{
                 qproperty-accent: {accent}; }}
@@ -364,9 +430,9 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
                 width: 20px; height: 20px; }}
             QComboBox QAbstractItemView {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; padding: 4px; outline: 0;
-                selection-background-color: {accent}; selection-color: {on_accent}; }}
+                selection-background-color: {fill}; selection-color: {on_accent}; }}
             QComboBox QAbstractItemView::item {{ min-height: 32px; padding: 4px 10px; }}
-            QComboBox QAbstractItemView::item:selected {{ background: {accent};
+            QComboBox QAbstractItemView::item:selected {{ background: {fill};
                 color: {on_accent}; }}
             QAbstractItemView QLineEdit, QAbstractItemView QLineEdit:focus {{
                 padding: 0; border: 1px solid {accent}; border-radius: 2px; }}
@@ -386,5 +452,5 @@ def stylesheet(tokens: dict[str, str], accent: str, dark: bool) -> str:
             QMenu {{ background: {surface}; color: {foreground};
                 border: 1px solid {border}; padding: 6px; }}
             QMenu::item {{ padding: 8px 16px; }}
-            QMenu::item:selected {{ background: {background}; color: {accent}; }}
+            QMenu::item:selected {{ background: {background}; color: {link}; }}
         """
