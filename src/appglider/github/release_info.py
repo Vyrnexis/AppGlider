@@ -47,7 +47,7 @@ class ReleaseInfo:
         choice = self.choice(include_previews)
         if choice is not None:
             return choice.error
-        return "Only prereleases are available. Choose Stable + previews to use them."
+        return "Only previews are available. Set Release channel to Preview to use them."
 
     def fresh(self) -> bool:
         return 0 <= time.time() - self.checked_at < download.CACHE_SECONDS

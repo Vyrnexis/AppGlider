@@ -5,7 +5,7 @@ from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QStandardPaths, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -45,14 +45,23 @@ from appglider.ui.pages.app_page import (
     add_setting_rows,
     format_size,
     panel,
+    set_object_name,
 )
 
 if TYPE_CHECKING:
     from appglider.ui.window import LauncherWindow
 
-PROMPT = "Inspect this repository before adding it."
+PROMPT = "Look up an app, or choose a file, before adding it."
 MAX_WIDTH = 720
 FILE_NOTE = "AppGlider cannot check apps added from a file for updates."
+
+
+def start_folder() -> str:
+    """Where file pickers open: the Downloads folder, else the home folder."""
+    downloads = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+    if downloads and Path(downloads).is_dir():
+        return downloads
+    return str(Path.home())
 
 
 @dataclass(frozen=True)
@@ -67,6 +76,7 @@ class AddPage(QScrollArea):
     """Add-an-application flow. Leaving the page cancels a running search and drops its result."""
 
     added = Signal(str, str)  # app id, a warning to append to the footer message
+    add_and_install = Signal(str, str)  # same, when "Add and install" was used
     copy_changed = Signal()  # a file copy started or ended
     copy_failed = Signal(str)  # a copy failed after the page was left: the error to show
 
@@ -88,6 +98,7 @@ class AddPage(QScrollArea):
         self.build_override: str | None = None
         self.inspection_app: App | None = None
         self.manual: ChosenFile | None = None
+        self.reading_file = False  # a chosen file is being read
         self.setObjectName("addPage")
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -111,7 +122,7 @@ class AddPage(QScrollArea):
         note.setWordWrap(True)
         column.addWidget(note)
 
-        frame, layout, _ = panel("Repository")
+        frame, layout, self.repository_heading = panel("Repository")
         self.url = QLineEdit()
         self.url.setPlaceholderText("https://github.com/owner/application")
         self.url.setAccessibleName("GitHub repository")
@@ -123,58 +134,32 @@ class AddPage(QScrollArea):
         self.url.textChanged.connect(lambda _: self.invalidate_preview())
         self.name.textChanged.connect(lambda _: self.name_edited())
         self.url.returnPressed.connect(self.inspect_repository)
+        self.name.returnPressed.connect(self.enter_in_name)
         self.release_channel = Segmented(("Stable", "Preview"))
         self.release_channel.setAccessibleName("Release preference")
         self.release_channel.buttons[0].setAccessibleName("Stable releases only")
-        self.release_channel.buttons[1].setAccessibleName("Stable and prerelease versions")
+        self.release_channel.buttons[1].setAccessibleName("Stable and preview versions")
         self.release_channel.currentIndexChanged.connect(self.change_release_preference)
-        add_setting_rows(
-            layout,
-            (
-                SettingRow("Repository", "A GitHub address or owner/name", self.url),
-                SettingRow("Name", "Shown in your library", self.name),
-                SettingRow(
-                    "Release channel",
-                    "Previews may be less reliable. Stable releases stay eligible either way.",
-                    self.release_channel,
-                ),
-            ),
+        self.repository_row = SettingRow("Repository", "A GitHub address or owner/name", self.url)
+        self.name_row = SettingRow("Name", "Shown in your library", self.name)
+        self.channel_row = SettingRow(
+            "Release channel",
+            "Previews may be less reliable. Stable releases stay eligible either way.",
+            self.release_channel,
+        )
+        dividers = add_setting_rows(layout, (self.repository_row, self.name_row, self.channel_row))
+        self.github_only: tuple[QWidget, ...] = (
+            self.repository_row,
+            dividers[self.name_row],
+            self.channel_row,
+            dividers[self.channel_row],
         )
         layout.addSpacing(6)
-        self.inspect_button = QPushButton("Inspect repository")
+        self.inspect_button = QPushButton("Look up app")
         self.inspect_button.setObjectName("primary")
         self.inspect_button.setAutoDefault(False)
         self.inspect_button.clicked.connect(self.inspect_or_cancel)
         layout.addWidget(self.inspect_button, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.status = QLabel(PROMPT)
-        self.status.setTextFormat(Qt.TextFormat.PlainText)
-        self.status.setObjectName("muted")
-        self.status.setWordWrap(True)
-        self.status.setMinimumHeight(self.status.fontMetrics().lineSpacing() * 2)
-        self.status.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        layout.addWidget(self.status)
-        self.busy_bar = QProgressBar()
-        retain = self.busy_bar.sizePolicy()
-        retain.setRetainSizeWhenHidden(True)
-        self.busy_bar.setSizePolicy(retain)
-        self.busy_bar.setRange(0, 0)  # moving, because the time needed is not known
-        self.busy_bar.setFixedHeight(6)
-        self.busy_bar.setTextVisible(False)
-        self.busy_bar.setAccessibleName("Search in progress")
-        self.busy_bar.hide()
-        layout.addWidget(self.busy_bar)
-        column.addWidget(frame)
-
-        frame, layout, _ = panel("Add a file from this computer")
-        self.file_frame = frame
-        file_note = QLabel(FILE_NOTE)
-        file_note.setObjectName("muted")
-        file_note.setWordWrap(True)
-        layout.addWidget(file_note)
-        self.file_button = QPushButton("Choose AppImage…")
-        self.file_button.setAutoDefault(False)
-        self.file_button.clicked.connect(self.choose_file)
-        layout.addWidget(self.file_button, alignment=Qt.AlignmentFlag.AlignLeft)
         column.addWidget(frame)
 
         self.build_group, layout, _ = panel("Build")
@@ -247,13 +232,65 @@ class AddPage(QScrollArea):
         layout.addLayout(icon_row)
         column.addWidget(self.icon_group)
 
+        # Status and progress sit next to the buttons they belong to.
         actions = QHBoxLayout()
-        actions.addStretch()
+        actions.setSpacing(12)
+        feedback = QVBoxLayout()
+        feedback.setSpacing(6)
+        self.status = QLabel(PROMPT)
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        self.status.setObjectName("muted")
+        self.status.setAccessibleName("Add app status")
+        self.status.setWordWrap(True)
+        self.status.setMinimumHeight(self.status.fontMetrics().lineSpacing() * 2)
+        self.status.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        feedback.addWidget(self.status)
+        self.busy_bar = QProgressBar()
+        retain = self.busy_bar.sizePolicy()
+        retain.setRetainSizeWhenHidden(True)
+        self.busy_bar.setSizePolicy(retain)
+        self.busy_bar.setRange(0, 0)  # moving until a size is known
+        self.busy_bar.setFixedHeight(6)
+        self.busy_bar.setTextVisible(False)
+        self.busy_bar.setAccessibleName("Progress")
+        self.busy_bar.hide()
+        feedback.addWidget(self.busy_bar)
+        actions.addLayout(feedback, stretch=1)
         self.add_button = QPushButton("Add to library")
-        self.add_button.setObjectName("primary")
-        self.add_button.clicked.connect(self.add_repository)
-        actions.addWidget(self.add_button)
+        self.add_button.clicked.connect(lambda: self.add_repository())
+        actions.addWidget(self.add_button, alignment=Qt.AlignmentFlag.AlignTop)
+        self.install_button = QPushButton("Add and install")
+        self.install_button.setAccessibleName("Add to library and install")
+        self.install_button.clicked.connect(lambda: self.add_repository(install=True))
+        actions.addWidget(self.install_button, alignment=Qt.AlignmentFlag.AlignTop)
         column.addLayout(actions)
+
+        frame, layout, _ = panel("Add a file from this computer")
+        self.file_frame = frame
+        file_note = QLabel(FILE_NOTE)
+        file_note.setObjectName("muted")
+        file_note.setWordWrap(True)
+        layout.addWidget(file_note)
+        self.file_chosen = QLabel()
+        self.file_chosen.setTextFormat(Qt.TextFormat.PlainText)
+        self.file_chosen.setAccessibleName("Chosen file")
+        self.file_chosen.setWordWrap(True)
+        self.file_chosen.hide()
+        layout.addWidget(self.file_chosen)
+        file_buttons = QHBoxLayout()
+        file_buttons.setSpacing(8)
+        self.file_button = QPushButton("Choose AppImage…")
+        self.file_button.setAutoDefault(False)
+        self.file_button.clicked.connect(self.choose_file)
+        file_buttons.addWidget(self.file_button)
+        self.file_clear_button = QPushButton("Clear")
+        self.file_clear_button.setAccessibleName("Clear the chosen file")
+        self.file_clear_button.setAutoDefault(False)
+        self.file_clear_button.clicked.connect(self.clear_file)
+        file_buttons.addWidget(self.file_clear_button)
+        file_buttons.addStretch()
+        layout.addLayout(file_buttons)
+        column.addWidget(frame)
         self.invalidate_preview()
         self.set_busy(False)
 
@@ -269,7 +306,7 @@ class AddPage(QScrollArea):
         self.url.setFocus()
         self.set_busy(self.task is not None)
         if self.task is not None:
-            self.status.setText("Stopping… one moment.")
+            self.say("Stopping… one moment.")
 
     def leave(self) -> None:
         """The page was left: cancel a running search; its result is dropped when it arrives."""
@@ -287,7 +324,7 @@ class AddPage(QScrollArea):
         self.closing = True
         if not self.copying:  # a copy in progress finishes; the app is then reported
             self.task.cancel.set()
-        self.status.setText("Stopping… one moment.")
+        self.say("Stopping… one moment.")
         return False
 
     def update_state(self) -> None:
@@ -296,14 +333,30 @@ class AddPage(QScrollArea):
 
     # Form
 
+    def say(self, text: str, *, error: bool = False) -> None:
+        """Show a status line: muted for progress and results, red for problems."""
+        self.status.setText(text)
+        set_object_name(self.status, "settingError" if error else "muted")
+
     def change_release_preference(self) -> None:
         if self.task is None and self.adding:
+            inspected = self.release is not None
             self.invalidate_preview(clear_icons=False)
+            if inspected:
+                self.say("Release channel changed. Inspect again.")
 
     @property
     def ready(self) -> bool:
         """Whether there is something to add: an inspected release or a chosen file."""
         return self.release is not None or self.manual is not None
+
+    def enter_in_name(self) -> None:
+        """Enter in the Name field adds the app to the library when ready; it never downloads."""
+        if self.task is not None:
+            return
+        button = self.add_button
+        if button.isEnabled():
+            button.click()
 
     def name_edited(self) -> None:
         if self.manual is None:
@@ -328,10 +381,11 @@ class AddPage(QScrollArea):
         self.choose_icon_button.setEnabled(False)
         self.icon_choices.setEnabled(False)
         self.add_button.setEnabled(False)
-        self.version.setText("Not inspected")
+        self.install_button.setEnabled(False)
+        self.version.setText("Not looked up")
         self.filename.setText("—")
         self.checksum.setText("Not checked")
-        self.status.setText(PROMPT)
+        self.say(PROMPT)
         self.release_preview.hide()
         self.icon_group.hide()
         if clear_build:
@@ -367,13 +421,16 @@ class AddPage(QScrollArea):
             if not (self.cancelling or self.closing):
                 self.cancelling = True
                 self.task.cancel.set()
-                self.status.setText("Cancelling…")
+                self.say("Cancelling…")
                 self.set_busy(True)
             return
         self.inspect_repository()
 
     def inspect_repository(self) -> None:
         if self.task is not None or not self.adding or self.launcher.task is not None:
+            return
+        if self.manual is not None:  # never throw a chosen file away without being asked
+            self.say("A file is chosen. Clear it first to look up a repository.", error=True)
             return
         self.invalidate_preview(clear_build=False, clear_icons=False)
         try:
@@ -385,10 +442,18 @@ class AddPage(QScrollArea):
             )
             if is_own_repo(app.repo):
                 raise ValueError(OWN_REPO_NOTE)
-            if any(known.repo.casefold() == app.repo.casefold() for known in self.library.apps):
-                raise ValueError("This repository is already in the catalog.")
+            owned = next(
+                (
+                    known
+                    for known in self.library.apps
+                    if known.repo.casefold() == app.repo.casefold()
+                ),
+                None,
+            )
+            if owned is not None:
+                raise ValueError(f"Already in your library as {owned.name}.")
         except (OSError, ValueError) as error:
-            self.status.setText(describe_error(error))
+            self.say(describe_error(error), error=True)
             return
         self.name.blockSignals(True)
         self.name.setText(app.name)
@@ -398,7 +463,7 @@ class AddPage(QScrollArea):
         lookup_icons = not self.icon_options
         self.inspection_app = app
 
-        known = [known.repo.casefold() for known in self.library.apps]
+        known = {known.repo.casefold(): known.name for known in self.library.apps}
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             target = app
@@ -411,7 +476,7 @@ class AddPage(QScrollArea):
                     raise ValueError(f"{moved} {OWN_REPO_NOTE}") from moved
                 if target.repo.casefold() in known:
                     raise ValueError(
-                        f"{moved} It is already in your library under its new address."
+                        f"{moved} Already in your library as {known[target.repo.casefold()]}."
                     ) from moved
                 release = latest_release(target, cancel, self.library.data_dir / "release-cache")
             result = TaskResult(
@@ -433,12 +498,20 @@ class AddPage(QScrollArea):
         self.task.signals.finished.connect(self.inspection_finished)
         self.task.signals.failed.connect(self.inspection_failed)
         self.set_busy(True)
-        self.status.setText("Checking eligible releases and the published checksum…")
+        self.say("Checking the latest release…")
         QThreadPool.globalInstance().start(self.task)
 
     def set_busy(self, busy: bool) -> None:
         blocked = busy or self.launcher.task is not None
+        file_mode = self.manual is not None or self.reading_file
         self.busy_bar.setVisible(busy)
+        if not busy:
+            self.busy_bar.setRange(0, 0)
+        self.repository_heading.setText("CHOSEN FILE" if file_mode else "REPOSITORY")
+        self.repository_heading.setAccessibleName("Chosen file" if file_mode else "Repository")
+        for widget in self.github_only:
+            widget.setVisible(not file_mode)
+        self.inspect_button.setVisible(not file_mode)
         self.build_combo.setEnabled(not blocked)
         self.release_channel.setEnabled(not busy)
         self.url.setEnabled(not busy)
@@ -449,23 +522,64 @@ class AddPage(QScrollArea):
             self.inspect_button.setText("Cancelling…" if stopping else "Cancel")
         else:
             self.inspect_button.setEnabled(not blocked)
-            self.inspect_button.setText("Inspecting…" if busy else "Inspect repository")
+            self.inspect_button.setText("Looking up…" if busy else "Look up app")
+        github_ready = self.release is not None
+        # One primary button at a time: the next step people most likely want.
+        set_object_name(self.inspect_button, "" if self.ready else "primary")
+        set_object_name(self.install_button, "primary" if github_ready else "")
+        set_object_name(self.add_button, "primary" if file_mode else "")
+        self.install_button.setVisible(not file_mode)
         self.file_button.setEnabled(not blocked)
+        self.file_button.setText(
+            "Choose another…" if self.manual is not None else "Choose AppImage…"
+        )
+        self.file_clear_button.setVisible(self.manual is not None)
+        self.file_clear_button.setEnabled(not blocked)
+        self.file_chosen.setVisible(self.manual is not None)
+        if self.manual is not None:
+            self.file_chosen.setText(
+                f"{self.manual.source.name} · {format_size(self.manual.details.size)}"
+            )
+        named = self.manual is None or bool(self.name.text().strip())
         if busy and self.copying:
             stopping = self.cancelling or self.closing
             self.add_button.setEnabled(not stopping)
             self.add_button.setText("Cancelling…" if stopping else "Cancel")
+            self.add_button.setToolTip("Stop copying the file.")
         else:
             self.add_button.setText("Add to library")
-            self.add_button.setEnabled(
-                not blocked
-                and self.ready
-                and (self.manual is None or bool(self.name.text().strip()))
+            self.add_button.setEnabled(not blocked and self.ready and named)
+            self.add_button.setToolTip(
+                self.add_tip(
+                    blocked,
+                    named,
+                    "Copy the file into your library."
+                    if file_mode
+                    else "Add to your library without installing it.",
+                )
             )
+        self.install_button.setEnabled(not blocked and github_ready)
+        self.install_button.setToolTip(
+            self.add_tip(blocked, True, "Add to your library and install it now.")
+        )
         self.release_preview.setVisible(self.ready)
         self.icon_group.setVisible(self.icon_target is not None and self.ready)
         self.choose_icon_button.setEnabled(not blocked and self.icon_target is not None)
         self.icon_choices.setEnabled(not blocked and self.icon_target is not None)
+
+    def add_tip(self, blocked: bool, named: bool, ready_tip: str) -> str:
+        """The tooltip for an Add button: what it does, or what to do first."""
+        if self.copying:
+            return ready_tip
+        if self.launcher.task is not None:
+            return "Wait for the current task to finish, or cancel it."
+        if blocked:
+            return "Wait for this to finish."
+        if not self.ready:
+            return "Look up an app or choose a file first."
+        if not named:
+            return "Type a name for the app first."
+        return ready_tip
 
     def inspection_finished(self, result: TaskResult) -> None:
         self.task = None
@@ -478,7 +592,7 @@ class AddPage(QScrollArea):
             return
         if cancelled and not result.releases and not result.build_choices:
             self.set_busy(False)
-            self.status.setText("Inspection cancelled.")
+            self.say("Lookup cancelled.")
             return
         moved, old = result.moved, self.inspection_app.repo if self.inspection_app else ""
         if moved is not None:
@@ -491,7 +605,7 @@ class AddPage(QScrollArea):
             self.set_busy(False)
             error = result.build_choices[target.id]
             self.show_build_choices(error.choices)
-            self.status.setText(
+            self.say(
                 "Your saved build is unavailable. Choose a replacement to continue."
                 if error.missing
                 else "Multiple builds are available. Choose a build variant to continue."
@@ -500,7 +614,7 @@ class AddPage(QScrollArea):
         self.release = result.releases.get(target.id) if target else None
         if self.release is None:
             self.set_busy(False)
-            self.status.setText(result.message)
+            self.say(result.message, error=True)
             return
         if target is not None:
             remember_release(target, self.release, self.library.data_dir / "release-cache")
@@ -510,10 +624,10 @@ class AddPage(QScrollArea):
             self.release.is_latest,
         )
         self.filename.setText(self.release.name)
-        self.checksum.setText("Published SHA-256 available; verified when downloaded")
+        self.checksum.setText("Checksum found; checked after download")
         if not self.icon_options:
             self.set_icon_options(result.icons)
-        self.status.setText(
+        self.say(
             (
                 "Ready to add."
                 if self.selected_icon is not None
@@ -533,8 +647,15 @@ class AddPage(QScrollArea):
         self.inspection_finished(TaskResult(error))
 
     def task_progress(self, message: str, received: object, total: object) -> None:
-        if self.task is not None and message and not self.closing:
-            self.status.setText(message)
+        if self.task is None or self.closing:
+            return
+        if message:
+            self.say(message)
+        if isinstance(received, int) and isinstance(total, int) and total > 0:
+            self.busy_bar.setRange(0, 1000)
+            self.busy_bar.setValue(min(1000, received * 1000 // total))
+        else:
+            self.busy_bar.setRange(0, 0)
 
     def choose_file(self) -> None:
         if self.task is not None or not self.adding or self.launcher.task is not None:
@@ -542,7 +663,7 @@ class AddPage(QScrollArea):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Choose an AppImage",
-            "",
+            start_folder(),
             "AppImage files (*.AppImage *.appimage);;All files (*)",
         )
         if path:
@@ -551,6 +672,7 @@ class AddPage(QScrollArea):
     def inspect_file(self, source: Path) -> None:
         """Read the name, version and icon from inside the file, off the Qt thread."""
         self.invalidate_preview()
+        self.reading_file = True
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             progress(f"Reading {source.name}…", 0, 0)
@@ -561,11 +683,12 @@ class AddPage(QScrollArea):
         self.task.signals.finished.connect(self.file_inspected)
         self.task.signals.failed.connect(self.file_inspection_failed)
         self.set_busy(True)
-        self.status.setText(f"Reading {source.name}…")
+        self.say(f"Reading {source.name}…")
         QThreadPool.globalInstance().start(self.task)
 
     def file_inspected(self, result: TaskResult) -> None:
         self.task = None
+        self.reading_file = False
         if self.closing:
             self.closing = False
             self.invalidate_preview()
@@ -594,14 +717,12 @@ class AddPage(QScrollArea):
         self.version_label.set_version(f"v{details.version}" if details.version else "Unknown")
         self.filename.setText(f"{chosen.source.name} · {format_size(details.size)}")
         self.checksum.setText(
-            "A type 2 AppImage for this computer. "
-            + FILE_NOTE
-            + (f"\n{details.note}" if details.note else "")
+            "A type 2 AppImage for this computer." + (f"\n{details.note}" if details.note else "")
         )
         self.set_icon_options(
             (IconCandidate("Icon from the AppImage", details.icon),) if details.icon else ()
         )
-        self.status.setText(
+        self.say(
             "Ready to add. The file is copied; the original stays where it is."
             + ("" if details.icon else " No icon was found in it, so the default icon is used.")
         )
@@ -610,13 +731,22 @@ class AddPage(QScrollArea):
 
     def file_inspection_failed(self, error: str) -> None:
         self.task = None
+        self.reading_file = False
         if self.closing:
             self.closing = False
             self.invalidate_preview()
         else:
             self.invalidate_preview()
-            self.status.setText(error)
+            self.say(error, error=True)
         self.set_busy(False)
+
+    def clear_file(self) -> None:
+        """Forget the chosen file and show the repository form again."""
+        if self.task is not None:
+            return
+        self.invalidate_preview()
+        self.set_busy(False)
+        self.url.setFocus()
 
     def add_file(self) -> None:
         chosen = self.manual
@@ -625,7 +755,7 @@ class AddPage(QScrollArea):
         try:
             app = manual_app(self.name.text(), chosen.source.name)
         except ValueError as error:
-            self.status.setText(str(error))
+            self.say(str(error), error=True)
             return
         png, version = self.selected_icon, chosen.details.version
 
@@ -652,7 +782,7 @@ class AddPage(QScrollArea):
         self.task.signals.finished.connect(self.file_added)
         self.task.signals.failed.connect(self.file_add_failed)
         self.set_busy(True)
-        self.status.setText(f"Copying {chosen.source.name}…")
+        self.say(f"Copying {chosen.source.name}…")
         self.copy_changed.emit()
         QThreadPool.globalInstance().start(self.task)
 
@@ -662,7 +792,7 @@ class AddPage(QScrollArea):
             return
         self.cancelling = True
         self.task.cancel.set()
-        self.status.setText("Cancelling…")
+        self.say("Cancelling…")
         self.set_busy(True)
 
     def file_added(self, result: TaskResult) -> None:
@@ -686,9 +816,10 @@ class AddPage(QScrollArea):
         self.set_busy(False)
         if app is None:  # cancelled: the file stays chosen
             name = self.manual.source.name if self.manual else "The file"
-            self.status.setText(
-                f"Cancelled. {name} was not added." if cancelled else result.message
-            )
+            if cancelled:
+                self.say(f"Cancelled. {name} was not added.")
+            else:
+                self.say(result.message, error=True)
             return
         self.manual = None
         self.added.emit(app.id, result.message)
@@ -702,12 +833,13 @@ class AddPage(QScrollArea):
         if left:
             self.invalidate_preview()
         self.set_busy(False)
-        self.status.setText(error)
+        self.say(error, error=True)
         self.copy_changed.emit()
         if left:
             self.copy_failed.emit(error)
 
-    def add_repository(self) -> None:
+    def add_repository(self, install: bool = False) -> None:
+        """Add the looked-up repository; with `install`, the window then installs it."""
         if self.copying:
             self.cancel_copy()
             return
@@ -731,12 +863,13 @@ class AddPage(QScrollArea):
                 except (OSError, ValueError) as error:
                     warning = f" Icon could not be saved: {describe_error(error)}"
         except (OSError, ValueError) as error:
-            self.status.setText(describe_error(error))
+            self.say(describe_error(error), error=True)
             return
         self.add_button.setEnabled(False)
+        self.install_button.setEnabled(False)
         self.release = None
         self.candidate = None
-        self.added.emit(app.id, warning)
+        (self.add_and_install if install else self.added).emit(app.id, warning)
 
     # Icons
 
@@ -757,7 +890,7 @@ class AddPage(QScrollArea):
             )
         )
 
-    def set_icon_options(self, icons: tuple[IconCandidate, ...]) -> None:
+    def set_icon_options(self, icons: tuple[IconCandidate, ...], select: int = 0) -> None:
         self.icon_options = icons
         self.icon_choices.blockSignals(True)
         self.icon_choices.clear()
@@ -767,8 +900,10 @@ class AddPage(QScrollArea):
                 self.icon_choices.count() - 1, icon.name, Qt.ItemDataRole.ToolTipRole
             )
         self.icon_choices.addItem("AppGlider default")
+        select = select if 0 <= select < len(icons) else 0
+        self.icon_choices.setCurrentIndex(select)
         self.icon_choices.blockSignals(False)
-        self.selected_icon = icons[0].png if icons else None
+        self.selected_icon = icons[select].png if icons else None
         self.show_icon(self.selected_icon if self.selected_icon is not None else APP_ICON)
 
     def select_icon(self, index: int) -> None:
@@ -783,7 +918,7 @@ class AddPage(QScrollArea):
         if self.task is not None or self.icon_target is None:
             return
         path, _ = QFileDialog.getOpenFileName(
-            self, "Choose application icon", "", "Application icons (*.png *.svg)"
+            self, "Choose application icon", start_folder(), "Application icons (*.png *.svg)"
         )
         if not path:
             return
@@ -791,7 +926,7 @@ class AddPage(QScrollArea):
             with Path(path).open("rb") as source:
                 png = normalise_icon(source.read(MAX_ICON_BYTES + 1))
         except (OSError, ValueError) as error:
-            self.status.setText(describe_error(error))
+            self.say(describe_error(error), error=True)
             return
-        self.set_icon_options((IconCandidate(Path(path).name, png),))
-        self.select_icon(0)
+        options = (*self.icon_options, IconCandidate(Path(path).name, png))
+        self.set_icon_options(options, select=len(options) - 1)

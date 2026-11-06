@@ -15,7 +15,7 @@ from catalog_fixture import APPS, stock
 from gui_helpers import close_window
 from PySide6.QtCore import QSettings
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QBoxLayout, QMessageBox
+from PySide6.QtWidgets import QApplication, QBoxLayout
 from test_library import appimage_bytes
 
 from appglider.core.catalog import load_apps, manual_app, valid_app_id
@@ -232,6 +232,11 @@ class StatusTests(Base):
         self.assertEqual((missing.mode, missing.state), ("replace", "missing"))
         busy = app_status(app, installed, None, working="Replacing")
         self.assertEqual((busy.mode, busy.text), ("cancel", "Replacing…"))
+        running = app_status(app, installed, None, running=True)
+        self.assertEqual((running.mode, running.text), ("launch", "▶ Running"))
+        self.assertIn("Running now", running.tooltip)
+        progress = app_status(app, installed, None, working="Replacing", progress=43)
+        self.assertEqual(progress.text, "Replacing… 43%")
 
 
 class ManualGuiTests(Base):
@@ -418,9 +423,9 @@ class ManualGuiTests(Base):
             self.assertEqual(page.inspect_button.text(), "Cancelling…")
             self.assertFalse(page.inspect_button.isEnabled())
             self.wait(lambda: page.task is None)
-        self.assertEqual(page.inspect_button.text(), "Inspect repository")
+        self.assertEqual(page.inspect_button.text(), "Look up app")
         self.assertTrue(page.inspect_button.isEnabled())
-        self.assertEqual(page.status.text(), "Inspection cancelled.")
+        self.assertEqual(page.status.text(), "Lookup cancelled.")
 
     def test_a_manual_app_page_keeps_one_column_stretch_in_either_direction(self) -> None:
         page = self.window.app_page
@@ -509,8 +514,8 @@ class ManualGuiTests(Base):
         self.window.scan_installed()
         with (
             patch(
-                "appglider.ui.window.MessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "appglider.ui.window.MessageBox.confirm",
+                return_value=(True, False),
             ),
             patch("appglider.install.library.running", return_value=False),
         ):

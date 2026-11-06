@@ -19,6 +19,16 @@ class DescribeErrorTests(unittest.TestCase):
             errno.EROFS: "read-only",
             errno.ENAMETOOLONG: "too long",
         }
+        for code, words in {
+            errno.ENOENT: "could not be found",
+            errno.ENOTDIR: "could not be found",
+            errno.EBUSY: "in use",
+        }.items():
+            with self.subTest(code=code):
+                text = describe_error(OSError(code, "raw", "/nowhere/apps/file.part"))
+                self.assertIn(words, text)
+                self.assertNotIn("raw", text)
+                self.assertNotIn("Errno", text)
         for code, words in cases.items():
             with self.subTest(code=code):
                 text = describe_error(OSError(code, "raw", "/nowhere/apps/file.part"))
@@ -33,8 +43,15 @@ class DescribeErrorTests(unittest.TestCase):
 
     def test_other_errors_keep_their_text(self) -> None:
         self.assertEqual(describe_error(ValueError("plain")), "plain")
-        other = OSError(errno.ENOENT, "No such file or directory")
-        self.assertEqual(describe_error(other), str(other))
+
+    def test_an_unknown_os_error_gets_a_short_reason_not_the_raw_errno_text(self) -> None:
+        text = describe_error(OSError(errno.EIO, "Input/output error", "/x/y"))
+        self.assertEqual(
+            text,
+            "Something went wrong: input/output error. "
+            "Try again; if it keeps happening, check the log.",
+        )
+        self.assertNotIn("Errno", describe_error(OSError("odd")))
 
 
 class GitHubTextTests(unittest.TestCase):
@@ -75,3 +92,24 @@ class UpdateAllMessageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NetworkErrorTests(unittest.TestCase):
+    def test_connection_failures_say_github_could_not_be_reached(self) -> None:
+        from urllib.error import URLError
+
+        from appglider.ui.errors import OFFLINE, describe_error
+
+        for error in (
+            URLError("Name or service not known"),
+            TimeoutError(),
+            OSError(errno.ENETUNREACH, "Network is unreachable"),
+        ):
+            self.assertEqual(describe_error(error), OFFLINE)
+
+    def test_own_messages_without_an_errno_are_kept(self) -> None:
+        from appglider.ui.errors import describe_error
+
+        self.assertEqual(
+            describe_error(OSError("The file is not an AppImage.")), "The file is not an AppImage."
+        )

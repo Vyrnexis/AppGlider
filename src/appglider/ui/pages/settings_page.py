@@ -10,7 +10,7 @@ import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSettings, QSignalBlocker, QStandardPaths, Qt, QUrl
+from PySide6.QtCore import QSettings, QSignalBlocker, QStandardPaths, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QShowEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QStyledItemDelegate,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -55,6 +56,7 @@ from appglider.ui.pages.app_page import (
     format_size,
     link_button,
     panel,
+    set_object_name,
 )
 from appglider.ui.pages.catalog_preview import CatalogPreviewDialog
 from appglider.ui.rows import ElidedLabel
@@ -63,12 +65,25 @@ if TYPE_CHECKING:
     from appglider.ui.window import LauncherWindow
 
 SECTIONS = ("General", "Updates", "Catalogs", "Storage", "About")
+WAIT_NOTE = "Wait for the current task to finish, or cancel it."
+SAVED_SHOWN_MS = 3000
 LICENCE_URL = "https://github.com/Vyrnexis/AppGlider/blob/main/LICENSE"
 LINKS = (
     ("Visit appglider.org", "https://appglider.org/"),
     ("View AppGlider on GitHub", "https://github.com/Vyrnexis/AppGlider"),
     ("Report an issue", "https://github.com/Vyrnexis/AppGlider/issues"),
 )
+
+
+def tray_available() -> bool:
+    return QSystemTrayIcon.isSystemTrayAvailable()
+
+
+def not_saved(problem: str) -> str:
+    """Explain a command that was refused, and that the previous one is still in use."""
+    if problem.startswith("Check the quotes"):
+        return "Not saved: check the quotes. The previous command is still used."
+    return f"Not saved: {problem} The previous command is still used."
 
 
 def default_folder() -> str:
@@ -148,6 +163,7 @@ class SettingsPage(QWidget):
         self.section_group = QButtonGroup(self)
         self.section_group.setExclusive(True)
         self.sections: list[QPushButton] = []
+        self.wait_notes: list[QLabel] = []
         for index, name in enumerate(SECTIONS):
             button = QPushButton(name)
             button.setObjectName("sectionNav")
@@ -238,6 +254,9 @@ class SettingsPage(QWidget):
             self.close_to_tray,
         )
         row.setToolTip("Applies when a system tray is available. Use Quit to exit.")
+        if not tray_available():
+            self.close_to_tray.setEnabled(False)
+            row.hint.setText("No system tray found on this desktop.")
         layout.addWidget(row)
         self.autostart = Switch()
         self.autostart.setAccessibleName("Start with my desktop")
@@ -303,35 +322,67 @@ class SettingsPage(QWidget):
             (
                 SettingRow(
                     "Check for updates",
-                    "Unchanged apps use none of GitHub's allowance",
+                    "How often AppGlider looks for new versions.",
                     self.check_interval,
                 ),
                 notify_row,
             ),
         )
+        column.addWidget(frame)
+        self.build_install_commands(column)
+
+    def wait_note(self, layout: QVBoxLayout) -> QLabel:
+        """A muted line under a panel's heading, shown while a task blocks its controls."""
+        note = QLabel(WAIT_NOTE)
+        note.setObjectName("muted")
+        note.setWordWrap(True)
+        note.hide()
+        layout.insertWidget(1, note)
+        self.wait_notes.append(note)
+        return note
+
+    def build_install_commands(self, column: QVBoxLayout) -> None:
+        frame, layout, _ = panel("Install commands")
+        intro = QLabel("Advanced: run your own programs on each install. See the user guide.")
+        intro.setObjectName("muted")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        self.commands_wait_note = self.wait_note(layout)
         saved = install_commands(self.settings)
         self.launcher.library.commands = saved
         self.applied_before = saved.before
         self.applied_after = saved.after
-        self.before_command, self.before_error = self.command_field(
+        self.pending_commands: set[str] = set()  # typed while a task ran; saved afterwards
+        self.before_command, self.before_error, before_saved = self.command_field(
             layout,
             "Before installing",
-            "Runs on each new AppImage before it's installed. If it fails, the install stops "
-            "and your current version is kept.",
+            "Runs before each install; {file} is the download. A failure stops the install.",
             "Before-install command",
             "Before-install command problem",
             "clamscan --no-summary {file}",
             saved.before,
         )
-        self.after_command, self.after_error = self.command_field(
+        divider = QFrame()
+        divider.setObjectName("rowDivider")
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
+        self.after_command, self.after_error, after_saved = self.command_field(
             layout,
             "After installing",
-            "Runs after each app is installed or updated. A failure is shown as a warning.",
+            "Runs after each install. A failure only shows a warning.",
             "After-install command",
             "After-install command problem",
             "sh -c 'notify-send \"Installed $APPGLIDER_APP\"'",
             saved.after,
         )
+        self.command_saved = {"before": before_saved, "after": after_saved}
+        self.command_timers: dict[str, QTimer] = {}
+        for which, label in self.command_saved.items():
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(SAVED_SHOWN_MS)
+            timer.timeout.connect(label.hide)
+            self.command_timers[which] = timer
         self.before_command.editingFinished.connect(
             lambda: self.apply_command("before", self.before_command, self.before_error)
         )
@@ -349,14 +400,24 @@ class SettingsPage(QWidget):
         problem_name: str,
         placeholder: str,
         text: str,
-    ) -> tuple[QLineEdit, QLabel]:
-        """One command row with its own problem label below it."""
+    ) -> tuple[QLineEdit, QLabel, QLabel]:
+        """One command row, with a brief "Saved" beside the field and a problem label below."""
         field = QLineEdit(text)
         field.setAccessibleName(name)
         field.setPlaceholderText(placeholder)
         field.setCursorPosition(0)
-        field.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        layout.addWidget(SettingRow(title, hint, field, below=True))
+        saved = QLabel("Saved")
+        saved.setObjectName("muted")
+        saved.setAccessibleName(f"{title} saved")
+        saved.hide()
+        holder = QWidget()
+        holder_layout = QHBoxLayout(holder)
+        holder_layout.setContentsMargins(0, 0, 0, 0)
+        holder_layout.setSpacing(8)
+        holder_layout.addWidget(field, stretch=1)
+        holder_layout.addWidget(saved)
+        holder.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        layout.addWidget(SettingRow(title, hint, holder, below=True))
         error = QLabel()
         error.setObjectName("settingError")
         error.setTextFormat(Qt.TextFormat.PlainText)
@@ -364,19 +425,25 @@ class SettingsPage(QWidget):
         error.setAccessibleName(problem_name)
         error.hide()
         layout.addWidget(error)
-        return field, error
+        return field, error, saved
 
     def apply_command(self, which: str, field: QLineEdit, error: QLabel) -> None:
-        """Save the entered command if it is valid; otherwise explain and keep the saved one."""
+        """Save the entered command if it is valid; otherwise explain and keep the saved one.
+
+        While a task runs the typed text is kept and saved as soon as the page is idle.
+        """
         applied = self.applied_before if which == "before" else self.applied_after
         if self.launcher.busy:
-            field.setText(applied)
+            if field.text().strip() != applied:
+                self.pending_commands.add(which)
             return
+        self.pending_commands.discard(which)
         text = field.text().strip()
         problem = command_problem(text)
-        error.setText(problem)
+        error.setText(not_saved(problem) if problem else "")
         error.setVisible(bool(problem))
         if problem:
+            self.command_saved[which].hide()
             return
         field.setText(text)
         field.setCursorPosition(0)
@@ -389,11 +456,14 @@ class SettingsPage(QWidget):
             self.applied_after = text
             self.settings.setValue(AFTER_COMMAND_KEY, text)
         self.launcher.library.commands = InstallCommands(self.applied_before, self.applied_after)
+        self.command_saved[which].show()
+        self.command_timers[which].start()
 
     def build_catalogs(self, column: QVBoxLayout) -> None:
         frame, layout, _ = panel("Catalogs")
+        self.catalogs_wait_note = self.wait_note(layout)
         self.import_button = QPushButton("Import catalog…")
-        self.import_button.setToolTip("Add apps from a plain-text TOML catalog file.")
+        self.import_button.setToolTip("Add apps from a catalog file.")
         self.import_button.clicked.connect(self.import_catalog)
         self.example_button = QPushButton("Example catalog")
         self.example_button.setToolTip(
@@ -401,7 +471,7 @@ class SettingsPage(QWidget):
         )
         self.example_button.clicked.connect(self.import_example_catalog)
         self.export_button = QPushButton("Export catalog…")
-        self.export_button.setToolTip("Save your repositories as a plain-text TOML file.")
+        self.export_button.setToolTip("Save your repositories as a catalog file.")
         self.export_button.clicked.connect(self.export_catalog)
         add_setting_rows(
             layout,
@@ -418,20 +488,28 @@ class SettingsPage(QWidget):
                 ),
                 SettingRow(
                     "Export your catalog",
-                    "Save your repositories as a TOML file",
+                    "Save your repositories as a catalog file",
                     self.export_button,
                 ),
             ),
         )
+        self.catalog_note = QLabel()
+        self.catalog_note.setTextFormat(Qt.TextFormat.PlainText)
+        self.catalog_note.setWordWrap(True)
+        self.catalog_note.setAccessibleName("Catalog result")
+        self.catalog_note.hide()
+        layout.addWidget(self.catalog_note)
         column.addWidget(frame)
 
     def build_storage(self, column: QVBoxLayout) -> None:
         frame, layout, _ = panel("Storage")
+        self.storage_wait_note = self.wait_note(layout)
         self.applied_folder = str(self.settings.value("installation/folder", default_folder()))
         self.folder = QLineEdit(self.applied_folder)
         self.folder.setAccessibleName("AppImage folder")
         self.folder.setCursorPosition(0)
         self.folder.editingFinished.connect(self.apply_folder)
+        self.folder.textEdited.connect(self.folder_edited)
         self.browse_button = QPushButton("Browse…")
         self.browse_button.clicked.connect(self.browse)
         field = QWidget()
@@ -455,6 +533,11 @@ class SettingsPage(QWidget):
         self.folder_error.setAccessibleName("Folder problem")
         self.folder_error.hide()
         layout.addWidget(self.folder_error)
+        self.folder_note = QLabel("Applies to apps you install next.")
+        self.folder_note.setObjectName("muted")
+        self.folder_note.setAccessibleName("Folder applied")
+        self.folder_note.hide()
+        layout.addWidget(self.folder_note)
         self.folder_warning = QLabel()
         self.folder_warning.setObjectName("settingError")
         self.folder_warning.setTextFormat(Qt.TextFormat.PlainText)
@@ -737,16 +820,18 @@ class SettingsPage(QWidget):
         ):
             widget.setEnabled(idle)
         self.move_button.setEnabled(idle and not self.launcher.checks.busy)
-        for field, applied, error in (
-            (self.before_command, self.applied_before, self.before_error),
-            (self.after_command, self.applied_after, self.after_error),
-        ):
-            field.setEnabled(idle)
-            if not idle and field.text() != applied:
-                field.setText(applied)
-                error.hide()
+        for note in self.wait_notes:
+            note.setVisible(not idle)
+        if idle:  # a command typed during a task is saved now, unless it is still being typed
+            for which, field, error in (
+                ("before", self.before_command, self.before_error),
+                ("after", self.after_command, self.after_error),
+            ):
+                if which in self.pending_commands and not field.hasFocus():
+                    self.apply_command(which, field, error)
         if not idle and self.folder.text() != self.applied_folder:
             self.folder.setText(self.applied_folder)
+            self.folder_note.hide()
         if self.isVisible() and self.current_section() == "Storage":
             self.update_space_used()
 
@@ -780,6 +865,13 @@ class SettingsPage(QWidget):
     def say(self, message: str) -> None:
         self.launcher.footer.setText(message)
 
+    def say_catalog(self, message: str, *, error: bool = False) -> None:
+        """Report a catalog result in the footer and in the Catalogs panel itself."""
+        self.say(message)
+        self.catalog_note.setText(message)
+        set_object_name(self.catalog_note, "settingError" if error else "muted")
+        self.catalog_note.show()
+
     def import_catalog(self) -> None:
         if self.launcher.busy:
             return
@@ -799,21 +891,24 @@ class SettingsPage(QWidget):
             catalog = read(source)
             plan = library.plan_import(catalog.entries)
         except (CatalogError, OSError, ValueError) as error:
-            self.say(f"Cannot import {source.name}: {describe_error(error)}")
+            self.say_catalog(f"Cannot import {source.name}: {describe_error(error)}", error=True)
             return
         preview = CatalogPreviewDialog(catalog, plan, self)
         accepted = preview.exec() == QDialog.DialogCode.Accepted
         preview.deleteLater()
+        if not plan.new:
+            self.say_catalog(f"Nothing new in {source.name}: its apps are already in your library.")
+            return
         if not accepted:
             return
         try:
             added = library.import_catalog(plan.new)
         except (OSError, ValueError) as error:
-            self.say(f"Nothing was imported: {describe_error(error)}")
+            self.say_catalog(f"Nothing was imported: {describe_error(error)}", error=True)
             return
         self.launcher.catalog_changed()
         count = len(added.new)
-        self.say(
+        self.say_catalog(
             f"Added {count} {'app' if count == 1 else 'apps'} from {source.name}. "
             "Open an app to choose its icon."
         )
@@ -830,9 +925,9 @@ class SettingsPage(QWidget):
             entries = self.launcher.library.export_entries()
             atomic_bytes(Path(path), render(entries, "My AppGlider catalog").encode("utf-8"))
         except (OSError, ValueError) as error:
-            self.say(f"Cannot export the catalog: {describe_error(error)}")
+            self.say_catalog(f"Cannot export the catalog: {describe_error(error)}", error=True)
             return
-        self.say(f"Exported {len(entries)} apps to {Path(path).name}.")
+        self.say_catalog(f"Exported {len(entries)} apps to {Path(path).name}.")
 
     # Storage
 
@@ -859,16 +954,28 @@ class SettingsPage(QWidget):
         )
         self.folder_warning.setVisible(shared)
 
+    def folder_edited(self) -> None:
+        self.folder_note.hide()  # the confirmation was about the previous entry
+
     def apply_folder(self) -> bool:
-        """Use the entered folder if it is valid; otherwise explain and keep the previous one."""
+        """Use the entered folder if it is a valid existing one; otherwise explain and keep
+        the previous one. Runs on Enter, on leaving the field and after Browse."""
         if self.launcher.busy:
             return False
         folder, problem = checked_folder(self.folder.text())
         self.folder_error.setText(problem)
         self.folder_error.setVisible(bool(problem))
         if folder is None:
+            self.folder_note.hide()
             return False
         text = str(folder)
+        if text != self.applied_folder and not folder.is_dir():
+            self.folder_error.setText(
+                "Not applied: that folder does not exist. Create it first, or use Browse."
+            )
+            self.folder_error.show()
+            self.folder_note.hide()
+            return False
         self.folder.setText(text)
         self.folder.setCursorPosition(0)
         if text != self.applied_folder:
@@ -879,6 +986,7 @@ class SettingsPage(QWidget):
             self.launcher.scan_installed()
             self.update_space_used()
             self.update_move_row()
+            self.folder_note.show()
         return True
 
     def move_source(self) -> Path | None:

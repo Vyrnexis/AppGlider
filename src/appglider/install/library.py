@@ -1049,9 +1049,9 @@ class Library(ShortcutsMixin):
         # Settings may change during a download, so use the catalog's current preferences.
         current = next((a for a in self.apps if a.id == app.id and a.repo == app.repo), None)
         if current is None or current.manual:
-            raise ValueError("Add this repository to the catalog before installing its app.")
+            raise ValueError("Add this app to your library before installing it.")
         if release.prerelease and not current.include_prereleases:
-            raise ValueError("Enable prereleases for this application before installing a preview.")
+            raise ValueError("Set Release channel to Preview before installing a preview.")
         if (
             not re.fullmatch(VERSION, release.version)
             or Path(release.name).name != release.name
@@ -1141,7 +1141,7 @@ class Library(ShortcutsMixin):
                 stage = Path(temporary)
                 if shutil.disk_usage(plan.root).free < release.size + FREE_SPACE_MARGIN:
                     raise ValueError("There is not enough free disk space for this download.")
-                download(release, stage, cancel, progress)
+                download(release, stage, cancel, progress, version_installed=bool(plan.old))
                 check_appimage(stage)
             run_before(
                 self.commands,

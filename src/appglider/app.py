@@ -16,6 +16,7 @@ from appglider.core.catalogfile import read as read_catalog
 from appglider.install.library import process_handles_work
 from appglider.install.self_update import AFTER_UPDATE_FLAG, cleanup, running_image
 from appglider.instance import SingleInstance
+from appglider.ui.controls import MessageBox
 from appglider.ui.window import LauncherWindow
 
 
@@ -74,22 +75,28 @@ def main() -> int:
     )
     after_update = AFTER_UPDATE_FLAG in sys.argv
     if not smoke and not acquire_instance(instance, quiet=quiet, after_update=after_update):
+        if instance.wake_failed and not quiet:
+            MessageBox.inform(
+                None,
+                APP_NAME,
+                "AppGlider is already running. Look for its icon in the system tray.",
+            )
         return 0
     remove_replaced_image(smoke)
     if after_update:
         # The version that restarted us may still be closing; its file goes once it has.
         QTimer.singleShot(10_000, lambda: remove_replaced_image(smoke))
     window = LauncherWindow()
-    instance.activated.connect(window.show_launcher)
+    instance.activated.connect(lambda: None if window.quitting else window.show_launcher())
     command = launcher_command()
     try:
         window.library.refresh_launcher_shortcut(command, packaged=len(command) == 1)
     except (OSError, ValueError) as error:
-        window.footer.setText(f"Could not create the AppGlider menu shortcut: {error}")
+        window.footer.setText(f"Couldn't create the AppGlider menu shortcut: {error}")
     try:
         window.library.refresh_autostart(command, packaged=len(command) == 1)
     except (OSError, ValueError) as error:
-        window.footer.setText(f"Could not update the AppGlider login entry: {error}")
+        window.footer.setText(f"Couldn't update the AppGlider login entry: {error}")
     show_initial(window, quiet)
     if smoke:
 

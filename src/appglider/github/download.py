@@ -116,7 +116,15 @@ def latest_release(app: App, cancel: Event, cache_dir: Path | None = None) -> Re
     return release
 
 
-def download(release: Release, destination: Path, cancel: Event, progress: Progress) -> None:
+def download(
+    release: Release,
+    destination: Path,
+    cancel: Event,
+    progress: Progress,
+    *,
+    version_installed: bool = True,
+) -> None:
+    """Fetch and verify a release; `version_installed` says what a failure message promises."""
     if not re.fullmatch(r"[a-f0-9]{64}", release.sha256):
         raise ValueError("A published SHA-256 checksum is required before downloading.")
     digest = hashlib.sha256()
@@ -153,4 +161,8 @@ def download(release: Release, destination: Path, cancel: Event, progress: Progr
     if received != release.size:
         raise ValueError("The download was incomplete. The installed version was kept.")
     if digest.hexdigest() != release.sha256:
-        raise ValueError("SHA-256 verification failed. The installed version was kept.")
+        kept = "Your current version was kept." if version_installed else "Nothing was installed."
+        raise ValueError(
+            "The download did not match the checksum the project published, so it was "
+            f"thrown away. {kept} Try again; if it keeps failing, let the project know."
+        )

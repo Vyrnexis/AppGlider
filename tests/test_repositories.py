@@ -19,7 +19,7 @@ from gui_helpers import close_window
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
+from PySide6.QtWidgets import QApplication, QLabel
 from test_builds import BAMBU, bambu_metadata, bambu_payload, chosen_bambu
 from test_library import appimage_bytes
 
@@ -182,7 +182,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), original)
 
     def test_custom_install_update_rollback_restart_and_remove_preserve_ownership(self):
-        with self.assertRaisesRegex(ValueError, "Add this repository"):
+        with self.assertRaisesRegex(ValueError, "Add this app to your library"):
             self.install("0.9.3")
         self.library.add_repository(CUSTOM)
         first = self.install("0.9.3")
@@ -337,7 +337,10 @@ class RepositoryGuiTests(unittest.TestCase):
     def test_preview_with_nothing_new_cannot_be_accepted(self):
         path = self.write_catalog(f'format = 1\n[[app]]\nrepo = "{APPS[0].repo}"\n')
         (preview,) = self.run_import(path, accept=False)
-        self.assertFalse(preview.add_button.isEnabled())
+        self.assertEqual(preview.add_button.text(), "Close")
+        self.assertTrue(preview.add_button.isDefault())
+        self.assertEqual(self.library.apps, APPS)
+        self.assertIn("Nothing new", self.catalogs.catalog_note.text())
 
     def test_export_writes_a_catalog_that_imports_back(self):
         self.library.add_repository(custom_app("owner/one", "One", True, "One.AppImage"))
@@ -398,7 +401,8 @@ class RepositoryGuiTests(unittest.TestCase):
         with patch.object(CatalogPreviewDialog, "exec", exec_preview):
             page.import_example_catalog()  # everything is already there
         self.assertEqual(len(previews), 2)
-        self.assertFalse(previews[1].add_button.isEnabled())
+        self.assertEqual(previews[1].add_button.text(), "Close")
+        self.assertEqual(len(library.apps), 14)
 
     def test_catalog_actions_are_disabled_while_a_task_runs(self):
         page = self.catalogs
@@ -523,7 +527,7 @@ class RepositoryGuiTests(unittest.TestCase):
         self.inspect()
         self.assertIn("v0.9.4", self.dialog.version.text())
         self.assertEqual(self.dialog.filename.text(), custom_release().name)
-        self.assertIn("SHA-256", self.dialog.checksum.text())
+        self.assertEqual(self.dialog.checksum.text(), "Checksum found; checked after download")
         QTest.mouseClick(self.dialog.add_button, Qt.MouseButton.LeftButton)
         self.assertEqual(self.window.app_page.app_id, CUSTOM.id)
         self.assertEqual(len(self.window.cards), 15)
@@ -541,8 +545,8 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertIn("lightcraft", reopened.cards)
         self.window.open_app(CUSTOM.id)
         with patch(
-            "appglider.ui.pages.app_page.MessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
+            "appglider.ui.window.MessageBox.confirm",
+            return_value=(True, False),
         ):
             self.window.app_page.remove_button.click()
         self.assertNotIn(CUSTOM.id, self.window.cards)
@@ -708,7 +712,10 @@ class RepositoryGuiTests(unittest.TestCase):
                 self.dialog.inspect_repository()
                 self.wait_for_task(self.dialog)
             self.assertEqual(self.dialog.selected_icon, png)
-            self.assertEqual(self.dialog.icon_options[0].name, "local.png")
+            self.assertEqual(self.dialog.icon_options[-1].name, "local.png")
+            self.assertEqual(
+                self.dialog.icon_choices.currentIndex(), len(self.dialog.icon_options) - 1
+            )
             discover.assert_called_once()
         self.dialog.url.setText("https://github.com/another/application")
         self.assertEqual(self.dialog.icon_options, ())
@@ -813,7 +820,9 @@ class RepositoryGuiTests(unittest.TestCase):
         self.assertTrue(card.action_button.isVisibleTo(card))
         self.assertTrue(card.launch_action.isEnabled())
         self.assertEqual(self.window.updates_count.text(), "1")
-        self.assertTrue(self.window.update_all_button.isHidden())
+        # Only a build choice waits, so the banner asks for the choice instead of Update all.
+        self.assertFalse(self.window.update_all_button.isHidden())
+        self.assertEqual(self.window.update_all_button.text(), "Choose build")
         with (
             patch.object(assets, "api_entries", return_value=entries),
             patch("appglider.install.library.download") as download,
@@ -979,16 +988,16 @@ class RepositoryGuiTests(unittest.TestCase):
             self.wait_for_task(self.window)
         self.assertEqual(self.window.installed[CUSTOM.id].version, "0.9.5")
         with patch(
-            "appglider.ui.window.MessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
+            "appglider.ui.window.MessageBox.confirm",
+            return_value=(True, False),
         ):
             self.window.remove_app(CUSTOM.id)
             self.wait_for_task(self.window)
         self.assertEqual(self.window.filter_installed.text(), "Installed (0)")
         self.window.open_app(CUSTOM.id)
         with patch(
-            "appglider.ui.pages.app_page.MessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
+            "appglider.ui.window.MessageBox.confirm",
+            return_value=(True, False),
         ):
             self.window.app_page.remove_button.click()
         self.assertNotIn(CUSTOM.id, self.window.cards)
@@ -1002,15 +1011,13 @@ class RepositoryGuiTests(unittest.TestCase):
 
         def inspect(app, cancel, cache):
             if not app.include_prereleases:
-                raise ValueError(
-                    "Only prereleases are available. Choose 'Stable and prerelease versions'."
-                )
+                raise ValueError("Only previews are available. Set Release channel to Preview.")
             return beta
 
         with patch("appglider.ui.pages.add_page.latest_release", side_effect=inspect):
             self.dialog.inspect_repository()
             self.wait_for_task(self.dialog)
-            self.assertIn("Only prereleases", self.dialog.status.text())
+            self.assertIn("Only previews", self.dialog.status.text())
             self.assertFalse(self.dialog.add_button.isEnabled())
             self.dialog.release_channel.setCurrentIndex(1, notify=True)
             self.dialog.inspect_repository()

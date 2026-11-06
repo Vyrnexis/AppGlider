@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 from appglider.core.catalog import MANUAL_DESCRIPTION, App
 from appglider.github.assets import BuildChoiceRequired, Release, variant_label
 from appglider.github.download import Progress, latest_release
-from appglider.github.http import file_stamp
+from appglider.github.http import UNREACHABLE, file_stamp
 from appglider.github.icons import (
     MAX_ICON_BYTES,
     IconCandidate,
@@ -62,6 +62,7 @@ from appglider.install.launch_options import (
 )
 from appglider.install.library import PreviousCopy, previous_copy
 from appglider.ui.app_status import app_status
+from appglider.ui.app_status import version_text as version_text
 from appglider.ui.controls import MessageBox, Segmented, Switch, repolish
 from appglider.ui.errors import describe_error
 from appglider.ui.jobs import TaskResult
@@ -72,15 +73,17 @@ if TYPE_CHECKING:
 NOTES_PREVIEW_LINES = 5
 WEB_SCHEMES = ("http", "https")
 RUNNING_CHECK_MS = 3000
-WAIT_TIP = "Wait for the current task to finish."
+WAIT_TIP = "Wait for the current task to finish, or cancel it."
 CHECK_TIP = "Look up stable and preview releases again without downloading anything."
-
-
-def version_text(version: str | None) -> str:
-    """Show a version with a leading v when it starts with a digit."""
-    if not version:
-        return "unknown"
-    return f"v{version}" if version[:1].isdigit() else version
+SAVED_SHOWN_MS = 3000
+UNINSTALL_HINT = "Deletes the file; your data is kept"
+UNINSTALL_MANUAL_HINT = "Also leaves your library"
+FORGET_HINT = "No files are deleted"
+FORGET_MANUAL_HINT = "Also leaves your library"
+REMOVE_HINT = "No files are deleted"
+HOLD_HINT = "New releases are shown, not installed"
+PIN_HINT = "Show first in the library"
+OFFLINE_NOTE = "Offline: could not reach GitHub. Showing what was known before."
 
 
 def format_size(size: int) -> str:
@@ -224,7 +227,7 @@ class VersionValue(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        layout = QHBoxLayout(self)
+        self.row = layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         self.text = QLabel()
@@ -237,6 +240,10 @@ class VersionValue(QWidget):
         self.badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         layout.addWidget(self.text, stretch=1)
         layout.addWidget(self.badge, alignment=Qt.AlignmentFlag.AlignTop)
+
+    def add_link(self, button: QPushButton) -> None:
+        """A link at the end of the line, such as Roll back beside the previous copy."""
+        self.row.addWidget(button, alignment=Qt.AlignmentFlag.AlignTop)
 
     def set_version(self, text: str, prerelease: bool = False, is_latest: bool = False) -> None:
         self.text.setText(text)
@@ -313,6 +320,7 @@ class AppPage(QScrollArea):
         self.build_target: App | None = None
         self.mode = "install"
         self.message = ""
+        self.message_failed = False
         self.release_url = ""
         self.shown_notes: str | None = None
         self.options_app: str | None = None
@@ -403,10 +411,18 @@ class AppPage(QScrollArea):
         self.title.setObjectName("appTitle")
         self.title.setTextFormat(Qt.TextFormat.PlainText)
         self.title.setWordWrap(True)
+        self.repo_link = link_button("")
+        self.repo_link.setToolTip("Open the repository on GitHub")
+        self.repo_link.clicked.connect(self.open_repository)
         self.source = QLabel()
         self.source.setObjectName("muted")
         self.source.setTextFormat(Qt.TextFormat.PlainText)
         self.source.setWordWrap(True)
+        source_line = QHBoxLayout()
+        source_line.setSpacing(0)
+        source_line.setContentsMargins(-5, 0, 0, 0)  # the link's own padding lines up with the name
+        source_line.addWidget(self.repo_link, alignment=Qt.AlignmentFlag.AlignTop)
+        source_line.addWidget(self.source, stretch=1)
         chips = QHBoxLayout()
         chips.setSpacing(8)
         self.chip = QLabel()
@@ -418,7 +434,7 @@ class AppPage(QScrollArea):
             chips.addWidget(chip)
         chips.addStretch()
         identity.addWidget(self.title)
-        identity.addWidget(self.source)
+        identity.addLayout(source_line)
         identity.addSpacing(2)
         identity.addLayout(chips)
         header.addLayout(identity, stretch=1)
@@ -503,6 +519,9 @@ class AppPage(QScrollArea):
             grid.addWidget(value, row, 1)
             self.version_rows[key] = (label, value)
             self.versions[key] = value
+        self.rollback_link = link_button("Roll back")
+        self.rollback_link.clicked.connect(self.rollback)
+        self.versions["previous"].add_link(self.rollback_link)
         checked_label = QLabel("Last checked")
         checked_label.setObjectName("captionLabel")
         checked = QHBoxLayout()
@@ -523,6 +542,11 @@ class AppPage(QScrollArea):
         self.note.setWordWrap(True)
         self.note.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.note)
+        self.missing_note = QLabel()
+        self.missing_note.setObjectName("muted")
+        self.missing_note.setWordWrap(True)
+        self.missing_note.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.missing_note)
         column.addWidget(frame)
 
     def build_preferences(self, column: QVBoxLayout) -> None:
@@ -540,7 +564,7 @@ class AppPage(QScrollArea):
         self.pin_switch.clicked.connect(self.toggle_pin)
         self.replace_button = QPushButton("Replace with a newer file…")
         self.replace_button.clicked.connect(self.replace_file)
-        self.build_button = QPushButton("Change…")
+        self.build_button = QPushButton("Automatic…")
         self.build_button.setAccessibleName("Change build")
         self.build_button.clicked.connect(self.choose_build)
         icon_control = QWidget()
@@ -563,8 +587,9 @@ class AppPage(QScrollArea):
         self.icon_button.setMenu(menu)
         icon_layout.addWidget(self.icon_preview)
         icon_layout.addWidget(self.icon_button)
-        self.shortcut_button = QPushButton("Repair")
-        self.shortcut_button.setAccessibleName("Repair menu shortcut")
+        # Whether the menu entry exists is not cheap to know, so the button covers both.
+        self.shortcut_button = QPushButton("Create or repair")
+        self.shortcut_button.setAccessibleName("Create or repair menu shortcut")
         self.shortcut_button.clicked.connect(self.create_shortcut)
         self.arguments_edit = QLineEdit()
         self.arguments_edit.setAccessibleName("Launch arguments")
@@ -575,13 +600,11 @@ class AppPage(QScrollArea):
         self.environment_edit.setPlaceholderText("NAME=value OTHER=value")
         self.environment_edit.editingFinished.connect(self.save_launch_options)
         self.channel_row = SettingRow(
-            "Release channel", "Previews may be less reliable", self.channel
+            "Release channel", "Previews can be less reliable", self.channel, below=True
         )
-        self.hold_row = SettingRow(
-            "Hold at this version", "Keep checking, never offer updates", self.hold_switch
-        )
-        self.pin_row = SettingRow("Pin to top", "Show first in the library", self.pin_switch)
-        self.build_row = SettingRow("Build", "Automatic", self.build_button)
+        self.hold_row = SettingRow("Hold at this version", HOLD_HINT, self.hold_switch)
+        self.pin_row = SettingRow("Pin to top", PIN_HINT, self.pin_switch)
+        self.build_row = SettingRow("Build", "Which download to use", self.build_button)
         self.replace_row = SettingRow(
             "Newer file", "The old file is kept for Roll back", self.replace_button
         )
@@ -619,8 +642,14 @@ class AppPage(QScrollArea):
         self.launch_error.setAccessibleName("Launch options problem")
         self.launch_error.hide()
         layout.addWidget(self.launch_error)
+        self.options_saved = QLabel("Saved")
+        self.options_saved.setObjectName("muted")
+        self.options_saved.setAccessibleName("Launch options saved")
+        self.options_saved.hide()
+        layout.addWidget(self.options_saved)
         self.hold_hint = self.hold_row.hint
         self.build_hint = self.build_row.hint
+        self.pin_hint = self.pin_row.hint
         self.icon_hint = self.icon_row.hint
         column.addWidget(frame)
 
@@ -647,13 +676,9 @@ class AppPage(QScrollArea):
             button.setObjectName("danger")
         self.force_row = SettingRow("Force close", "Unsaved work is lost", self.force_button)
         self.rollback_row = SettingRow("Roll back", "Restore the kept copy", self.rollback_button)
-        self.uninstall_row = SettingRow("Uninstall", "Your data is kept", self.uninstall_button)
-        self.forget_row = SettingRow(
-            "Forget missing copy", "No files are deleted", self.forget_button
-        )
-        self.remove_row = SettingRow(
-            "Remove from library", "No application files are deleted", self.remove_button
-        )
+        self.uninstall_row = SettingRow("Uninstall", UNINSTALL_HINT, self.uninstall_button)
+        self.forget_row = SettingRow("Forget missing copy", FORGET_HINT, self.forget_button)
+        self.remove_row = SettingRow("Remove from library", REMOVE_HINT, self.remove_button)
         # Each divider sits above its row and shows only when a shown row comes before it.
         self.manage_dividers: dict[SettingRow, QFrame] = {}
         rows = (
@@ -684,9 +709,11 @@ class AppPage(QScrollArea):
             self.pending = ""
         self.icon_key = None
         self.message = ""
+        self.message_failed = False
         self.shown_notes = None
         self.options_app = None
         self.launch_error.hide()
+        self.options_saved.hide()
         self.back_button.setText(f"‹ {back_label}")
         self.back_button.setAccessibleName(f"Back to {back_label}")
         self.verticalScrollBar().setValue(0)
@@ -715,6 +742,7 @@ class AppPage(QScrollArea):
             launcher.release_errors.get(app.id, ""),
             launcher.working.get(app.id, ""),
             launcher.missing.get(app.id),
+            self.running,
         )
         self.refresh_header(app, status.mode, status.state, status.text, status.tooltip, busy)
         self.refresh_notes(app, release, info, installed is not None)
@@ -726,35 +754,62 @@ class AppPage(QScrollArea):
         self.versions_frame.setVisible(not app.manual)
         self.left_empty = app.manual
         self.apply_column_stretch()
-        self.forget_row.hint.setText(
-            "Removes the app and deletes its kept previous copy"
+        missing = launcher.missing.get(app.id) if installed is None else None
+        close_first = f"Close {app.name} first, or use Force close."
+        running = self.running
+        self.uninstall_row.hint.setText(
+            close_first
+            if running and installed is not None
+            else UNINSTALL_MANUAL_HINT
             if app.manual
-            else "No files are deleted"
+            else UNINSTALL_HINT
         )
+        self.forget_row.label.setText("Forget" if app.manual else "Forget missing copy")
+        self.forget_row.hint.setText(FORGET_MANUAL_HINT if app.manual else FORGET_HINT)
         self.rollback_row.label.setText(
             f"Roll back to {version_text(previous.version)}" if previous else "Roll back"
         )
-        missing = launcher.missing.get(app.id) if installed is None else None
+        self.rollback_row.hint.setText(close_first if running else "Restore the kept copy")
+        # Roll back sits on the Previous copy line; an app added from a file has no Versions.
+        can_roll_back = managed and previous is not None
+        self.rollback_link.setVisible(can_roll_back and not app.manual)
+        self.rollback_link.setEnabled(not busy)
+        self.rollback_link.setToolTip(
+            WAIT_TIP if busy else close_first if running else "Restore the kept copy"
+        )
+        if previous:
+            self.rollback_link.setAccessibleName(
+                f"Roll back {app.name} to {version_text(previous.version)}"
+            )
         self.force_button.setAccessibleName(f"Force close {app.name}")
         rows = (
-            (self.force_row, self.force_button, managed and self.running),
-            (self.rollback_row, self.rollback_button, managed and previous is not None),
+            (self.force_row, self.force_button, managed and running),
+            (self.rollback_row, self.rollback_button, can_roll_back and app.manual),
             (self.uninstall_row, self.uninstall_button, installed is not None),
             (self.forget_row, self.forget_button, missing is not None),
-            (self.remove_row, self.remove_button, installed is None),
+            (self.remove_row, self.remove_button, installed is None and missing is None),
         )
         earlier = False
         for row, button, visible in rows:
             row.setVisible(visible)
             waiting = busy and button is not self.force_button
             button.setEnabled(not waiting)
-            button.setToolTip(WAIT_TIP if waiting else "")
+            if waiting:
+                button.setToolTip(WAIT_TIP)
+            else:
+                button.setToolTip("")
             if row in self.manage_dividers:
                 self.manage_dividers[row].setVisible(visible and earlier)
             earlier = earlier or visible
         if focused is not None and self.isAncestorOf(focused) and not focused.isVisibleTo(self):
             # Keep keyboard focus in the Manage panel when its button disappears.
-            shown = self.uninstall_button if installed is not None else self.remove_button
+            shown = (
+                self.uninstall_button
+                if installed is not None
+                else self.forget_button
+                if missing is not None
+                else self.remove_button
+            )
             if shown.isEnabled():
                 shown.setFocus()
 
@@ -771,20 +826,23 @@ class AppPage(QScrollArea):
             self.icon_preview.setPixmap(icon_pixmap(path, 32))
             self.icon_hint.setText("Saved icon" if path != app.icon else "Default icon")
         self.title.setText(app.name)
+        self.repo_link.setVisible(not app.manual)
         if app.manual:
             self.source.setText(f"{MANUAL_DESCRIPTION} · {app.file}")
         else:
-            self.source.setText(f"{app.repo} · {app.description}" if app.description else app.repo)
+            self.repo_link.setText(app.repo)
+            self.repo_link.setAccessibleName(f"Open {app.repo} on GitHub")
+            self.source.setText(f"· {app.description}" if app.description else "")
+        self.source.setVisible(bool(self.source.text()))
         show_chip(self.chip, state, text, tooltip)
-        self.channel_chip.setVisible(not app.manual)
+        # Stable is the default and needs no chip; only a preview choice is worth saying.
         preview = app.include_prereleases
+        self.channel_chip.setVisible(preview and not app.manual)
         show_chip(
             self.channel_chip,
             "none",
-            "Preview channel" if preview else "Stable channel",
-            "Stable and preview releases are offered."
-            if preview
-            else "Only stable releases are offered.",
+            "Previews on",
+            "Stable and preview releases are offered.",
         )
         installed = launcher.installed.get(app.id)
         release = launcher.releases.get(app.id)
@@ -793,7 +851,13 @@ class AppPage(QScrollArea):
         working = app.id in launcher.working
         self.launch_button.setEnabled(installed is not None and not working)
         self.launch_button.setToolTip(
-            WAIT_TIP if working else f"Launch {installed.path}" if installed else ""
+            WAIT_TIP
+            if working
+            else "Already running"
+            if self.running and installed
+            else f"Launch {installed.path}"
+            if installed
+            else ""
         )
         self.launch_button.setAccessibleName(f"Launch {app.name}")
         launch_only = mode == "launch"
@@ -806,10 +870,15 @@ class AppPage(QScrollArea):
                 f"Choose build for {app.name}",
                 "Choose which build to install",
             ),
+            # The target version is in the chip, so the button keeps one width.
             "update": (
-                f"Update to {version_text(release.version)}" if release else "Update",
-                f"Update {app.name}",
-                "Update; keep the previous version",
+                "Update",
+                f"Update {app.name} to {version_text(release.version)}"
+                if release
+                else f"Update {app.name}",
+                f"Update to {version_text(release.version)}; keep the previous version"
+                if release
+                else "Update; keep the previous version",
             ),
             "launch": ("", "", ""),
             "install": (
@@ -863,9 +932,12 @@ class AppPage(QScrollArea):
         parts = []
         if release.published:
             parts.append(f"Released {format_date(release.published)}")
-        parts.append(format_size(release.size))
-        if release.sha256:
-            parts.append("checksum published")
+        parts.append(f"{format_size(release.size)} download")
+        parts.append(
+            "checked with the published checksum"
+            if release.sha256
+            else "no published checksum to check it against"
+        )
         self.release_meta.setText(" · ".join(parts))
         notes = release.notes.strip()
         if notes != self.shown_notes:
@@ -911,11 +983,13 @@ class AppPage(QScrollArea):
                 installed_value.set_version("Not installed")
                 installed_value.setToolTip("")
         installed_value.text.setToolTip(installed_value.toolTip())
+        # "Installed: Not installed" says nothing the header chip does not.
+        missing_copy = None if installed else self.launcher.missing.get(app.id)
+        self.set_row_visible("installed", bool(installed) or missing_copy is not None)
         self.set_row_visible("previous", previous is not None)
         if previous:
             self.versions["previous"].set_version(
-                f"{version_text(previous.version)} · kept for roll back · "
-                f"{format_size(previous.size)}",
+                f"{version_text(previous.version)} · {format_size(previous.size)}",
                 previous.prerelease,
             )
             self.versions["previous"].setToolTip(str(previous.path))
@@ -940,8 +1014,18 @@ class AppPage(QScrollArea):
         self.check_button.setEnabled(not busy)
         self.check_button.setToolTip(CHECK_TIP if not busy else WAIT_TIP)
         error = launcher.release_errors.get(app.id) or launcher.check_errors.get(app.id, "")
-        self.note.setText(error or self.message)
-        self.note.setVisible(bool(self.note.text()))
+        text, failed = error or self.message, bool(error) or self.message_failed
+        if text == UNREACHABLE:
+            text, failed = OFFLINE_NOTE, False  # being offline is not a failed check
+        if not text and info is None and release is None and not installed and missing_copy is None:
+            text = "Press Check now or Install to see the latest release."
+        self.note.setText(text)
+        self.note.setVisible(bool(text))
+        set_object_name(self.note, "settingError" if failed else "muted")
+        self.missing_note.setText(
+            f"The file used to be at {missing_copy.path}" if missing_copy else ""
+        )
+        self.missing_note.setVisible(missing_copy is not None)
 
     def show_option(self, key: str, option: ReleaseOption | None, unchecked: bool) -> None:
         value = self.versions[key]
@@ -991,9 +1075,11 @@ class AppPage(QScrollArea):
         self.hold_switch.setEnabled(not busy)
         self.hold_hint.setText(self.hold_text(app, installed))
         self.pin_switch.setChecked(app.id in launcher.pinned)
-        self.build_hint.setText(
-            variant_label(app.build_variant) if app.build_variant else "Automatic"
-        )
+        self.pin_hint.setText(PIN_HINT)
+        build = variant_label(app.build_variant) if app.build_variant else "Automatic"
+        self.build_button.setText(f"{build}…")
+        self.build_button.setAccessibleName(f"Change build, now {build}")
+        self.build_button.setToolTip("Change which download is used")
         self.build_button.setEnabled(not busy)
         self.icon_button.setEnabled(not busy)
         self.shortcut_button.setEnabled(not busy)
@@ -1008,7 +1094,7 @@ class AppPage(QScrollArea):
             options = self.launcher.library.launch_options(app.id)
         except ValueError as error:
             options = LaunchOptions()
-            self.launch_error.setText(str(error))
+            self.launch_error.setText(describe_error(error))
             self.launch_error.show()
         self.options_app = app.id
         self.arguments_edit.setText(format_arguments(options))
@@ -1017,7 +1103,7 @@ class AppPage(QScrollArea):
     def hold_text(self, app: App, installed: Any) -> str:
         """Say what is held, or what holding does."""
         if not (installed and app.hold_updates):
-            return "Keep checking, never offer updates"
+            return HOLD_HINT
         launcher = self.launcher
         text = f"Held at {version_text(installed.version)}"
         release = launcher.releases.get(app.id)
@@ -1064,6 +1150,11 @@ class AppPage(QScrollArea):
             "Show fewer release notes" if view.expanded else "Show all release notes"
         )
 
+    def open_repository(self) -> None:
+        app = self.current_app()
+        if app is not None and not app.manual:
+            QDesktopServices.openUrl(QUrl(app.source_url))
+
     def open_release_page(self) -> None:
         QDesktopServices.openUrl(QUrl(self.release_url))
 
@@ -1074,7 +1165,15 @@ class AppPage(QScrollArea):
 
     def toggle_pin(self) -> None:
         if self.app_id:
+            wanted = self.pin_switch.isChecked()
             self.launcher.toggle_pin(self.app_id)
+            pinned = self.app_id in self.launcher.pinned
+            if pinned != wanted:
+                # The limit refused it: show the switch as it really is, and say why here too.
+                self.pin_switch.setChecked(pinned)
+                self.pin_hint.setText(
+                    "The limit of pinned apps is reached. Unpin another app first."
+                )
 
     def create_shortcut(self) -> None:
         if self.app_id:
@@ -1085,6 +1184,8 @@ class AppPage(QScrollArea):
         if app is None or self.options_app != app.id:
             return
         library = self.launcher.library
+        saved = False
+        self.options_saved.hide()
         try:
             options = LaunchOptions(
                 parse_arguments(self.arguments_edit.text()),
@@ -1094,11 +1195,15 @@ class AppPage(QScrollArea):
                 library.set_launch_options(app.id, options, refresh_database=False)
                 self.launcher.refresh_desktop_database()
                 self.launcher.footer.setText(f"Saved launch options for {app.name}.")
+                saved = True
         except (OSError, ValueError) as error:
             self.launch_error.setText(describe_error(error))
             self.launch_error.show()
             return
         self.launch_error.hide()
+        if saved:
+            self.options_saved.show()
+            QTimer.singleShot(SAVED_SHOWN_MS, self.options_saved.hide)
 
     def update_running(self) -> None:
         """Show Force close only while the app runs; looked up only while the page is seen."""
@@ -1136,9 +1241,13 @@ class AppPage(QScrollArea):
             self.launcher.footer.setText(describe_error(error))
             self.refresh()
             return
-        self.message = "Release preference saved. Check the available release."
         self.launcher.catalog_changed()
+        # The old results belong to the old channel: look again right away.
+        self.check_now()
+        self.message = "Release preference saved. Checking…"
+        self.message_failed = False
         self.launcher.footer.setText(self.message)
+        self.refresh()
 
     def remove_from_library(self) -> None:
         if self.app_id:
@@ -1156,6 +1265,7 @@ class AppPage(QScrollArea):
         self.pending = kind
         self.pending_app = self.app_id
         self.message = ""
+        self.message_failed = False
         self.launcher.start_task(message, operation, page=self)
 
     def check_now(self) -> None:
@@ -1163,6 +1273,7 @@ class AppPage(QScrollArea):
             self.pending = "check"
             self.pending_app = self.app_id
             self.message = ""
+            self.message_failed = False
             self.launcher.check_releases(self.app_id, self)
 
     def choose_build(self) -> None:
@@ -1196,10 +1307,13 @@ class AppPage(QScrollArea):
             return
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
-            return TaskResult(
-                "No icon found. Choose an image to replace the current icon.",
-                icons=discover_icons(app, cancel, lambda text: progress(text, 0, 0)),
+            icons = discover_icons(app, cancel, lambda text: progress(text, 0, 0))
+            message = (
+                f"Found {len(icons)} icon{'' if len(icons) == 1 else 's'}."
+                if icons
+                else "No icon found in the repository. Choose an image file instead."
             )
+            return TaskResult(message, icons=icons)
 
         self.start("icons", f"Looking for icons for {app.name}…", operation)
 
@@ -1209,8 +1323,8 @@ class AppPage(QScrollArea):
         if self.launcher.close_after_task or self.app_id is None or self.pending_app != self.app_id:
             return
         if kind == "check":
-            if result.release_infos.get(self.app_id) is None:
-                self.message = result.message
+            # A saved-preference note ends with the check it announced.
+            self.message = "" if self.app_id in result.release_infos else result.message
         elif kind == "build":
             self.build_finished()
         elif kind == "icons" and result.icons:
@@ -1223,6 +1337,7 @@ class AppPage(QScrollArea):
             return
         if kind == "check":
             self.message = error
+            self.message_failed = True
         self.refresh()
 
     def build_finished(self) -> None:
@@ -1245,16 +1360,25 @@ class AppPage(QScrollArea):
             try:
                 launcher.library.set_build_variant(app.id, target.build_variant)
             except (OSError, ValueError) as failure:
-                launcher.footer.setText(f"Build preference could not be saved: {failure}")
-                MessageBox.warning(self, "Cannot save the build", str(failure))
+                reason = describe_error(failure)
+                launcher.footer.setText(f"Build preference could not be saved: {reason}")
+                MessageBox.warning(self, "Cannot save the build", reason)
                 return
         remember_release(target, release, launcher.library.data_dir / "release-cache")
         launcher.catalog_changed()
-        launcher.footer.setText(
-            "Build preference saved for future installs and updates. The installed copy was kept."
-            if changed
-            else "Release checked."
-        )
+        installed = launcher.installed.get(app.id)
+        if changed and installed and not release.newer_than(installed.version):
+            self.message = (
+                "Saved. Your current copy is unchanged; the new build is used from the next update."
+            )
+            launcher.footer.setText(self.message)
+        else:
+            launcher.footer.setText(
+                "Build preference saved for future installs and updates. "
+                "The installed copy was kept."
+                if changed
+                else "Release checked."
+            )
 
     def pick_variant(self, app: App, error: BuildChoiceRequired) -> str:
         """Ask which build to use; return its pattern, or an empty string if none was chosen."""

@@ -34,6 +34,11 @@ class TaskResult:
     running: str = ""  # the app that must be closed before the action can go ahead
     chosen: object = None  # a file picked on the Add page, with what was read from it
     added: App | None = None  # the app added from a file
+    skipped_running: list[str] = field(default_factory=list)  # Update all skipped these (ids)
+    stopped: str = ""  # why Update all stopped early (offline, GitHub's allowance)
+    updated: int = 0  # apps Update all brought up to date
+    choice_apps: list[str] = field(default_factory=list)  # Update all: apps needing a build choice
+    title: str = ""  # what to say in a tray message about this result
 
 
 class TaskSignals(QObject):

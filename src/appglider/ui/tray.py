@@ -35,7 +35,7 @@ class TrayMixin(QMainWindow):
         releases: dict[str, Release]
         self_state: self_update.SelfUpdate
         checks: ReleaseChecks
-        tray_key: list[tuple[str, str, Path, tuple[int, int, int] | None]] | None
+        tray_key: list[tuple[str, str, Path, tuple[int, int, int] | None, bool]] | None
 
         def show_launcher(self) -> None: ...
 
@@ -51,12 +51,22 @@ class TrayMixin(QMainWindow):
 
         def sorted_apps(self, apps: Iterable[App]) -> list[App]: ...
 
+        def update_all(self) -> None: ...
+
+        def update_groups(self) -> tuple[list[App], list[App]]: ...
+
+        @property
+        def busy(self) -> bool: ...
+
     def build_tray(self) -> None:
         """System tray icon and its menu."""
         self.tray_icons = (QIcon(str(APP_ICON)), QIcon(str(APP_UPDATE_ICON)))
         self.tray = QSystemTrayIcon(self.tray_icons[0], self)
         self.tray_has_updates = False
         self.tray_menu = QMenu(self)
+        self.tray_update_action = self.tray_menu.addAction("Update all")
+        self.tray_update_action.triggered.connect(self.tray_update_all)
+        self.tray_update_action.setVisible(False)
         self.tray_menu.addAction("Open AppGlider").triggered.connect(self.show_launcher)
         self.tray_check_action = self.tray_menu.addAction("Check for updates")
         self.tray_check_action.triggered.connect(self.tray_check_for_updates)
@@ -84,21 +94,38 @@ class TrayMixin(QMainWindow):
         self.tray_check_action.setText(
             "Checking for updates…" if self.checks.busy else "Check for updates"
         )
-        self.tray_check_action.setEnabled(not self.checks.busy and bool(self.installed))
+        # With no apps installed it checks only AppGlider itself.
+        self.tray_check_action.setEnabled(not self.checks.busy)
+        ready = [
+            app
+            for app in self.update_groups()[0]
+            if app.id in self.releases and self.installed[app.id].managed
+        ]
+        self.tray_update_action.setText(f"Update all ({len(ready)})")
+        self.tray_update_action.setVisible(bool(ready))
+        self.tray_update_action.setEnabled(not self.busy)
         tray_apps = [
             (app, self.library.icon_path(app))
             for app in self.sorted_apps(app for app in self.apps if app.id in self.installed)
         ]
-        tray_key = [(app.id, app.name, path, file_stamp(path)) for app, path in tray_apps]
+        tray_key = [
+            (app.id, app.name, path, file_stamp(path), self.has_update(app.id))
+            for app, path in tray_apps
+        ]
         if tray_key != self.tray_key:
             self.tray_key = tray_key
             self.tray_apps_menu.clear()
             self.tray_apps_menu.setEnabled(bool(tray_apps))
             for app, path in tray_apps:
-                action = self.tray_apps_menu.addAction(QIcon(icon_pixmap(path, 64)), app.name)
+                label = f"{app.name} · update available" if self.has_update(app.id) else app.name
+                action = self.tray_apps_menu.addAction(QIcon(icon_pixmap(path, 64)), label)
                 action.triggered.connect(
                     lambda checked=False, app_id=app.id: self.launch_app(app_id)
                 )
+
+    def tray_update_all(self) -> None:
+        """Update all from the tray; a hidden window learns the outcome from a message."""
+        self.update_all()
 
     def tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (

@@ -53,13 +53,18 @@ class CatalogPreviewDialog(QDialog):
         note = QLabel("Nothing is installed. Apps are added to your library only.")
         note.setObjectName("muted")
         layout.addWidget(note)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
-        self.add_button = buttons.addButton(
-            f"Add {len(plan.new)} {'app' if len(plan.new) == 1 else 'apps'}",
-            QDialogButtonBox.ButtonRole.AcceptRole,
-        )
+        if plan.new:
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+            self.add_button = buttons.addButton(
+                f"Add {len(plan.new)} {'app' if len(plan.new) == 1 else 'apps'}",
+                QDialogButtonBox.ButtonRole.AcceptRole,
+            )
+        else:  # nothing to add: one button that closes, and Enter presses it
+            buttons = QDialogButtonBox()
+            self.add_button = buttons.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
         self.add_button.setObjectName("primary")
-        self.add_button.setEnabled(bool(plan.new))
+        self.add_button.setAutoDefault(True)
+        self.add_button.setDefault(True)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

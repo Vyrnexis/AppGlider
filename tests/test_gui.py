@@ -73,7 +73,7 @@ from appglider.github.release_info import ReleaseInfo, ReleaseOption, info_path
 from appglider.install.library import AppRunning, Installed, Library, previous_copy
 from appglider.ui.controls import SpaceBar
 from appglider.ui.jobs import TaskResult
-from appglider.ui.pages.settings_page import SettingsPage, format_space
+from appglider.ui.pages.settings_page import SettingsPage, format_space, tray_available
 from appglider.ui.rows import ORDER_MIME
 from appglider.ui.window import (
     LauncherWindow,
@@ -197,7 +197,10 @@ class LibraryTests(unittest.TestCase):
             self.window.tray.activated.emit(QSystemTrayIcon.ActivationReason.Trigger)
             self.assertTrue(self.window.isVisible())
             self.window.showMinimized()
-            self.window.tray_menu.actions()[0].trigger()
+            open_action = next(
+                a for a in self.window.tray_menu.actions() if a.text() == "Open AppGlider"
+            )
+            open_action.trigger()
             self.assertFalse(self.window.isMinimized())
             self.window.quit_launcher()
             self.assertFalse(self.window.isVisible())
@@ -264,7 +267,7 @@ class LibraryTests(unittest.TestCase):
 
     def test_tray_menu_launches_only_managed_apps_and_shows_update_count(self) -> None:
         self.assertFalse(self.window.tray_apps_menu.isEnabled())
-        self.assertFalse(self.window.tray_check_action.isEnabled())
+        self.assertTrue(self.window.tray_check_action.isEnabled())  # it checks AppGlider itself
         payload = appimage_bytes()
         with patch("appglider.github.http.request", return_value=io.BytesIO(payload)):
             self.window.library.install(
@@ -274,7 +277,8 @@ class LibraryTests(unittest.TestCase):
         self.window.scan_installed()
         self.assertEqual(self.window.tray.toolTip(), "AppGlider · Updates: 1")
         actions = self.window.tray_apps_menu.actions()
-        self.assertEqual([action.text() for action in actions], [APP.name])
+        self.assertEqual([action.text() for action in actions], [f"{APP.name} · update available"])
+        self.assertEqual(self.window.tray_update_action.text(), "Update all (1)")
         with patch.object(self.window, "launch_app") as launch:
             actions[0].trigger()
             launch.assert_called_once_with(APP.id)
@@ -353,12 +357,9 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(hasattr(self.window, "sort_combo"))
         self.assertIsNone(self.settings.value("library/order"))
         self.assertFalse(self.settings.contains("library/sort"))
-        self.assertEqual(self.window.options_button.accessibleName(), "Library options")
-        self.assertEqual(self.window.options_button.toolTip(), "Library options")
-        self.assertEqual(
-            [action.text() for action in self.window.options_button.menu().actions()],
-            ["Sort A–Z"],
-        )
+        self.assertEqual(self.window.options_button.text(), "Sort A–Z")
+        self.assertEqual(self.window.options_button.accessibleName(), "Sort the library A–Z")
+        self.assertIn("drag rows", self.window.options_button.toolTip())
 
     def test_apps_without_a_place_in_the_saved_order_come_last(self) -> None:
         names = self.by_name()
@@ -379,19 +380,19 @@ class LibraryTests(unittest.TestCase):
         window.toggle_pin(names[3])
         custom = self.shown()
         self.assertNotEqual(custom[1:], [n for n in names if n != names[3]])
-        with patch("appglider.ui.window.MessageBox.question") as ask:
-            ask.return_value = QMessageBox.StandardButton.No
-            window.sort_action.trigger()
+        with patch("appglider.ui.window.MessageBox.confirm") as ask:
+            ask.return_value = (False, False)
+            window.options_button.click()
             self.assertEqual(
-                ask.call_args.args[1:],
+                ask.call_args.args[1:3],
                 (
                     "Sort the library A–Z?",
                     "This replaces your own order. Pinned apps stay on top.",
                 ),
             )
             self.assertEqual(self.shown(), custom)
-            ask.return_value = QMessageBox.StandardButton.Yes
-            window.sort_action.trigger()
+            ask.return_value = (True, False)
+            window.options_button.click()
         self.assertEqual(self.shown(), [names[3], *[n for n in names if n != names[3]]])
         self.assertEqual(json.loads(self.settings.value("library/order")), names)
 
@@ -525,11 +526,11 @@ class LibraryTests(unittest.TestCase):
         self.assert_chip(card, "ok", "✓ Up to date", "Launch")
         self.assertIn("Offline: could not reach GitHub", card.chip.toolTip())
         card.set_state(installed, newer, False, refresh_error=http.UNREACHABLE)
-        self.assert_chip(card, "update", "↑ 1.1.0", "Update")
+        self.assert_chip(card, "update", "↑ v1.1.0", "Update")
         card.set_state(installed, None, False, refresh_error=http.UNREACHABLE)
         self.assert_chip(card, "none", "Not checked", "Launch")
         card.set_state(installed, newer, False)
-        self.assert_chip(card, "update", "↑ 1.1.0", "Update")
+        self.assert_chip(card, "update", "↑ v1.1.0", "Update")
         self.assertEqual(card.action_button.objectName(), "primary")
         self.assertEqual(card.action_button.accessibleName(), f"Update {APP.name}")
         card.set_state(installed, newer, True)
@@ -540,7 +541,7 @@ class LibraryTests(unittest.TestCase):
         self.assert_chip(card, "preview", "Preview channel", "Launch")
         card.app = replace(APP, hold_updates=True)
         card.set_state(installed, newer, False)
-        self.assert_chip(card, "held", "‖ Held · 1.1.0 out", "Launch")
+        self.assert_chip(card, "held", "‖ Held · v1.1.0 out", "Launch")
         self.assertIn("Held at v1.0.0 · v1.1.0 available", card.chip.toolTip())
         card.set_state(installed, current, False)
         self.assert_chip(card, "held", "‖ Held", "Launch")
@@ -875,7 +876,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(card.action_button.text(), "Launch")
         self.assertTrue(window.update_all_button.isHidden())
         self.assertEqual(card.chip.property("state"), "held")
-        self.assertEqual(card.chip.text(), "‖ Held · 1.1.0 out")
+        self.assertEqual(card.chip.text(), "‖ Held · v1.1.0 out")
         self.assertIn("Held at v1.0.0 · v1.1.0 available", card.chip.toolTip())
         self.assertEqual(card.hold_action.text(), "Release hold")
         with patch("appglider.ui.window.discover_releases") as discover:
@@ -899,7 +900,7 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(card.hold_action.isEnabled())
         page = self.window.app_page
         self.window.open_app(APP.id)
-        self.assertEqual(page.hold_hint.text(), "Keep checking, never offer updates")
+        self.assertEqual(page.hold_hint.text(), "New releases are shown, not installed")
         self.assertFalse(page.hold_switch.isChecked())
         self.window.library.set_update_hold(APP.id, True)
         self.window.scan_installed()
@@ -1015,11 +1016,11 @@ class LibraryTests(unittest.TestCase):
                 self.assertIn("Trying again in", window.footer.text())
         self.assertEqual(waits, [15_000, 30_000, 60_000, 120_000, 300_000])
         self.assertEqual(
-            window.footer.text(), "Could not reach GitHub. Rows show what was known before."
+            window.footer.text(), "Couldn't reach GitHub. Rows show what was known before."
         )
         window.update_github_status()
         self.assertEqual(window.github_label.text(), "GitHub: offline")
-        self.assertIn("Could not reach GitHub", window.status_block.toolTip())
+        self.assertIn("Couldn't reach GitHub", window.status_block.toolTip())
         with patch.object(window.checks, "add") as add:
             window.offline_retry()
         add.assert_called_once_with([APP.id])
@@ -1031,7 +1032,7 @@ class LibraryTests(unittest.TestCase):
         window.release_errors[APP.id] = "GitHub answered HTTP 404."
         window.release_checks_drained()
         self.assertFalse(window.offline_timer.isActive())
-        self.assertIn("Some checks failed", window.footer.text())
+        self.assertIn("Check failed for PhotoCraft", window.footer.text())
 
     def test_a_background_self_check_failure_retries_and_notifications_wait(self) -> None:
         window = self.window
@@ -1154,21 +1155,21 @@ class LibraryTests(unittest.TestCase):
                 return_value=True,
             ),
             patch("appglider.ui.window.QThreadPool.globalInstance"),
-            patch("appglider.ui.window.MessageBox.question") as question,
+            patch("appglider.ui.window.MessageBox.confirm") as question,
         ):
             self.window.tray.show()
             self.window.start_task("Downloading", lambda cancel, progress: TaskResult("Done"))
             task = self.window.task
-            self.assertFalse(self.window.tray_check_action.isEnabled())
+            self.assertTrue(self.window.tray_check_action.isEnabled())
             self.window.close()
             self.assertFalse(task.cancel.is_set())
             question.assert_not_called()
-            question.return_value = QMessageBox.StandardButton.No
+            question.return_value = (False, False)
             self.window.quit_launcher()
             self.assertTrue(self.window.isVisible())
             self.assertFalse(self.window.quitting)
             self.assertFalse(task.cancel.is_set())
-            question.return_value = QMessageBox.StandardButton.Yes
+            question.return_value = (True, False)
             self.window.quit_launcher()
             self.assertTrue(task.cancel.is_set())
             self.assertTrue(self.window.close_after_task)
@@ -1222,7 +1223,8 @@ class LibraryTests(unittest.TestCase):
         self.window.show_view("updates")
         self.assertFalse(self.visible_ids())
         self.assertTrue(self.window.empty.isVisible())
-        self.assertIn("No installed apps to check", self.window.empty.text())
+        self.assertIn("No apps are installed yet", self.window.empty.text())
+        self.assertTrue(self.window.empty_check_button.isEnabled())
         self.window.show_view("library")
         self.window.filter_all.click()
         self.assertEqual(len(self.visible_ids()), 14)
@@ -1331,12 +1333,12 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.window.updates_count.text(), "1")
         card = self.window.cards["solidcraft"]
         self.assertEqual(card.installed_version.text(), "v0.16.1")
-        self.assertEqual(card.chip.text(), "↑ 0.16.2")
+        self.assertEqual(card.chip.text(), "↑ v0.16.2")
         self.assertEqual(card.action_button.text(), "Update")
         self.window.show_view("updates")
         self.assertEqual(self.visible_ids(), {"solidcraft"})
         self.assertEqual(card.installed_version.text(), "v0.16.1")
-        self.assertEqual(card.chip.text(), "↑ 0.16.2")
+        self.assertEqual(card.chip.text(), "↑ v0.16.2")
 
         self.window.search.setText("photocraft")
         self.assertFalse(self.visible_ids())
@@ -1417,7 +1419,8 @@ class LibraryTests(unittest.TestCase):
         page = self.window.app_page
         self.assertIs(self.window.pages.currentWidget(), page)
         self.assertEqual(page.title.text(), "SolidCraft")
-        self.assertIn("tangency-labs/solidcraft", page.source.text())
+        self.assertEqual(page.repo_link.text(), "tangency-labs/solidcraft")
+        self.assertIn("Parametric 3D modelling and CAD", page.source.text())
         self.assertEqual(page.back_button.text(), "‹ Library")
         self.assertIn(info.stable.version, page.versions["stable"].text.text())
         self.assertIn(info.preview.version, page.versions["preview"].text.text())
@@ -1469,6 +1472,7 @@ class LibraryTests(unittest.TestCase):
     def test_settings_apply_immediately_and_persist(self) -> None:
         page = self.window.settings_page
         folder = str(Path(self.temp.name) / "future-apps")
+        Path(folder).mkdir()
         self.assertTrue(self.window.nav_settings.isEnabled())
         QTest.mouseClick(self.window.nav_settings, Qt.MouseButton.LeftButton)
         self.assertIs(self.window.pages.currentWidget(), page)
@@ -1479,7 +1483,6 @@ class LibraryTests(unittest.TestCase):
         page.folder.editingFinished.emit()
         self.assertEqual(self.settings.value("installation/folder"), folder)
         self.assertEqual(self.window.library.apps_dir, Path(folder))
-        self.assertFalse(Path(folder).exists())
         self.settings.sync()
         reopened = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
         self.assertEqual(reopened.value("appearance/theme"), "Dark")
@@ -1680,8 +1683,8 @@ class LibraryTests(unittest.TestCase):
             discover.assert_not_called()
         self.assertFalse(self.window.checks.busy)
         self.assertFalse(self.window.checks.queue)
-        self.assertFalse(self.window.check_button.isEnabled())
-        self.assertFalse(self.window.tray_check_action.isEnabled())
+        self.assertTrue(self.window.check_button.isEnabled())  # it checks AppGlider itself
+        self.assertTrue(self.window.tray_check_action.isEnabled())
         for card in self.window.cards.values():
             self.assertEqual(card.chip.text(), "Not installed")
             self.assertEqual(card.chip.property("state"), "none")
@@ -1747,7 +1750,11 @@ class LibraryTests(unittest.TestCase):
                 self.assertEqual(self.window.pages.currentIndex() == 1, leave == "other app")
                 if leave != "removed":
                     self.assertEqual(self.window.release_infos[APP.id], info)
-                self.assertEqual(page.note.text(), page.message)
+                # No stale result is left behind: the note is empty or the "not checked" hint.
+                self.assertIn(
+                    page.note.text(),
+                    (page.message, "Press Check now or Install to see the latest release."),
+                )
                 if leave == "removed":
                     self.window.library.import_catalog(STARTER_ENTRIES)
                     self.window.scan_installed()
@@ -1776,7 +1783,10 @@ class LibraryTests(unittest.TestCase):
         other = APPS[1]
         record = Installed(Path(self.temp.name) / "example.AppImage", "0.9.0", True)
         self.window.installed = {APP.id: record, other.id: record}
-        with patch("appglider.ui.window.QThreadPool.globalInstance") as pool:
+        with (
+            patch("appglider.ui.window.QThreadPool.globalInstance") as pool,
+            patch("appglider.ui.window.github_status.quota_plentiful", return_value=False),
+        ):
             self.window.checks.add([APP.id, other.id])
             self.assertEqual(self.window.checks.queue, [other.id])
             self.window.installed.pop(other.id)
@@ -1844,7 +1854,7 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(discover.call_count, 2)
             self.assertTrue(discover.call_args.kwargs["force"])
         card = self.window.cards[APP.id]
-        self.assertEqual(card.chip.text(), f"↑ {info.stable.version}")
+        self.assertEqual(card.chip.text(), f"↑ v{info.stable.version}")
         self.assertIn("latest release", card.chip.toolTip())
         self.assertNotIn(
             info.preview.version,
@@ -1856,14 +1866,22 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.window.updates_count.text(), "1")
         self.change_release_preference(1)
         preview_chip = self.window.cards[APP.id].chip
-        self.assertEqual(preview_chip.text(), f"↑ {info.preview.version}")
+        self.assertEqual(preview_chip.text(), f"↑ v{info.preview.version}")
         self.assertIn("pre-release", preview_chip.toolTip())
-        self.assertEqual(self.window.check_button.toolTip(), "Check for updates")
+        self.assertEqual(self.window.check_button.toolTip(), "Check for updates (F5)")
 
     def change_release_preference(self, index: int) -> None:
         self.window.open_app(APP.id)
         self.assertEqual(self.window.app_page.app_id, APP.id)
-        self.window.app_page.channel.buttons[index].click()
+        # Changing the channel starts a check of that app; keep it offline so the saved
+        # release information stays as it was and nothing reaches the network.
+        with (
+            patch("appglider.ui.window.discover_releases", side_effect=OSError("Offline")) as look,
+            patch("appglider.ui.window.MessageBox.warning"),
+        ):
+            self.window.app_page.channel.buttons[index].click()
+            self.wait_for_task()
+        look.assert_called_once()
         self.window.app_page.back_button.click()
 
     def test_card_preference_changes_offers_and_count_without_installing(self) -> None:
@@ -1879,7 +1897,7 @@ class LibraryTests(unittest.TestCase):
             install.assert_not_called()
         card = self.window.cards[APP.id]
         self.assertEqual(self.window.updates_count.text(), "1")
-        self.assertEqual(card.chip.text(), f"↑ {info.preview.version}")
+        self.assertEqual(card.chip.text(), f"↑ v{info.preview.version}")
         self.assertIn("pre-release", card.chip.toolTip())
         self.assertEqual(card.action_button.text(), "Update")
         self.assertTrue(card.app.include_prereleases)
@@ -1971,7 +1989,7 @@ class LibraryTests(unittest.TestCase):
             )
         with (
             patch("appglider.ui.window.QThreadPool.globalInstance"),
-            patch("appglider.ui.window.MessageBox.question") as question,
+            patch("appglider.ui.window.MessageBox.confirm") as question,
             patch("appglider.ui.window.QSystemTrayIcon.isSystemTrayAvailable", return_value=False),
         ):
             self.window.refresh_releases()
@@ -2051,8 +2069,8 @@ class LibraryTests(unittest.TestCase):
                 self.assertTrue(self.window.installed[APP.id].managed)
             self.assertTrue(card.rollback_action.isEnabled())
             with patch(
-                "appglider.ui.window.MessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "appglider.ui.window.MessageBox.confirm",
+                return_value=(True, False),
             ) as ask:
                 card.rollback_requested.emit(APP.id)
             self.assertEqual(ask.call_args.args[1], f"Roll back {APP.name}?")
@@ -2134,7 +2152,8 @@ class LibraryTests(unittest.TestCase):
             window.update_all()
             self.wait_for_task()
         self.assertEqual(calls, [first.id, second.id])
-        warning.assert_not_called()
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[1], "Update all stopped")
         text = window.footer.text()
         self.assertEqual(text.count("request limit"), 1)
         self.assertIn("about 2 minutes", text)
@@ -2160,7 +2179,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(window.installed[first.id].version, "1.0.0")
         self.assertEqual(window.footer.text(), "Updated 1 app. 1 could not be updated.")
         title, text = warning.call_args.args[1:3]
-        self.assertEqual(title, "Couldn't update all apps")
+        self.assertEqual(title, "Some apps couldn't be updated")
         self.assertEqual(text, f"{first.name}: unexpected reply")
 
     def test_busy_includes_a_file_copy_on_the_add_page(self) -> None:
@@ -2204,7 +2223,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(window.pinned, {APPS[0].id})
         self.assertFalse(window.app_page.pin_switch.isChecked())
 
-    def test_update_all_names_a_running_app_and_goes_on_with_the_rest(self) -> None:
+    def test_update_all_skips_a_running_app_and_goes_on_with_the_rest(self) -> None:
         window = self.window
         first, second, new = self.outdated_pair()
 
@@ -2217,15 +2236,19 @@ class LibraryTests(unittest.TestCase):
             patch("appglider.ui.window.latest_release", side_effect=latest),
             patch("appglider.github.http.request", side_effect=lambda *a, **k: io.BytesIO(new)),
             patch("appglider.ui.window.MessageBox.warning") as warning,
+            patch.object(window, "offer_force_close_many") as offer,
         ):
             window.update_all()
             self.wait_for_task()
         self.assertEqual(window.installed[second.id].version, "1.1.0")
         self.assertEqual(window.installed[first.id].version, "1.0.0")
-        self.assertEqual(window.footer.text(), "Updated 1 app. 1 could not be updated.")
         self.assertEqual(
-            warning.call_args.args[2], f"{first.name}: {first.name} is running. Close it first."
+            window.footer.text(),
+            f"Updated 1 app. Skipped because running: {first.name}. "
+            "Close it and press Update all again.",
         )
+        offer.assert_called_once_with([first.id])
+        warning.assert_not_called()
 
     def test_a_check_from_the_tray_reports_to_a_hidden_window(self) -> None:
         window = self.window
@@ -2267,7 +2290,7 @@ class LibraryTests(unittest.TestCase):
         self.addCleanup(hidden.stop)
         window.start_task("Working…", lambda cancel, progress: TaskResult("Updated 2 apps."))
         self.wait_for_task()
-        self.assertEqual(shown.call_args.args[:2], ("Finished", "Updated 2 apps."))
+        self.assertEqual(shown.call_args.args[:2], ("AppGlider", "Updated 2 apps."))
 
     def test_a_scheduled_notification_waits_for_a_running_task(self) -> None:
         window = self.window
@@ -2306,9 +2329,7 @@ class LibraryTests(unittest.TestCase):
 
     def test_uninstall_asks_with_the_same_word_as_its_button(self) -> None:
         window = self.window
-        with patch(
-            "appglider.ui.window.MessageBox.question", return_value=QMessageBox.StandardButton.No
-        ) as ask:
+        with patch("appglider.ui.window.MessageBox.confirm", return_value=(False, False)) as ask:
             window.remove_app(APP.id)
         self.assertEqual(ask.call_args.args[1], f"Uninstall {APP.name}?")
 
@@ -2461,6 +2482,8 @@ class LibraryTests(unittest.TestCase):
         page = self.window.settings_page
         self.window.open_settings("Storage")
         theirs = Path(self.temp.name) / "Applications"
+        (theirs / "appglider").mkdir(parents=True)
+        (Path(self.temp.name) / "elsewhere").mkdir()
         with patch("appglider.ui.pages.settings_page.appimagelauncher_folder", return_value=theirs):
             page.folder.setText(str(theirs / "appglider"))
             page.folder.editingFinished.emit()
@@ -2475,6 +2498,7 @@ class LibraryTests(unittest.TestCase):
         library = self.window.library
         self.window.open_settings("Storage")
         good = str(Path(self.temp.name) / "good-apps")
+        Path(good).mkdir()
         page.folder.setText(good)
         page.folder.editingFinished.emit()
         self.assertEqual(self.settings.value("installation/folder"), good)
@@ -2504,8 +2528,9 @@ class LibraryTests(unittest.TestCase):
             self.window.refresh()
             for widget in (page.folder, page.browse_button, page.import_button):
                 self.assertFalse(widget.isEnabled())
-            for widget in (theme, page.close_to_tray, page.notify_updates, page.check_interval):
+            for widget in (theme, page.notify_updates, page.check_interval):
                 self.assertTrue(widget.isEnabled())
+            self.assertEqual(page.close_to_tray.isEnabled(), tray_available())
             before = self.settings.value("installation/folder")
             page.folder.setText(str(Path(self.temp.name) / "blocked"))
             self.assertFalse(page.apply_folder())
@@ -2520,6 +2545,7 @@ class LibraryTests(unittest.TestCase):
     def test_browse_applies_a_valid_choice_at_once(self) -> None:
         page = self.window.settings_page
         chosen = str(Path(self.temp.name) / "browsed")
+        Path(chosen).mkdir()  # a folder that does not exist is not applied
         with patch(
             "appglider.ui.pages.settings_page.QFileDialog.getExistingDirectory", return_value=chosen
         ):
@@ -2732,7 +2758,7 @@ class LibraryTests(unittest.TestCase):
             patch.object(http, "request") as request,
         ):
             self.window.update_github_status()
-            self.assertEqual(self.window.github_label.text(), "GitHub status")
+            self.assertEqual(self.window.github_label.text(), "GitHub: not used yet")
             self.assertEqual(
                 self.window.status_block.cursor().shape(), Qt.CursorShape.PointingHandCursor
             )
@@ -2763,7 +2789,7 @@ class LibraryTests(unittest.TestCase):
         )
         stable = Release("1.2.0", "solid.AppImage", "unused", 1, "0" * 64)
         card.set_state(beta, stable, False)
-        self.assertEqual((card.chip.property("state"), card.chip.text()), ("update", "↑ 1.2.0"))
+        self.assertEqual((card.chip.property("state"), card.chip.text()), ("update", "↑ v1.2.0"))
         self.assertIn("latest release", card.chip.toolTip())
         self.assertEqual(card.action_button.text(), "Update")
         previous = Release("1.1.0", "solid.AppImage", "unused", 1, "0" * 64)
@@ -2771,7 +2797,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(card.chip.property("state"), "preview")
         self.assertEqual(card.chip.text(), "Waiting for stable")
         self.assertIn("Waiting for a newer stable", card.chip.toolTip())
-        self.assertIn("Pre-release", card.installed_version.toolTip())
+        self.assertIn("Preview version", card.installed_version.toolTip())
         self.assertEqual(card.action_button.text(), "Launch")
         current = Installed(beta.path, "1.1.0", True)
         card.set_state(current, previous, False)
@@ -2788,7 +2814,7 @@ class LibraryTests(unittest.TestCase):
         )
         card = self.window.cards[APP.id]
         card.set_state(installed, info.preview.release, False, info=info)
-        self.assertEqual(card.chip.text(), f"↑ {info.preview.version}")
+        self.assertEqual(card.chip.text(), f"↑ v{info.preview.version}")
         self.assertIn("pre-release", card.chip.toolTip())
         self.assertEqual(card.installed_version.text(), f"v{installed.version}")
         self.assertEqual(card.action_button.text(), "Update")
@@ -2803,7 +2829,7 @@ class LibraryTests(unittest.TestCase):
 
         card.set_state(installed, None, False, info=info)
         self.assertEqual(card.chip.text(), "Waiting for stable")
-        self.assertIn("Pre-release", card.installed_version.toolTip())
+        self.assertIn("Preview version", card.installed_version.toolTip())
 
     def test_preview_only_installation_waits_after_disabling_previews(self) -> None:
         info = self.release_info()
@@ -2815,7 +2841,7 @@ class LibraryTests(unittest.TestCase):
         card.set_state(installed, None, False, info=info)
         self.assertEqual(card.chip.text(), "Waiting for stable")
         self.assertIn("Waiting for a newer stable", card.chip.toolTip())
-        self.assertIn("Pre-release", card.installed_version.toolTip())
+        self.assertIn("Preview version", card.installed_version.toolTip())
         self.assertEqual(card.action_button.text(), "Launch")
         self.assertEqual(card.action_button.objectName(), "")
 
@@ -2831,6 +2857,7 @@ class LibraryTests(unittest.TestCase):
 
     def test_close_to_tray_setting_can_be_disabled(self) -> None:
         switch = self.window.settings_page.close_to_tray
+        switch.setEnabled(True)  # the offscreen platform has no system tray, which disables it
         self.assertTrue(switch.isChecked())
         switch.click()
         self.assertFalse(self.settings.value("General/close-to-tray", True, type=bool))

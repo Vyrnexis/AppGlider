@@ -258,7 +258,7 @@ class DownloadTests(unittest.TestCase):
                 (self.folder / expected).unlink()
 
     def test_a_wrong_checksum_leaves_nothing_behind(self) -> None:
-        with self.assertRaisesRegex(ValueError, "SHA-256"):
+        with self.assertRaisesRegex(ValueError, "did not match the checksum"):
             self.fetch(appglider_release(digest="0" * 64))
         self.assert_untouched()
 
@@ -851,7 +851,7 @@ class WindowTests(unittest.TestCase):
         self.assertIn("1 update ready", window.banner_text())
         self.assertEqual(window.search.placeholderText(), f"Search {len(window.apps)} apps")
         window.show_view("updates")
-        self.assertEqual(window.search.placeholderText(), "Search 1 apps")
+        self.assertEqual(window.search.placeholderText(), "Search updates")
 
     def test_alone_it_adds_no_count_but_does_light_the_tray_badge(self) -> None:
         window = self.window
@@ -1334,6 +1334,7 @@ class WindowTests(unittest.TestCase):
 
     def test_restart_now_stays_running_when_the_new_image_cannot_start(self) -> None:
         window = self.window
+        MSG = "Permission denied"  # noqa: N806
         self.ready_window()
         with (
             patch(
@@ -1345,10 +1346,11 @@ class WindowTests(unittest.TestCase):
         ):
             window.self_update_button.click()
         quit_launcher.assert_not_called()
-        self.assertEqual(window.footer.text(), "Couldn't start AppGlider 0.9.1: Permission denied")
         self.assertEqual(
-            warning.call_args.args[1:], ("Couldn't start AppGlider 0.9.1", "Permission denied")
+            window.footer.text(),
+            f"Couldn't start AppGlider 0.9.1: {MSG}",
         )
+        self.assertEqual(warning.call_args.args[1:], ("Couldn't start AppGlider 0.9.1", MSG))
         self.assertEqual(window.self_update_button.text(), "Restart now")
 
     def test_restart_now_refuses_a_file_that_is_gone_or_not_an_appimage(self) -> None:

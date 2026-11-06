@@ -26,6 +26,7 @@ class SingleInstance(QObject):
         runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
         self.socket_path = runtime / f"appglider-{digest}.sock"
         self._lock: IO[bytes] | None = None
+        self.wake_failed = False  # another instance holds the lock but did not answer
         self._server: socket.socket | None = None
         self._notifier: QSocketNotifier | None = None
 
@@ -42,7 +43,7 @@ class SingleInstance(QObject):
         except BlockingIOError:
             lock.close()
             if wake:
-                self._wake_existing()
+                self.wake_failed = not self._wake_existing()
             return False
         self._lock = lock
         self._listen()
@@ -88,14 +89,16 @@ class SingleInstance(QObject):
         self._notifier = QSocketNotifier(server.fileno(), QSocketNotifier.Type.Read, self)
         self._notifier.activated.connect(self._accept)
 
-    def _wake_existing(self) -> None:
+    def _wake_existing(self) -> bool:
+        """Ask the running instance to show its window; False when it could not be reached."""
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(CONNECT_TIMEOUT)
             try:
                 client.connect(str(self.socket_path))
                 client.sendall(b"show")
             except OSError:
-                return
+                return False
+        return True
 
     def _accept(self) -> None:
         while self._server is not None:

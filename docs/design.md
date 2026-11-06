@@ -55,14 +55,18 @@ and failures that need the user to act.
   (apps without a place, such as new ones, follow A–Z; ⋯ in the toolbar offers Sort A–Z after
   a confirmation). Dragging works in Library with All or Installed and no search text, never
   in Updates; hidden apps keep their places. Pinned apps stay on top whatever the order.
-- **App page**: header (large icon, name, repository and description, status chips, Launch
-  and the primary action), then two columns. Left: What's new (release notes of the
+- **App page**: header (large icon, name, repository as a link to GitHub and description, status chips,
+  Launch and the primary action; the Update button always reads "Update", the version is in the
+  chip, so Launch never moves; the Preview chip shows only when previews are on), then two columns. Left: What's new (release notes of the
   offered release: the first five lines fading out, with Show all notes / Show less to
   expand them in place, never a scroll area inside the page) and Versions. Right: Preferences (release channel, hold, pin, build, icon,
   menu shortcut, and the Arguments and Environment launch options), then Manage, styled as a
-  danger area: Force close while the app is running, Roll back when a copy is kept, then
-  Uninstall while the app is installed or Remove from library once it is not, never both,
-  and Forget missing copy when the installed file has gone. A row that does not apply is
+  danger area: Force close while the app is running, then Uninstall while the app is installed,
+  Remove from library once it is not installed, or only Forget missing copy when the file has
+  gone, never two of them (the file and the library card are separate; the dialogs offer
+  "Also remove from my library"). Roll back is not in Manage: it is a link on the Previous
+  copy line of Versions (a manual app, which has no Versions, keeps it in Manage). While the
+  app runs, Uninstall and Roll back say to close it first or use Force close. A row that does not apply is
   hidden, not disabled; a running task disables what is shown (except Force close). Hold and Menu shortcut show once the app is installed.
 - **Manual app** (added from a file, no repository): the header names the file it came from
   instead of a repository link and has no update action. There is no What's new or Versions
@@ -115,14 +119,19 @@ Status chips, one per row, in priority order:
 
 | State | Chip text | Colour token | Primary button |
 | --- | --- | --- | --- |
-| Busy (installing, updating) | Installing… / Updating… with progress | accent | Cancel |
+| Busy (installing, updating) | Installing… / Updating… 43% (no percentage until the download reports one) | accent | Cancel |
 | Waiting its turn in Update all | Waiting | neutral | its usual button, disabled |
-| Update available | ↑ 1.4.0 | warn | Update (primary style) |
+| Update available | ↑ v1.4.0 (versions read as in the row: a leading v) | warn | Update (primary style) |
 | Choose build | Choose build | warn | Choose build |
-| Held with a newer release | ‖ Held · 2.3.0 out | held | Launch |
+| Held with a newer release | ‖ Held · v2.3.0 out | held | Launch |
 | Held, nothing newer | ‖ Held | held | Launch |
 | Installed preview | Preview channel | accent | Launch |
+| Checking | Checking… | neutral | Launch |
+| Preview installed, waiting for a stable release | Waiting for stable | accent | Launch |
 | Up to date | ✓ Up to date | ok | Launch |
+| Only previews published | Only previews | neutral | Launch |
+| Installed, never checked | Not checked | neutral | Launch |
+| Running, nothing more important to say | ▶ Running (replaces Up to date, Only previews, Not checked and Manual; other chips keep their place and add "Running now" to the tooltip) | accent | Launch |
 | Release check failed | Check failed | danger | Launch |
 | File missing | ⚠ File missing | danger | Reinstall |
 | Not installed | Not installed | neutral | Install |
@@ -153,18 +162,24 @@ colour, radius or spacing value directly in a widget.
 | `raised` | `#2a303c` | `#eceef3` | Selected segment, switch track |
 | `line` | `#2f3542` | `#dde0e7` | Borders, row dividers |
 | `text` | `#e8eaef` | `#1b1f27` | Primary text |
-| `muted` | `#9aa1ae` | `#5d6573` | Secondary text |
-| `faint` | `#6c7381` | `#8b92a0` | Hints, subtitles, counts |
-| `ok` | `#6fcf97` | `#1f8a4c` | Up to date |
-| `warn` | `#f0b860` | `#a8670a` | Updates waiting |
+| `muted` | `#9ba2ae` | `#5a616f` | Secondary text |
+| `faint` | `#888f9b` | `#666d7c` | Hints, subtitles, counts |
+| `ok` | `#6fcf97` | `#196e3d` | Up to date |
+| `warn` | `#f0b860` | `#8a5408` | Updates waiting |
 | `held` | `#c7a6ff` | `#7044c4` | Held |
-| `danger` | `#ff8a8a` | `#c53030` | Errors, destructive actions |
+| `danger` | `#ff8a8a` | `#b22b2b` | Errors, destructive actions |
 
 Chip and banner backgrounds are the state colour at 13–14 % opacity.
 
 **Accent** is chosen separately from the theme: Blue `#8fb3ff` / `#3563d8`, Green `#6fcf97` /
 `#1f8a4c`, Amber `#d9a35b` / `#9a6512`, Teal `#4fc8c8` / `#0f7c80` (dark / light). Text on an
 accent-filled button uses `bg` in dark mode and white in light mode.
+
+Every text pair reaches WCAG AA (4.5:1): the tokens above on `bg`, `surface` and `surface2` and on
+their own 14 % chip tint, and focus rings reach 3:1. Accent text (links, hover, chips) and the
+filled-button colour are the accent nudged darker (light) or lighter (dark) in lightness, same hue,
+only when needed (`accent_roles` in `theme.py`); only the Light Green fill, and all Light
+accent link/chip text, shift slightly. `tests/test_contrast.py` guards this.
 
 **Themes** are System (follows the desktop's light or dark preference), Light
 and Dark. Forest, Earthy and Sandstone are retired; a saved retired theme maps to Dark with

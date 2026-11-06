@@ -1,5 +1,6 @@
 """The App page, its controls and the release notes it shows."""
 
+import errno
 import io
 import os
 import tempfile
@@ -24,6 +25,7 @@ from test_library import APP, appimage_bytes, release_for
 from appglider import APP_ICON
 from appglider.github import assets, versions
 from appglider.github.assets import Release
+from appglider.github.http import UNREACHABLE
 from appglider.github.icons import IconCandidate, normalise_icon
 from appglider.github.release_info import ReleaseInfo, ReleaseOption, info_path
 from appglider.install.library import AppRunning, Library
@@ -149,8 +151,8 @@ class AppPageTests(unittest.TestCase):
             patch.object(library, "force_close", return_value=False) as force_close,
             self.answer("Force close…", "Force close"),
             patch(
-                "appglider.ui.window.MessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "appglider.ui.window.MessageBox.confirm",
+                return_value=(True, False),
             ),
         ):
             window.rollback_app(APP.id)
@@ -229,10 +231,11 @@ class AppPageTests(unittest.TestCase):
         self.assertTrue(self.page.launch_button.isVisibleTo(self.page))
         window.releases[APP.id] = release_for("1.1.0", appimage_bytes())
         window.refresh()
-        self.assertEqual(self.page.chip.text(), "↑ 1.1.0")
-        self.assertEqual(self.page.action_button.text(), "Update to v1.1.0")
+        self.assertEqual(self.page.chip.text(), "↑ v1.1.0")
+        self.assertEqual(self.page.action_button.text(), "Update")
+        self.assertIn("v1.1.0", self.page.action_button.toolTip())
         self.assertEqual(self.page.chip.property("state"), "update")
-        self.assertEqual(self.page.channel_chip.text(), "Stable channel")
+        self.assertFalse(self.page.channel_chip.isVisibleTo(self.page))
         window.pinned.add(APP.id)
         window.refresh()
         self.assertTrue(self.page.pin_switch.isChecked())
@@ -278,24 +281,31 @@ class AppPageTests(unittest.TestCase):
         window.open_app(APP.id)
         window.releases[APP.id] = release_for("1.0.0", appimage_bytes())
         window.check_errors[APP.id] = "Old failure"
-        self.page.channel.buttons[1].click()
+        with patch.object(window, "check_releases") as check:
+            self.page.channel.buttons[1].click()
+        check.assert_called_once_with(APP.id, self.page)
+        self.assertEqual(self.page.message, "Release preference saved. Checking…")
         self.assertTrue(window.cards[APP.id].app.include_prereleases)
         self.assertTrue(next(a for a in self.library.apps if a.id == APP.id).include_prereleases)
         self.assertNotIn(APP.id, window.releases)
         self.assertNotIn(APP.id, window.check_errors)
         self.assertEqual(self.page.channel.currentIndex(), 1)
-        self.assertEqual(self.page.channel_chip.text(), "Preview channel")
+        self.assertEqual(self.page.channel_chip.text(), "Previews on")
+        self.assertTrue(self.page.channel_chip.isVisibleTo(self.page))
         self.assertIn("Release preference saved", window.footer.text())
-        self.page.channel.buttons[0].click()
+        with patch.object(window, "check_releases"):
+            self.page.channel.buttons[0].click()
         self.assertFalse(window.cards[APP.id].app.include_prereleases)
-        self.assertEqual(self.page.channel_chip.text(), "Stable channel")
+        # Stable is the default and needs no chip.
+        self.assertFalse(self.page.channel_chip.isVisibleTo(self.page))
 
     def test_a_failed_channel_save_keeps_the_old_choice(self) -> None:
         self.window.open_app(APP.id)
         with patch.object(self.library, "set_release_preference", side_effect=OSError("Disk full")):
             self.page.channel.buttons[1].click()
         self.assertEqual(self.page.channel.currentIndex(), 0)
-        self.assertEqual(self.window.footer.text(), "Disk full")
+        self.assertIn("Disk full", self.window.footer.text())
+        self.assertNotIn("Errno", self.window.footer.text())
 
     def test_hold_and_pin_switches_use_the_window_actions(self) -> None:
         window = self.window
@@ -400,7 +410,8 @@ class AppPageTests(unittest.TestCase):
         self.library.add_repository(replace(chosen_bambu(), include_prereleases=True))
         self.window.scan_installed()
         self.window.open_app(BAMBU.id)
-        self.assertIn("Ubuntu 24.04", self.page.build_hint.text())
+        self.assertIn("Ubuntu 24.04", self.page.build_button.text())
+        self.assertEqual(self.page.build_hint.text(), "Which download to use")
         old = next(app for app in self.library.apps if app.id == BAMBU.id)
         entries = [bambu_metadata(), bambu_metadata("02.09.00.12", preview=True)]
         with (
@@ -424,7 +435,7 @@ class AppPageTests(unittest.TestCase):
         new = next(app for app in self.library.apps if app.id == BAMBU.id)
         self.assertIn("ubuntu22.04", new.build_variant)
         self.assertTrue(new.include_prereleases)
-        self.assertIn("Ubuntu 22.04", self.page.build_hint.text())
+        self.assertIn("Ubuntu 22.04", self.page.build_button.text())
         cache = self.library.data_dir / "release-cache"
         self.assertNotEqual(info_path(old, cache), info_path(new, cache))
         self.assertIn("Build preference saved", self.window.footer.text())
@@ -598,11 +609,15 @@ class AppPageTests(unittest.TestCase):
         self.assertFalse(self.page.shortcut_row.isHidden())
         self.assertTrue(self.page.rollback_row.isHidden())  # nothing kept to roll back to
         self.install("1.1.0")
-        self.assertFalse(self.page.rollback_row.isHidden())
-        self.assertEqual(self.page.rollback_row.label.text(), "Roll back to v1.0.0")
+        # Roll back lives on the Previous copy line, not in Manage.
+        self.assertTrue(self.page.rollback_row.isHidden())
+        self.assertTrue(self.page.rollback_link.isVisibleTo(self.page))
+        self.assertEqual(
+            self.page.rollback_link.accessibleName(), f"Roll back {APP.name} to v1.0.0"
+        )
         for button, handler in (
             (self.page.shortcut_button, "create_shortcut"),
-            (self.page.rollback_button, "rollback_app"),
+            (self.page.rollback_link, "rollback_app"),
             (self.page.uninstall_button, "remove_app"),
         ):
             with self.subTest(handler=handler), patch.object(window, handler) as called:
@@ -615,8 +630,8 @@ class AppPageTests(unittest.TestCase):
         self.install("1.0.0", "1.1.0")
         with (
             patch(
-                "appglider.ui.window.MessageBox.question",
-                return_value=QMessageBox.StandardButton.No,
+                "appglider.ui.window.MessageBox.confirm",
+                return_value=(False, False),
             ) as ask,
             patch.object(self.library, "rollback") as rollback,
         ):
@@ -632,8 +647,8 @@ class AppPageTests(unittest.TestCase):
         window.open_app(APP.id)
         self.assertTrue(self.page.remove_button.isEnabled())
         with patch(
-            "appglider.ui.pages.app_page.MessageBox.question",
-            return_value=QMessageBox.StandardButton.No,
+            "appglider.ui.window.MessageBox.confirm",
+            return_value=(False, False),
         ) as ask:
             self.page.remove_button.click()
         ask.assert_called_once()
@@ -641,8 +656,8 @@ class AppPageTests(unittest.TestCase):
         self.assertIn(APP.id, window.cards)
         self.assertIs(window.pages.currentWidget(), self.page)
         with patch(
-            "appglider.ui.pages.app_page.MessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
+            "appglider.ui.window.MessageBox.confirm",
+            return_value=(True, False),
         ):
             self.page.remove_button.click()
         self.assertEqual(window.pages.currentIndex(), 0)
@@ -654,7 +669,7 @@ class AppPageTests(unittest.TestCase):
         self.install("1.0.0")
         self.window.open_app(APP.id)
         self.assertTrue(self.page.remove_row.isHidden())
-        with patch("appglider.ui.pages.app_page.MessageBox.question") as ask:
+        with patch("appglider.ui.window.MessageBox.confirm") as ask:
             self.page.remove_from_library()
         ask.assert_not_called()
         self.assertIn(APP.id, [app.id for app in self.library.apps])
@@ -698,21 +713,23 @@ class AppPageTests(unittest.TestCase):
         self.assertEqual(card.action_button.text(), "Reinstall")
         self.assertEqual(window.filter_installed.text(), "Installed (0)")
         self.assertIn("Forget missing copy…", self.menu_shown())
-        self.assertIn("Remove from library…", self.menu_shown())
+        self.assertNotIn(
+            "Remove from library…", self.menu_shown()
+        )  # only Forget for a missing file
         self.assertNotIn("Uninstall…", self.menu_shown())
         window.open_app(APP.id)
         self.assertEqual(page.action_button.text(), "Reinstall")
         self.assertEqual(page.versions["installed"].text.text(), "v1.0.0 · file missing")
         self.assertTrue(page.forget_row.isVisibleTo(page))
-        self.assertTrue(page.remove_row.isVisibleTo(page))
+        self.assertFalse(page.remove_row.isVisibleTo(page))
         self.assertFalse(page.uninstall_row.isVisibleTo(page))
         with patch.object(window, "install_app") as install:
             page.action_button.click()
             card.action_button.click()
         self.assertEqual(install.call_count, 2)
         with patch(
-            "appglider.ui.window.MessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
+            "appglider.ui.window.MessageBox.confirm",
+            return_value=(True, False),
         ) as ask:
             page.forget_button.click()
         self.assertIn(str(path), ask.call_args.args[2])
@@ -726,8 +743,8 @@ class AppPageTests(unittest.TestCase):
     def test_the_row_menu_removes_an_uninstalled_app_from_the_library(self) -> None:
         card = self.window.cards[APP.id]
         with patch(
-            "appglider.ui.window.MessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
+            "appglider.ui.window.MessageBox.confirm",
+            return_value=(True, False),
         ):
             card.unlist_action.trigger()
         self.assertNotIn(APP.id, [app.id for app in self.library.apps])
@@ -745,7 +762,7 @@ class AppPageTests(unittest.TestCase):
         self.assertFalse(page.rollback_row.isVisibleTo(page))
         self.assertFalse(page.forget_row.isVisibleTo(page))
         self.assertEqual(self.manage_dividers_shown(), 0)
-        self.assertEqual(page.remove_row.hint.text(), "No application files are deleted")
+        self.assertEqual(page.remove_row.hint.text(), "No files are deleted")
         self.install("1.0.0")
         self.assertTrue(page.uninstall_row.isVisibleTo(page))
         self.assertTrue(page.uninstall_button.isEnabled())
@@ -753,8 +770,9 @@ class AppPageTests(unittest.TestCase):
         self.assertFalse(page.rollback_row.isVisibleTo(page))
         self.assertEqual(self.manage_dividers_shown(), 0)
         self.install("1.1.0")
-        self.assertTrue(page.rollback_row.isVisibleTo(page))
-        self.assertEqual(self.manage_dividers_shown(), 1)
+        self.assertFalse(page.rollback_row.isVisibleTo(page))
+        self.assertTrue(page.rollback_link.isVisibleTo(page))
+        self.assertEqual(self.manage_dividers_shown(), 0)
 
     def test_manage_busy_state_disables_the_visible_button(self) -> None:
         self.install("1.0.0")
@@ -771,9 +789,12 @@ class AppPageTests(unittest.TestCase):
         with patch.object(self.window, "task", object()):
             self.page.refresh()
         self.assertEqual(
-            self.page.uninstall_button.toolTip(), "Wait for the current task to finish."
+            self.page.uninstall_button.toolTip(),
+            "Wait for the current task to finish, or cancel it.",
         )
-        self.assertEqual(self.page.check_button.toolTip(), "Wait for the current task to finish.")
+        self.assertEqual(
+            self.page.check_button.toolTip(), "Wait for the current task to finish, or cancel it."
+        )
         self.page.refresh()
         self.assertEqual(self.page.uninstall_button.toolTip(), "")
 
@@ -791,11 +812,15 @@ class AppPageTests(unittest.TestCase):
     def test_forget_hint_matches_what_is_deleted(self) -> None:
         self.install("1.0.0")
         self.window.open_app(APP.id)
-        self.assertEqual(self.page.forget_row.hint.text(), "No files are deleted")
+        self.assertEqual(
+            self.page.forget_row.hint.text(),
+            "No files are deleted",
+        )
         manual = replace(APP, file="App.AppImage")
         with patch.object(self.page, "current_app", return_value=manual):
             self.page.refresh()
-        self.assertIn("deletes", self.page.forget_row.hint.text())
+        self.assertEqual("Also leaves your library", self.page.forget_row.hint.text())
+        self.assertEqual(self.page.forget_row.label.text(), "Forget")
 
     def test_checking_label_follows_the_running_check_after_switching_apps(self) -> None:
         self.install("1.0.0")
@@ -829,7 +854,7 @@ class AppPageTests(unittest.TestCase):
         size = self.library.scan()[APP.id].previous.stat().st_size
         self.assertEqual(
             previous.text.text(),
-            f"v1.0.0 · kept for roll back · {format_size(size)}",
+            f"v1.0.0 · {format_size(size)}",
         )
         self.assertEqual(self.page.versions["installed"].text.text(), "v1.1.0")
         self.assertIn(
@@ -862,7 +887,8 @@ class AppPageTests(unittest.TestCase):
         self.assertEqual(self.page.notes_heading.text(), "WHAT'S NEW IN 1.4.0")
         self.assertEqual(
             self.page.release_meta.text(),
-            f"Released 19 Oct 2026 · {format_size(release.size)} · checksum published",
+            f"Released 19 Oct 2026 · {format_size(release.size)} download · "
+            "checked with the published checksum",
         )
         self.assertIn("Faster import", self.page.notes_view.toPlainText())
         self.assertTrue(self.page.notes_view.isVisibleTo(self.page))
@@ -1025,6 +1051,180 @@ class AppPageTests(unittest.TestCase):
         self.window.open_app(APP.id)
         self.assertEqual(self.page.chip.text(), "✓ Up to date")
         self.assertIn("Current notes", self.page.notes_view.toPlainText())
+
+    # Review fixes
+
+    def installed_page(self, *versions: str) -> None:
+        self.install(*versions)
+        self.window.open_app(APP.id)
+
+    def test_a_running_app_shows_running_on_the_page_and_launch_says_so(self) -> None:
+        self.installed_page("1.0.0")
+        self.window.releases[APP.id] = release_for("1.0.0", appimage_bytes())
+        with patch.object(self.library, "app_running", return_value=True):
+            self.page.update_running()
+        self.assertEqual(self.page.chip.text(), "▶ Running")
+        self.assertEqual(self.page.launch_button.toolTip(), "Already running")
+        self.assertEqual(
+            self.page.uninstall_row.hint.text(), f"Close {APP.name} first, or use Force close."
+        )
+        self.assertTrue(self.page.uninstall_button.isEnabled())
+        with patch.object(self.library, "app_running", return_value=False):
+            self.page.update_running()
+        self.assertNotEqual(self.page.chip.text(), "▶ Running")
+        self.assertIn("Launch", self.page.launch_button.toolTip())
+
+    def test_an_available_update_outranks_running_and_keeps_one_button_width(self) -> None:
+        self.installed_page("1.0.0")
+        self.window.releases[APP.id] = release_for("1.1.0", appimage_bytes())
+        with patch.object(self.library, "app_running", return_value=True):
+            self.page.update_running()
+        self.assertEqual(self.page.chip.text(), "↑ v1.1.0")
+        self.assertIn("Running now", self.page.chip.toolTip())
+        self.assertEqual(self.page.action_button.text(), "Update")
+
+    def test_changing_the_channel_starts_a_check_of_this_app(self) -> None:
+        self.installed_page("1.0.0")
+        with patch.object(self.window, "check_releases") as check:
+            self.page.channel.buttons[1].click()
+        check.assert_called_once_with(APP.id, self.page)
+        self.assertEqual(self.page.note.text(), "Release preference saved. Checking…")
+
+    def test_a_build_saved_while_up_to_date_says_the_copy_is_unchanged(self) -> None:
+        self.installed_page("1.0.0")
+        page = self.page
+        page.build_target = replace(APP, build_variant="x")
+        page.build_result = {"release": release_for("1.0.0", appimage_bytes())}
+        with patch.object(self.library, "set_build_variant"):
+            page.build_finished()
+        self.assertEqual(
+            page.message,
+            "Saved. Your current copy is unchanged; the new build is used from the next update.",
+        )
+
+    def test_build_save_failures_use_plain_sentences(self) -> None:
+        self.installed_page("1.0.0")
+        page = self.page
+        page.build_target = replace(APP, build_variant="x")
+        page.build_result = {"release": release_for("1.0.0", appimage_bytes())}
+        failure = OSError(errno.EIO, "Input/output error")
+        with (
+            patch.object(self.library, "set_build_variant", side_effect=failure),
+            patch("appglider.ui.pages.app_page.MessageBox.warning") as warning,
+        ):
+            page.build_finished()
+        self.assertNotIn("Errno", warning.call_args.args[2])
+        self.assertIn("Something went wrong", warning.call_args.args[2])
+
+    def test_finding_icons_says_how_many_were_found(self) -> None:
+        self.window.open_app(APP.id)
+        found = (IconCandidate("a.png", normalise_icon(BLUE)),)
+        with patch("appglider.ui.pages.app_page.discover_icons", return_value=found):
+            self.page.find_icons_action.trigger()
+            self.wait_for_task()
+        self.assertEqual(self.window.footer.text()[:13], "Saved icon fo")
+        with (
+            patch("appglider.ui.pages.app_page.discover_icons", return_value=()),
+            patch.object(self.window, "task_finished", wraps=self.window.task_finished),
+        ):
+            self.page.find_icons_action.trigger()
+            self.wait_for_task()
+        self.assertEqual(
+            self.window.footer.text(),
+            "No icon found in the repository. Choose an image file instead.",
+        )
+
+    def test_the_repository_is_a_link_and_a_not_installed_page_stays_short(self) -> None:
+        self.window.open_app(APP.id)
+        page = self.page
+        self.assertTrue(page.repo_link.isVisibleTo(page))
+        self.assertEqual(page.repo_link.text(), APP.repo)
+        with patch("appglider.ui.pages.app_page.QDesktopServices.openUrl") as open_url:
+            page.repo_link.click()
+        self.assertEqual(open_url.call_args.args[0].toString(), APP.source_url)
+        self.assertFalse(page.version_rows["installed"][1].isVisibleTo(page))
+        self.assertEqual(page.note.text(), "Press Check now or Install to see the latest release.")
+        self.assertFalse(page.channel_chip.isVisibleTo(page))
+        self.install("1.0.0")
+        self.assertTrue(page.version_rows["installed"][1].isVisibleTo(page))
+
+    def test_preference_texts_are_plain_and_the_build_value_is_in_the_control(self) -> None:
+        self.installed_page("1.0.0")
+        page = self.page
+        self.assertEqual(
+            page.hold_hint.text(),
+            "New releases are shown, not installed",
+        )
+        self.assertEqual(page.channel_row.hint.text(), "Previews can be less reliable")
+        self.assertEqual(page.build_button.text(), "Automatic…")
+        self.assertEqual(page.shortcut_button.text(), "Create or repair")
+
+    def test_a_refused_pin_resets_the_switch(self) -> None:
+        self.installed_page("1.0.0")
+        page = self.page
+        with patch("appglider.ui.window.MAX_PINNED", 0):
+            page.pin_switch.click()
+        self.assertFalse(page.pin_switch.isChecked())
+        self.assertIn("limit", page.pin_hint.text())
+        page.refresh()
+        self.assertEqual(page.pin_hint.text(), "Show first in the library")
+
+    def test_saved_launch_options_say_so_under_the_field(self) -> None:
+        self.installed_page("1.0.0")
+        page = self.page
+        page.arguments_edit.setText("--fast")
+        page.arguments_edit.editingFinished.emit()
+        self.assertTrue(page.options_saved.isVisibleTo(page))
+        page.arguments_edit.setText("--fast")
+        page.arguments_edit.setText("--bad 'quote")
+        page.arguments_edit.editingFinished.emit()
+        self.assertFalse(page.options_saved.isVisibleTo(page))
+
+    def test_failures_note_is_red_offline_is_muted_and_a_missing_file_shows_its_path(
+        self,
+    ) -> None:
+        self.installed_page("1.0.0")
+        page, window = self.page, self.window
+        window.check_errors[APP.id] = "GitHub said no"
+        page.refresh()
+        self.assertEqual(page.note.objectName(), "settingError")
+        window.check_errors[APP.id] = UNREACHABLE
+        page.refresh()
+        self.assertEqual(page.note.objectName(), "muted")
+        self.assertTrue(page.note.text().startswith("Offline"))
+        window.check_errors.pop(APP.id)
+        path = self.library.scan()[APP.id].path
+        path.rename(path.with_name("moved.AppImage"))
+        window.scan_installed()
+        self.assertTrue(page.missing_note.isVisibleTo(page))
+        self.assertIn(str(path), page.missing_note.text())
+        self.assertTrue(page.forget_row.isVisibleTo(page))
+        self.assertFalse(page.remove_row.isVisibleTo(page))
+        self.assertFalse(page.uninstall_row.isVisibleTo(page))
+
+    def test_roll_back_is_a_link_on_the_previous_copy_line(self) -> None:
+        self.installed_page("1.0.0", "1.1.0")
+        page = self.page
+        self.assertFalse(page.rollback_row.isVisibleTo(page))
+        self.assertTrue(page.rollback_link.isVisibleTo(page))
+        with patch.object(self.library, "app_running", return_value=True):
+            page.update_running()
+        self.assertEqual(
+            page.rollback_link.toolTip(), f"Close {APP.name} first, or use Force close."
+        )
+        self.assertTrue(page.rollback_link.isEnabled())
+
+    def test_a_manual_app_keeps_roll_back_in_manage_with_its_own_hints(self) -> None:
+        self.install("1.0.0", "1.1.0")
+        manual = replace(APP, file="App.AppImage")
+        self.window.open_app(APP.id)
+        with patch.object(self.page, "current_app", return_value=manual):
+            self.page.refresh()
+        page = self.page
+        self.assertTrue(page.rollback_row.isVisibleTo(page))
+        self.assertFalse(page.rollback_link.isVisibleTo(page))
+        self.assertFalse(page.repo_link.isVisibleTo(page))
+        self.assertEqual("Also leaves your library", page.uninstall_row.hint.text())
 
     def test_the_helpers_format_dates_sizes_versions_and_links(self) -> None:
         self.assertEqual(format_date("2026-01-05"), "05 Jan 2026")

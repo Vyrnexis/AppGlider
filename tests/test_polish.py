@@ -80,30 +80,32 @@ class PolishTests(unittest.TestCase):
             self.assertNotEqual(before, after)
         self.assertEqual(len({*dark[:4]}), 4)
 
-    def test_status_line_shows_only_messages_progress_cancel_and_orphans(self) -> None:
+    def test_status_line_keeps_its_height_so_the_list_does_not_jump(self) -> None:
         window = self.window
         self.assertEqual(window.footer.text(), "")
-        self.assertTrue(window.status_line.isHidden())
-        window.footer.setText("Saved icon for X.")
+        self.assertTrue(window.footer.isHidden())
         self.assertFalse(window.status_line.isHidden())
+        height = window.status_line.minimumHeight()
+        self.assertGreater(height, 0)
+        window.footer.setText("Saved icon for X.")
+        self.assertFalse(window.footer.isHidden())
         window.footer.setText("")
-        self.assertTrue(window.status_line.isHidden())
+        self.assertTrue(window.footer.isHidden())
         window.cancel_button.show()
         window.update_status_line()
-        self.assertFalse(window.status_line.isHidden())
         window.cancel_button.hide()
         window.update_status_line()
-        self.assertTrue(window.status_line.isHidden())
+        self.assertEqual(window.status_line.minimumHeight(), height)
         window.scan_installed()
         self.assertNotIn("installed with AppGlider", window.footer.text())
-        self.assertTrue(window.status_line.isHidden())
+        self.assertFalse(window.status_line.isHidden())
 
     def test_a_message_expires_once_nothing_is_running(self) -> None:
         window = self.window
         window.footer.setText("Added something.")
         window.expire_footer()
         self.assertEqual(window.footer.text(), "")
-        self.assertTrue(window.status_line.isHidden())
+        self.assertTrue(window.footer.isHidden())
 
     def test_ctrl_f_focuses_search_from_any_page(self) -> None:
         window = self.window
@@ -243,12 +245,15 @@ class PolishTests(unittest.TestCase):
         page.before_command.setText("echo unapplied")
         with patch.object(self.window, "task", object()):
             page.update_state()
-            self.assertFalse(page.before_command.isEnabled())
-            self.assertFalse(page.after_command.isEnabled())
-            self.assertEqual(page.before_command.text(), "echo {file}")
+            self.assertTrue(page.before_command.isEnabled())
+            self.assertFalse(page.commands_wait_note.isHidden())
+            page.before_command.editingFinished.emit()
+            self.assertEqual(page.before_command.text(), "echo unapplied")  # kept, not dropped
+            self.assertEqual(self.settings.value("install/before-command"), "echo {file}")
         page.update_state()
-        self.assertTrue(page.before_command.isEnabled())
-        self.assertTrue(page.after_command.isEnabled())
+        self.assertTrue(page.commands_wait_note.isHidden())
+        self.assertEqual(page.before_command.text(), "echo unapplied")
+        self.assertEqual(self.settings.value("install/before-command"), "echo unapplied")
 
     def test_saved_commands_apply_at_startup(self) -> None:
         self.settings.setValue("install/before-command", " echo {file} ")

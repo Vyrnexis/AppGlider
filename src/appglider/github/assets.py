@@ -237,9 +237,7 @@ def select_release(app: App, data: object, arch: str) -> Release:
     if type(prerelease) is not bool or type(is_latest) is not bool:
         raise ValueError("GitHub returned invalid release flags.")
     if prerelease and not app.include_prereleases:
-        raise ValueError(
-            "Only prereleases are available. Choose 'Stable and prerelease versions' to use them."
-        )
+        raise ValueError("Only previews are available. Set Release channel to Preview to use them.")
     tag = data.get("tag_name")
     version = release_version(tag)
     if version is None:
@@ -335,9 +333,7 @@ def newest_release(entries: list[Any], include_prereleases: bool) -> dict[str, A
     published = [entry for entry in entries if isinstance(entry, dict) and not entry.get("draft")]
     eligible = [entry for entry in published if include_prereleases or not entry.get("prerelease")]
     if not eligible and any(entry.get("prerelease") for entry in published):
-        raise ValueError(
-            "Only prereleases are available. Choose 'Stable and prerelease versions' to use them."
-        )
+        raise ValueError("Only previews are available. Set Release channel to Preview to use them.")
     recognised = [entry for entry in eligible if release_version(entry.get("tag_name")) is not None]
     if not recognised:
         if eligible:

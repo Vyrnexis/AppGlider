@@ -150,7 +150,7 @@ class ReleaseInfoTests(unittest.TestCase):
         self.entries = [self.beta]
         info = self.discover()
         self.assertIsNone(info.choice(False))
-        self.assertIn("Only prereleases", info.error(False))
+        self.assertIn("Only previews", info.error(False))
         self.assertTrue(info.choice(True).release.prerelease)
         self.entries = [self.stable, metadata("1.2.0-beta.1", True)]
         self.assertEqual(self.discover().choice(True).version, "1.2.3")

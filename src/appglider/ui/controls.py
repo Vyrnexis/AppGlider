@@ -5,6 +5,7 @@ from PySide6.QtGui import QBrush, QColor, QPainter, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
     QButtonGroup,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QMessageBox,
@@ -12,6 +13,9 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QWidget,
 )
+
+# Tooltip of every control that is off only because a task is running.
+WAIT_TIP = "Wait for the current task to finish, or cancel it."
 
 
 def repolish(widget: QWidget) -> None:
@@ -65,6 +69,48 @@ class MessageBox(QMessageBox):
         default: QMessageBox.StandardButton = QMessageBox.StandardButton.NoButton,
     ) -> QMessageBox.StandardButton:
         return cls.ask(QMessageBox.Icon.Question, parent, title, text, buttons, default)
+
+    @classmethod
+    def inform(cls, parent: QWidget | None, title: str, text: str) -> QMessageBox.StandardButton:
+        return cls.ask(
+            QMessageBox.Icon.Information,
+            parent,
+            title,
+            text,
+            QMessageBox.StandardButton.Ok,
+            QMessageBox.StandardButton.Ok,
+        )
+
+    @classmethod
+    def confirm(
+        cls,
+        parent: QWidget | None,
+        title: str,
+        text: str,
+        action_label: str,
+        checkbox_label: str | None = None,
+        *,
+        checked: bool = False,
+    ) -> tuple[bool, bool]:
+        """Ask before something that cannot be undone, with the action named on its button.
+
+        Returns (accepted, ticked). Cancel is the default and the Esc button; the optional
+        checkbox starts as `checked`.
+        """
+        box = cls(QMessageBox.Icon.Warning, title, text, parent=parent)
+        box.setAccessibleName(title)
+        box.setAccessibleDescription(text)
+        tick: QCheckBox | None = None
+        if checkbox_label:
+            tick = QCheckBox(checkbox_label)
+            tick.setChecked(checked)
+            box.setCheckBox(tick)
+        action = box.addButton(action_label, QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cancel)
+        box.setEscapeButton(cancel)
+        box.exec()
+        return box.clickedButton() is action, bool(tick is not None and tick.isChecked())
 
     @classmethod
     def warning(

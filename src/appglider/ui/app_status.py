@@ -26,16 +26,39 @@ class AppStatus:
 
 
 MANUAL_TEXT = "◇ Manual"
+RUNNING_TEXT = "▶ Running"
+# Chips that say nothing needing action: a running app shows "Running" in their place.
+QUIET_TEXTS = ("✓ Up to date", "Only previews", "Not checked", MANUAL_TEXT)
+
+
+def version_text(version: str | None) -> str:
+    """Show a version with a leading v when it starts with a digit."""
+    if not version:
+        return "unknown"
+    return f"v{version}" if version[:1].isdigit() else version
+
+
+def busy_text(working: str, progress: int | None) -> str:
+    """ "Updating…", or "Updating… 43%" once the work reports how far it has come."""
+    if progress is None:
+        return f"{working}…"
+    return f"{working}… {max(0, min(100, progress))}%"
 
 
 def manual_status(
-    installed: Installed | None, working: str, missing: Installed | None
+    installed: Installed | None,
+    working: str,
+    missing: Installed | None,
+    running: bool = False,
+    progress: int | None = None,
 ) -> AppStatus:
     """An app added from a file has no releases: it is launched, replaced or removed."""
     if working:
-        return AppStatus("cancel", "busy", f"{working}…", "", False)
+        return AppStatus("cancel", "busy", busy_text(working, progress), "", False)
     if installed:
         tooltip = "Added from a file\nAppGlider cannot check it for updates"
+        if running:
+            return AppStatus("launch", "busy", RUNNING_TEXT, f"Running now\n{tooltip}", False)
         return AppStatus("launch", "none", MANUAL_TEXT, tooltip, False)
     if missing:
         tooltip = f"The AppImage is no longer at {missing.path}\nChoose a file to replace it"
@@ -53,10 +76,16 @@ def app_status(
     refresh_error: str = "",
     working: str = "",
     missing: Installed | None = None,
+    running: bool = False,
+    progress: int | None = None,
 ) -> AppStatus:
-    """`missing` is AppGlider's record of an installation whose file has since gone."""
+    """`missing` is AppGlider's record of an installation whose file has since gone.
+
+    `running` says the installed copy is running now; `progress` is the percentage of the
+    current work, shown in the busy chip when known.
+    """
     if app.manual:
-        return manual_status(installed, working, missing)
+        return manual_status(installed, working, missing, running, progress)
     held = bool(installed and app.hold_updates)
     newer_release = bool(installed and release and release.newer_than(installed.version))
     newer = newer_release and not held
@@ -98,19 +127,20 @@ def app_status(
         state, text = "none", "Waiting"
         details.append("Waiting its turn in Update all")
     elif working:
-        state, text = "busy", f"{working}…"
+        state, text = "busy", busy_text(working, progress)
     elif mode == "build":
         state, text = "build", "Choose build"
         details.append("Choose a build before updating")
     elif mode == "update" and release:
-        state, text = "update", f"↑ {release.version}"
-        details.append(f"Update available: v{release.version}")
+        state, text = "update", f"↑ {version_text(release.version)}"
+        details.append(f"Update available: {version_text(release.version)}")
     elif held and installed:
-        state, text = "held", f"‖ Held · {pending} out" if pending else "‖ Held"
+        state = "held"
+        text = f"‖ Held · {version_text(pending)} out" if pending else "‖ Held"
         details.append(
-            f"Held at v{installed.version} · v{pending} available"
+            f"Held at {version_text(installed.version)} · {version_text(pending)} available"
             if pending
-            else f"Held at v{installed.version}"
+            else f"Held at {version_text(installed.version)}"
         )
     elif missing and not installed:
         state, text = "missing", "⚠ File missing"
@@ -138,9 +168,9 @@ def app_status(
         state, text = "none", "Not installed"
     if release and state != "busy":
         if release.prerelease:
-            details.append(f"v{release.version} is a pre-release.")
+            details.append(f"{version_text(release.version)} is a pre-release.")
         elif release.is_latest:
-            details.append(f"v{release.version} is GitHub's latest release.")
+            details.append(f"{version_text(release.version)} is GitHub's latest release.")
     if offline:
         details.append("Offline: could not reach GitHub. Showing what was known before.")
     elif refresh_error or error:
@@ -153,4 +183,10 @@ def app_status(
         )
     else:
         details.append("Release information not checked")
+    if running and installed and not working:
+        if text in QUIET_TEXTS:
+            details.insert(0, f"Running now · {text.removeprefix('✓ ')}")
+            state, text = "busy", RUNNING_TEXT
+        else:
+            details.insert(0, "Running now")
     return AppStatus(mode, state, text, "\n".join(details), build_required)

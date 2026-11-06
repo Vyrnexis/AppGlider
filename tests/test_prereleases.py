@@ -119,7 +119,7 @@ class PrereleaseTests(unittest.TestCase):
 
     def test_only_prereleases_explains_opt_in_and_never_accepts_drafts(self):
         entries = [metadata("1.0.0-beta.1", True)]
-        with self.assertRaisesRegex(ValueError, "Only prereleases"):
+        with self.assertRaisesRegex(ValueError, "Only previews"):
             self.api(APP, None, entries)
         self.assertTrue(self.api(self.app, None, entries).prerelease)
         with self.assertRaisesRegex(ValueError, "No published release"):
@@ -193,7 +193,7 @@ class PrereleaseTests(unittest.TestCase):
                     ):
                         self.assertEqual(download.latest_release(app, Event()), expected)
                 else:
-                    with self.assertRaisesRegex(ValueError, "Only prereleases"):
+                    with self.assertRaisesRegex(ValueError, "Only previews"):
                         pages.page_release(app, Event())
 
     def test_public_listing_reads_additional_pages_and_requires_owned_release_links(self):
@@ -229,7 +229,7 @@ class PrereleaseTests(unittest.TestCase):
     def test_build_metadata_is_supported_and_installation_enforces_opt_in(self):
         beta = self.api(self.app, None, [metadata("1.3.0-beta.1+build.4", True)])
         self.assertEqual(beta.version, "1.3.0-beta.1+build.4")
-        with self.assertRaisesRegex(ValueError, "Enable prereleases"):
+        with self.assertRaisesRegex(ValueError, "Set Release channel to Preview"):
             self.library.install(APP, beta, Event(), ignore_progress)
         self.assertEqual(self.library.scan(), {})
         self.assertFalse(self.library.apps_dir.exists())

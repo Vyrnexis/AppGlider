@@ -47,8 +47,8 @@ from appglider.github.assets import Release
 from appglider.github.icons import icon_pixmap
 from appglider.github.release_info import ReleaseInfo
 from appglider.install.library import Installed, previous_copy
-from appglider.ui.app_status import app_status
-from appglider.ui.controls import repolish
+from appglider.ui.app_status import app_status, version_text
+from appglider.ui.controls import WAIT_TIP, repolish
 
 
 def icon_label(app: App, size: int, path: Path | None = None) -> QLabel:
@@ -111,6 +111,7 @@ class StatusMessage(QLabel):
 
     def setText(self, text: str) -> None:  # noqa: N802
         super().setText(text)
+        self.setToolTip("")  # a note that has details sets its tooltip after the text
         if text:
             self.timer.start(self.LIFETIME_MS)
         else:
@@ -132,6 +133,7 @@ class DragHandle(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setToolTip("Drag to reorder")
+        self.locked = False  # shown but dimmed: reordering is off, and the tooltip says why
         policy = self.sizePolicy()
         policy.setRetainSizeWhenHidden(True)  # rows keep their alignment while reordering is off
         self.setSizePolicy(policy)
@@ -141,6 +143,9 @@ class DragHandle(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
         hot = self.underMouse() or self.press_pos is not None
+        if self.locked:
+            painter.setOpacity(0.45)
+            hot = False
         painter.setBrush(QColor(self.colours[1] if hot else self.colours[0]))
         for x in (4.0, 10.0):
             for y in (8.0, 14.0, 20.0):
@@ -152,7 +157,9 @@ class DragHandle(QWidget):
         return super().event(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and self.locked:
+            event.accept()  # a locked handle neither drags nor opens the app page
+        elif event.button() == Qt.MouseButton.LeftButton:
             self.press_pos = event.position().toPoint()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
@@ -365,6 +372,7 @@ class AppRow(QFrame):
             raise ValueError(f"Unknown chip state: {state}")
         self.chip.setText(text)
         self.chip.setToolTip(tooltip)
+        self.chip.setAccessibleDescription(tooltip)
         if self.chip.property("state") != state:
             self.chip.setProperty("state", state)
             repolish(self.chip)
@@ -380,10 +388,22 @@ class AppRow(QFrame):
         refresh_error: str = "",
         working: str = "",
         missing: Installed | None = None,
+        running: bool = False,
+        progress: int | None = None,
     ) -> None:
         self.installed = installed
         status = app_status(
-            self.app, installed, release, error, info, refreshing, refresh_error, working, missing
+            self.app,
+            installed,
+            release,
+            error,
+            info,
+            refreshing,
+            refresh_error,
+            working,
+            missing,
+            running,
+            progress,
         )
         self.build_required = status.build_required
         self.mode = status.mode
@@ -394,25 +414,34 @@ class AppRow(QFrame):
             (self.hold_action, (managed or self.app.hold_updates) and not self.app.manual),
             (self.shortcut_action, managed),
             (self.rollback_action, managed and previous_copy(installed) is not None),
+            # Exactly one way out for each state: Uninstall, Forget or Remove.
             (self.remove_action, managed),
             (self.forget_action, installed is None and missing is not None),
-            (self.unlist_action, installed is None),
+            (self.unlist_action, installed is None and missing is None),
         )
+        self.forget_action.setText("Forget…" if self.app.manual else "Forget missing copy…")
         for action, visible in shown:
             action.setVisible(visible)
             action.setEnabled(not busy)
+            action.setToolTip(WAIT_TIP if busy else "")
         self.launch_action.setEnabled(not working)
         self.hold_action.setText(
             "Release hold" if self.app.hold_updates else "Hold at current version"
         )
         self.set_action(release)
-        self.action_button.setEnabled(self.mode in ("cancel", "launch") or not busy)
+        waiting = not (self.mode in ("cancel", "launch") or not busy)
+        self.action_button.setEnabled(not waiting)
+        if waiting:
+            self.action_button.setToolTip(WAIT_TIP)
         self.set_chip(status.state, status.text, status.tooltip)
         if installed:
-            self.installed_version.setText(f"v{installed.version}" if installed.version else "?")
+            self.installed_version.setText(
+                version_text(installed.version) if installed.version else "—"
+            )
             self.installed_version.setToolTip(
-                f"Installed with AppGlider\n{installed.path}"
-                + ("\nPre-release" if installed.prerelease else "")
+                ("" if installed.version else "Version not reported by the file\n")
+                + f"Installed with AppGlider\n{installed.path}"
+                + ("\nPreview version" if installed.prerelease else "")
             )
         else:
             self.installed_version.setText("—")
@@ -468,11 +497,21 @@ class AppRow(QFrame):
 
     @property
     def draggable(self) -> bool:
-        return not self.handle.isHidden()
+        return not self.handle.isHidden() and not self.handle.locked
 
     @draggable.setter
     def draggable(self, value: bool) -> None:
-        self.handle.setVisible(value)
+        self.set_reorder(value)
+
+    def set_reorder(self, enabled: bool, hint: str = "") -> None:
+        """Show the drag handle: live when `enabled`, else dimmed with `hint` as its tooltip."""
+        self.handle.locked = not enabled and bool(hint)
+        self.handle.setToolTip("Drag to reorder" if enabled else hint)
+        self.handle.setCursor(
+            Qt.CursorShape.OpenHandCursor if enabled else Qt.CursorShape.ArrowCursor
+        )
+        self.handle.setVisible(enabled or bool(hint))
+        self.handle.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         pressed = self.press_pos is not None

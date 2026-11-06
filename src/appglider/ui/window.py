@@ -7,7 +7,7 @@ import subprocess
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from threading import Event
 
@@ -43,7 +43,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -62,6 +61,8 @@ from appglider import (
     APP_VERSION,
 )
 from appglider.core.catalog import App
+from appglider.core.catalogfile import EXAMPLE_CATALOG
+from appglider.core.catalogfile import read as read_catalog
 from appglider.core.preferences import (
     ACCENTS,
     DEFAULT_ACCENT,
@@ -100,6 +101,7 @@ from appglider.install.appimage import (
     log_tail,
 )
 from appglider.install.library import (
+    AppRunning,
     Installed,
     Library,
     Orphan,
@@ -107,12 +109,12 @@ from appglider.install.library import (
     running,
 )
 from appglider.install.place import describe_appimage, place_appimage, replaceable
-from appglider.ui.app_status import WAITING
-from appglider.ui.controls import MessageBox
+from appglider.ui.app_status import WAITING, AppStatus, app_status, version_text
+from appglider.ui.controls import WAIT_TIP, MessageBox
 from appglider.ui.errors import describe_error
 from appglider.ui.jobs import Lookup, StepSignals, Task, TaskResult
 from appglider.ui.pages.add_page import AddPage
-from appglider.ui.pages.app_page import AppPage, link_button, version_text
+from appglider.ui.pages.app_page import AppPage, link_button
 from appglider.ui.pages.settings_page import SettingsPage
 from appglider.ui.release_checks import ReleaseChecks
 from appglider.ui.rows import AppList, AppRow, DragHandle, StatusMessage
@@ -123,6 +125,8 @@ SIDEBAR_WIDTH = 210
 LEGACY_SECTIONS = {0: "General", 1: "Catalogs", 2: "Storage", 3: "Updates", 4: "About"}
 CHECK_TOOLTIP = "Check for updates"
 WAIT_FOR_CHECK = "Wait for the update check to finish, then try again."
+SORT_TIP = "Sort A–Z. To set your own order, drag rows by their handle."
+FIRST_HIDE_KEY = "tray/hint-seen"
 # Waits before automatic checks retry when GitHub was unreachable, e.g. at login.
 OFFLINE_RETRY_SECONDS = (15, 30, 60, 120, 300)
 
@@ -136,9 +140,9 @@ class OrphansDialog(QDialog):
         self.setMinimumWidth(560)
         layout = QVBoxLayout(self)
         intro = QLabel(
-            "These entries are in your AppGlider library but match no application in the "
-            "current catalog, for example a repository that was removed. They are kept "
-            "untouched unless you tick them. Forgetting an entry never deletes files."
+            "These entries are in AppGlider's records but match no app in your library, for "
+            "example a repository that was removed. They are kept untouched unless you tick "
+            "them. Forgetting an entry never deletes files."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -212,17 +216,56 @@ def banner_close(tooltip: str) -> QToolButton:
     return button
 
 
-def update_all_message(updated: int, failed: int, stopped: str = "") -> str:
-    """The footer line after Update all: what was updated, and why it stopped or failed."""
+def update_all_message(
+    updated: int,
+    failed: int,
+    stopped: str = "",
+    skipped: Iterable[str] = (),
+    choices: Iterable[str] = (),
+    cancelled: bool = False,
+) -> str:
+    """The footer line after Update all: what was updated, what was left, and why."""
     if updated:
         text = f"Updated {updated} app{'' if updated == 1 else 's'}."
     else:
         text = "No apps were updated."
+    if cancelled:
+        text = f"Cancelled. {text}"
     if failed:
         text += f" {failed} could not be updated."
+    skipped = list(skipped)
+    if skipped:
+        text += (
+            f" Skipped because running: {', '.join(skipped)}. "
+            f"Close {'it' if len(skipped) == 1 else 'them'} and press Update all again."
+        )
+    choices = list(choices)
+    if choices:
+        text += f" Needs a build choice: {', '.join(choices)}."
     if stopped:
         text = f"{stopped} {text}"
     return text
+
+
+def when_text(stamp: float) -> str:
+    """A time of day, with "yesterday" or the date when it was not today."""
+    when = datetime.fromtimestamp(stamp)
+    today = date.today()
+    if when.date() == today:
+        return f"{when:%H:%M}"
+    if when.date() == today - timedelta(days=1):
+        return f"yesterday {when:%H:%M}"
+    return f"{when:%d %b} {when:%H:%M}"
+
+
+def shortened(text: str, limit: int = 70) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def lower_first(text: str) -> str:
+    """ "Preparing X" as "preparing X", but leave names like "AppGlider" alone."""
+    return text[:1].lower() + text[1:] if text[1:2].islower() else text
 
 
 class LauncherWindow(TrayMixin):
@@ -268,6 +311,10 @@ class LauncherWindow(TrayMixin):
         self.task: Task | None = None
         self.working: dict[str, str] = {}
         self.failure = ""  # names the running task in the dialog that reports its failure
+        self.task_name = ""  # the running task in words, for "Stop … and quit?"
+        self.work_progress: int | None = None  # percent of the download an app's chip shows
+        self.welcome_shown = False
+        self.return_to: str | None = None  # the row whose App page is open, to refocus on return
         self.close_after_task = False
         self.quitting = False
         self.self_state = self_update.SelfUpdate()
@@ -419,6 +466,7 @@ class LauncherWindow(TrayMixin):
         self.pages.addWidget(self.settings_page)
         self.add_page = AddPage(self)
         self.add_page.added.connect(self.app_added)
+        self.add_page.add_and_install.connect(self.app_added_install)
         self.add_page.copy_changed.connect(self.copy_changed)
         self.add_page.copy_failed.connect(self.copy_failed)
         self.pages.addWidget(self.add_page)
@@ -455,16 +503,10 @@ class LauncherWindow(TrayMixin):
         self.filter_all.setChecked(True)
         self.filters.setAccessibleName("Library filter")
         toolbar.addWidget(self.filters)
-        self.options_button = QToolButton()
-        self.options_button.setObjectName("libraryOptions")
-        self.options_button.setText("⋯")
-        self.options_button.setAccessibleName("Library options")
-        self.options_button.setToolTip("Library options")
-        self.options_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        options_menu = QMenu(self.options_button)
-        self.sort_action = options_menu.addAction("Sort A–Z")
-        self.sort_action.triggered.connect(self.sort_alphabetically)
-        self.options_button.setMenu(options_menu)
+        self.options_button = QPushButton("Sort A–Z")
+        self.options_button.setAccessibleName("Sort the library A–Z")
+        self.options_button.setToolTip(SORT_TIP)
+        self.options_button.clicked.connect(self.sort_alphabetically)
         toolbar.addWidget(self.options_button)
         self.check_button = QToolButton()
         self.check_button.setObjectName("checkNow")
@@ -508,7 +550,7 @@ class LauncherWindow(TrayMixin):
         self.banner_label.setWordWrap(True)
         banner_layout.addWidget(self.banner_label, stretch=1)
         self.update_all_button = QPushButton("Update all")
-        self.update_all_button.clicked.connect(self.update_all)
+        self.update_all_button.clicked.connect(self.banner_action)
         self.update_all_button.setObjectName("primary")
         banner_layout.addWidget(self.update_all_button)
         self.review_button = QPushButton("Review")
@@ -538,11 +580,25 @@ class LauncherWindow(TrayMixin):
         list_layout.addStretch()
         self.scroll_area.setWidget(list_page)
         layout.addWidget(self.scroll_area, stretch=1)
+        self.empty_panel = QWidget()
+        empty_layout = QVBoxLayout(self.empty_panel)
+        empty_layout.setContentsMargins(0, 0, 0, 0)
+        empty_layout.setSpacing(10)
+        empty_layout.addStretch()
         self.empty = QLabel()
         self.empty.setObjectName("emptyState")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setWordWrap(True)
-        layout.addWidget(self.empty, stretch=1)
+        empty_layout.addWidget(self.empty)
+        self.empty_checked = QLabel()
+        self.empty_checked.setObjectName("emptyState")
+        self.empty_checked.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(self.empty_checked)
+        self.empty_check_button = QPushButton("Check for updates")
+        self.empty_check_button.clicked.connect(self.check_for_updates)
+        empty_layout.addWidget(self.empty_check_button, alignment=Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addStretch()
+        layout.addWidget(self.empty_panel, stretch=1)
 
     def build_welcome(self, layout: QVBoxLayout) -> None:
         """First-run panel shown while the library is empty."""
@@ -555,30 +611,45 @@ class LauncherWindow(TrayMixin):
         welcome_title.setObjectName("welcomeTitle")
         welcome_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_layout.addWidget(welcome_title)
-        welcome_text = QLabel(
-            "Your library is empty. Add an app from a public GitHub repository, import a "
-            "catalog (a plain-text list of repositories you can read before adding it), or "
-            "start from the ready-made example list of ArtCraft apps and SolidCraft."
-        )
+        welcome_text = QLabel("Install and keep AppImage apps from GitHub up to date in one place.")
         welcome_text.setObjectName("emptyState")
         welcome_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_text.setWordWrap(True)
         welcome_layout.addWidget(welcome_text)
-        welcome_buttons = QHBoxLayout()
-        welcome_buttons.addStretch()
-        self.welcome_add_button = QPushButton("+ Add app")
+        self.welcome_add_button = QPushButton("Add your first app")
         self.welcome_add_button.setObjectName("primary")
         self.welcome_add_button.clicked.connect(self.open_add_app)
-        welcome_buttons.addWidget(self.welcome_add_button)
-        self.welcome_import_button = QPushButton("Import catalog…")
+        welcome_layout.addWidget(self.welcome_add_button, alignment=Qt.AlignmentFlag.AlignCenter)
+        welcome_buttons = QHBoxLayout()
+        welcome_buttons.addStretch()
+        self.welcome_import_button = QPushButton("Import a catalog file…")
+        self.welcome_import_button.setToolTip(
+            "A catalog is a plain-text list of repositories you can read before adding it."
+        )
         self.welcome_import_button.clicked.connect(self.settings_page.import_catalog)
         welcome_buttons.addWidget(self.welcome_import_button)
-        self.welcome_example_button = QPushButton("Example catalog")
+        try:
+            count = len(read_catalog(EXAMPLE_CATALOG).entries)
+        except (OSError, ValueError):
+            count = 0
+        self.welcome_example_button = QPushButton(
+            f"Try an example list (adds {count} creative apps: painting, 3D, CAD)"
+            if count
+            else "Try an example list"
+        )
         self.welcome_example_button.setToolTip(
             "Add the ArtCraft apps and SolidCraft, a ready-made example list."
         )
         self.welcome_example_button.clicked.connect(self.settings_page.import_example_catalog)
         welcome_buttons.addWidget(self.welcome_example_button)
+        self.welcome_tips: dict[QAbstractButton, str] = {
+            button: button.toolTip()
+            for button in (
+                self.welcome_add_button,
+                self.welcome_import_button,
+                self.welcome_example_button,
+            )
+        }
         welcome_buttons.addStretch()
         welcome_layout.addLayout(welcome_buttons)
         welcome_layout.addStretch()
@@ -593,7 +664,9 @@ class LauncherWindow(TrayMixin):
         progress_row = QHBoxLayout(self.status_line)
         progress_row.setContentsMargins(22, 0, 22, 12)
         progress_row.addWidget(self.footer, stretch=1)
+        self.status_line.setMinimumHeight(self.footer.fontMetrics().lineSpacing() + 16)
         self.progress_bar = QProgressBar()
+        self.progress_bar.setAccessibleName("Task progress")
         self.progress_bar.setFixedWidth(170)
         self.progress_bar.hide()
         progress_row.addWidget(self.progress_bar)
@@ -611,7 +684,12 @@ class LauncherWindow(TrayMixin):
 
     def setup_keyboard(self) -> None:
         """Shortcuts, focus behaviour and the order Tab walks through the controls."""
-        for sequence, handler in (("Ctrl+F", self.focus_search), ("Esc", self.go_back)):
+        for sequence, handler in (
+            ("Ctrl+F", self.focus_search),
+            ("Esc", self.go_back),
+            ("F5", self.check_shortcut),
+            ("Ctrl+R", self.check_shortcut),
+        ):
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.activated.connect(handler)
         for button in self.findChildren(QAbstractButton):
@@ -632,24 +710,24 @@ class LauncherWindow(TrayMixin):
         self.search.selectAll()
 
     def go_back(self) -> None:
-        """Escape leaves the App or Add page for the list."""
-        if self.pages.currentWidget() in (self.app_page, self.add_page):
+        """Escape clears a search first, then leaves the App, Add or Settings page."""
+        page = self.pages.currentWidget()
+        if page is self.list_page:
+            if self.search.text() and self.search.hasFocus():
+                self.search.clear()
+            return
+        if page in (self.app_page, self.add_page, self.settings_page):
             self.show_view(self.view)
 
+    def check_shortcut(self) -> None:
+        """F5 and Ctrl+R press Check for updates when it is available."""
+        if self.check_button.isEnabled():
+            self.check_for_updates()
+
     def update_status_line(self) -> None:
-        """Show the bottom row only while it has a message, progress, Cancel or orphans."""
+        """Keep the bottom row's height, so the list above does not jump as messages come."""
         self.footer.setVisible(bool(self.footer.text()))
-        self.status_line.setVisible(
-            any(
-                not widget.isHidden()
-                for widget in (
-                    self.footer,
-                    self.progress_bar,
-                    self.cancel_button,
-                    self.orphans_button,
-                )
-            )
-        )
+        self.status_line.setVisible(True)
 
     def expire_footer(self) -> None:
         if self.task is None and not self.checks.busy:
@@ -686,7 +764,7 @@ class LauncherWindow(TrayMixin):
         allowance = github_status.allowance()
         offline = not limited and bool(self.offline_apps())
         if offline:
-            details = "Could not reach GitHub. Rows show what was known before.\n" + details
+            details = "Couldn't reach GitHub. Rows show what was known before.\n" + details
         self.github_label.setText(
             "GitHub: limited"
             if limited
@@ -694,6 +772,8 @@ class LauncherWindow(TrayMixin):
             if offline
             else f"GitHub {allowance[0]} of {allowance[1]} left"
             if allowance
+            else "GitHub: not used yet"
+            if label == "GitHub status"
             else label
         )
         self.github_meter.setVisible(allowance is not None and not offline)
@@ -701,12 +781,34 @@ class LauncherWindow(TrayMixin):
             self.github_meter.setRange(0, max(1, allowance[1]))
             self.github_meter.setValue(allowance[0])
         self.status_label.setText(self.check_summary())
-        self.status_block.setToolTip(details + "\nClick to choose how often to check.")
+        tooltip = details + "\nClick to choose how often to check."
+        self.status_block.setToolTip(tooltip)
+        self.status_block.setAccessibleDescription(
+            f"{self.status_label.text()}. {self.github_label.text()}.\n{tooltip}"
+        )
+        self.update_retry_countdown()
         if self.status_block.property("limited") != limited:
             self.status_block.setProperty("limited", limited)
             for widget in (self.status_block, self.github_label, self.github_meter):
                 widget.style().unpolish(widget)
                 widget.style().polish(widget)
+
+    def retry_message(self) -> str:
+        """The footer line while automatic checks wait to try GitHub again."""
+        seconds = self.offline_timer.remainingTime() // 1000 + 1
+        wait = f"in {seconds} seconds" if seconds > 1 else "shortly"
+        return f"Couldn't reach GitHub. Trying again {wait}…"
+
+    def update_retry_countdown(self) -> None:
+        """Count the wait down live while that message is the one showing."""
+        if (
+            self.offline_timer.isActive()
+            and self.task is None
+            and self.footer.text().startswith("Couldn't reach GitHub. Trying again")
+        ):
+            text = self.retry_message()
+            if text != self.footer.text():
+                self.footer.setText(text)
 
     def check_summary(self) -> str:
         """Describe the last release check and, when scheduled, the next one."""
@@ -714,7 +816,7 @@ class LauncherWindow(TrayMixin):
         scheduled = self.update_timer.isActive()
         if not last:
             return "Not checked yet" if scheduled else "Automatic checks off"
-        text = f"Checked {datetime.fromtimestamp(last):%H:%M}"
+        text = f"Checked {when_text(last)}"
         if scheduled:
             upcoming = datetime.now().timestamp() + self.update_timer.remainingTime() / 1000
             text += f" · next {datetime.fromtimestamp(upcoming):%H:%M}"
@@ -787,12 +889,13 @@ class LauncherWindow(TrayMixin):
     def sort_alphabetically(self) -> None:
         if len(self.apps) < 2:
             return
-        answer = MessageBox.question(
+        accepted, _ = MessageBox.confirm(
             self,
             "Sort the library A–Z?",
             "This replaces your own order. Pinned apps stay on top.",
+            "Replace my order",
         )
-        if answer != QMessageBox.StandardButton.Yes:
+        if not accepted:
             return
         ids = [app.id for app in sorted(self.apps, key=lambda app: app.name.casefold())]
         self.settings.setValue("library/order", json.dumps(ids))
@@ -869,7 +972,9 @@ class LauncherWindow(TrayMixin):
         try:
             self.library.set_update_hold(app_id, held)
         except (OSError, ValueError) as error:
-            MessageBox.warning(self, "Cannot change update hold", describe_error(error))
+            MessageBox.warning(
+                self, f"Couldn't change the update hold for {app.name}", describe_error(error)
+            )
             return
         self.scan_installed()
         self.footer.setText(
@@ -919,17 +1024,7 @@ class LauncherWindow(TrayMixin):
         for app_id, card in self.cards.items():
             card.icon.setPixmap(icon_pixmap(self.library.icon_path(card.app), 40))
             card.set_pinned(app_id in self.pinned)
-            card.set_state(
-                self.installed.get(app_id),
-                self.releases.get(app_id),
-                self.busy,
-                self.check_errors.get(app_id, ""),
-                self.release_infos.get(app_id),
-                self.checks.is_checking(app_id),
-                self.release_errors.get(app_id, ""),
-                self.working.get(app_id, ""),
-                self.missing.get(app_id),
-            )
+            self.apply_row(card)
             card.setVisible(app_id in ids)
             card.draggable = False
             for action in (card.move_up_action, card.move_down_action):
@@ -938,8 +1033,14 @@ class LauncherWindow(TrayMixin):
         shown = [self.cards[app.id] for app in visible]
         reorder = self.reorder_enabled()
         self.app_list.reorderable = reorder
+        if reorder:
+            hint = ""
+        elif updates_view:
+            hint = "Reordering is available in the Library"
+        else:
+            hint = "Clear the search to reorder"
         for index, row in enumerate(shown):
-            row.draggable = reorder and len(shown) > 1
+            row.set_reorder(reorder and len(shown) > 1, hint if len(shown) > 1 else "")
             row.move_up_action.setVisible(row.draggable)
             row.move_down_action.setVisible(row.draggable)
             row.move_up_action.setEnabled(
@@ -949,21 +1050,24 @@ class LauncherWindow(TrayMixin):
                 reorder and index + 1 < len(shown) and shown[index + 1].pinned == row.pinned
             )
         self.nav_add.setEnabled(not self.busy)
+        self.nav_add.setToolTip(WAIT_TIP if self.busy else "")
         self.settings_page.update_state()
         self.add_page.update_state()
+        count = len(self.apps)
         self.search.setPlaceholderText(
-            f"Search {update_count if updates_view else len(self.apps)} apps"
+            "Search updates" if updates_view else f"Search {count} app{'' if count == 1 else 's'}"
         )
-        self.check_button.setToolTip("Checking for updates…" if self.checks.busy else CHECK_TOOLTIP)
-        self.check_button.setEnabled(not self.checks.busy and bool(self.installed))
-        self.options_button.setEnabled(len(self.apps) > 1)
-        self.update_all_button.setVisible(
-            any(
-                item.managed and app_id in self.releases and self.has_update(app_id)
-                for app_id, item in self.installed.items()
-            )
+        self.update_check_button()
+        self.options_button.setEnabled(len(self.apps) > 1 and not self.busy)
+        self.options_button.setToolTip(WAIT_TIP if self.busy else SORT_TIP)
+        ready, choose = self.update_groups()
+        actionable = any(
+            app.id in self.releases and self.installed[app.id].managed for app in ready
         )
+        self.update_all_button.setVisible(actionable or bool(choose))
+        self.update_all_button.setText("Update all" if actionable or not choose else "Choose build")
         self.update_all_button.setEnabled(not self.busy)
+        self.update_all_button.setToolTip(WAIT_TIP if self.busy else "")
         self.review_button.setVisible(not updates_view)
         self.banner_close_button.setVisible(not updates_view)
         self.show_self_banner()
@@ -992,11 +1096,34 @@ class LauncherWindow(TrayMixin):
             QWidget.setTabOrder(before, after)
         self.update_status_line()
         self.scroll_area.setVisible(bool(visible))
-        self.empty.setVisible(not visible and bool(self.apps))
-        self.welcome.setVisible(not self.apps)
-        self.welcome_add_button.setEnabled(not self.busy)
-        self.welcome_import_button.setEnabled(not self.busy)
-        self.welcome_example_button.setEnabled(not self.busy)
+        show_empty = not visible and bool(self.apps)
+        self.empty.setVisible(show_empty)
+        self.empty_panel.setVisible(show_empty)
+        updates_empty = show_empty and updates_view and not query
+        self.empty_checked.setVisible(updates_empty)
+        self.empty_check_button.setVisible(updates_empty)
+        self.empty_check_button.setEnabled(not self.checks.busy)
+        self.empty_check_button.setToolTip(self.check_button.toolTip())
+        last = max((info.checked_at for info in self.release_infos.values()), default=0)
+        self.empty_checked.setText(f"Last checked {when_text(last)}" if last else "Not checked yet")
+        # Nothing to search, filter or sort in an empty library or an empty Updates view.
+        welcome = not self.apps
+        self.welcome.setVisible(welcome)
+        self.search.setVisible(not welcome)
+        self.search.setEnabled(bool(visible) or bool(query))
+        self.filters.setVisible(not welcome and not updates_view)
+        self.options_button.setVisible(not welcome and not updates_view)
+        self.check_button.setVisible(not welcome)
+        for button in (
+            self.welcome_add_button,
+            self.welcome_import_button,
+            self.welcome_example_button,
+        ):
+            button.setEnabled(not self.busy)
+            button.setToolTip(WAIT_TIP if self.busy else self.welcome_tips[button])
+        if welcome and not self.welcome_shown and self.pages.currentWidget() is self.list_page:
+            self.welcome_add_button.setFocus()
+        self.welcome_shown = welcome
         if self.app_page.app_id is not None:
             if any(app.id == self.app_page.app_id for app in self.apps):
                 self.app_page.refresh()
@@ -1008,14 +1135,80 @@ class LauncherWindow(TrayMixin):
             )
         elif updates_view:
             self.empty.setText(
-                "No known updates.\nUse Check for updates to look for new releases."
+                "No updates are waiting."
                 if self.installed
-                else "No installed apps to check.\nInstall an app from Library to get started."
+                else "No apps are installed yet, so there is nothing to update.\n"
+                "Install an app from the Library to get started."
             )
         elif self.installed_only:
-            self.empty.setText("No apps are installed.\nChoose Install from All to get started.")
+            self.empty.setText(
+                "No apps are installed yet. Choose All, then press Install on an app."
+            )
         else:
             self.empty.setText("No apps match your search.\nTry another name or clear the search.")
+
+    def status_for(self, app_id: str) -> AppStatus:
+        app = next(app for app in self.apps if app.id == app_id)
+        return app_status(
+            app,
+            self.installed.get(app_id),
+            self.releases.get(app_id),
+            self.check_errors.get(app_id, ""),
+            self.release_infos.get(app_id),
+            self.checks.is_checking(app_id),
+            self.release_errors.get(app_id, ""),
+            self.working.get(app_id, ""),
+            self.missing.get(app_id),
+        )
+
+    def apply_row(self, card: AppRow) -> None:
+        app_id = card.app.id
+        working = self.working.get(app_id, "")
+        process = self.library.processes.get(app_id)
+        card.set_state(
+            self.installed.get(app_id),
+            self.releases.get(app_id),
+            self.busy,
+            self.check_errors.get(app_id, ""),
+            self.release_infos.get(app_id),
+            self.checks.is_checking(app_id),
+            self.release_errors.get(app_id, ""),
+            working,
+            self.missing.get(app_id),
+            process is not None and process.poll() is None,
+            self.work_progress if working and working != WAITING else None,
+        )
+
+    def update_groups(self) -> tuple[list[App], list[App]]:
+        """Apps with a waiting update: those Update all can install, and those needing a build."""
+        ready: list[App] = []
+        choose: list[App] = []
+        for app in self.apps:
+            if self.has_update(app.id):
+                (choose if self.status_for(app.id).mode == "build" else ready).append(app)
+        return ready, choose
+
+    def update_check_button(self) -> None:
+        """Check for updates stays available with no apps: it then checks AppGlider itself."""
+        self.check_button.setEnabled(not self.checks.busy)
+        if self.checks.busy:
+            tip = "Checking for updates…"
+        elif not self.installed:
+            tip = "No apps are installed yet, so this checks only AppGlider itself (F5)"
+        else:
+            tip = f"{CHECK_TOOLTIP} (F5)"
+        self.check_button.setToolTip(tip)
+
+    def banner_action(self) -> None:
+        """The banner's main button: Update all, or Choose build when only those are waiting."""
+        ready, choose = self.update_groups()
+        actionable = any(
+            app.id in self.releases and self.installed[app.id].managed for app in ready
+        )
+        if actionable or not choose:
+            self.update_all()
+        else:
+            self.choose_build(choose[0].id)
 
     @property
     def busy(self) -> bool:
@@ -1036,15 +1229,21 @@ class LauncherWindow(TrayMixin):
         self.show_list()
         (self.nav_updates if view == "updates" else self.nav_library).setChecked(True)
         self.page_title.setText("Updates" if view == "updates" else "Library")
-        self.filters.setVisible(view == "library")
         self.refresh()
 
     def waiting_versions(self) -> dict[str, str]:
-        return {
-            app.id: self.releases[app.id].version
-            for app in self.apps
-            if self.has_update(app.id) and app.id in self.releases
-        }
+        """The newest version waiting for each app, including those that need a build choice."""
+        waiting: dict[str, str] = {}
+        for app in self.apps:
+            if not self.has_update(app.id):
+                continue
+            info = self.release_infos.get(app.id)
+            choice = info.choice(app.include_prereleases) if info else None
+            if app.id in self.releases:
+                waiting[app.id] = self.releases[app.id].version
+            elif choice:
+                waiting[app.id] = choice.version
+        return waiting
 
     def new_updates(self) -> bool:
         """Whether an update is waiting that was not on the banner when it was closed."""
@@ -1070,25 +1269,36 @@ class LauncherWindow(TrayMixin):
 
     def banner_text(self) -> str:
         """Summarise the waiting updates, shortened the way the tray notification is."""
-        names = []
-        for app in self.apps:
-            if self.has_update(app.id):
+        ready, choose = self.update_groups()
+
+        def named(apps: list[App]) -> str:
+            names = []
+            for app in apps:
                 release = self.releases.get(app.id)
                 version = (
                     f" {'v' if release.version[:1].isdigit() else ''}{release.version}"
-                    if release
+                    if release and app in ready
                     else ""
                 )
                 names.append(html.escape(f"{app.name}{version}"))
-        count = len(names)
-        lead = f"<b>{count} update{'s' if count != 1 else ''} ready.</b>"
-        if count > 3:
-            tail = f"{', '.join(names[:3])}, and {count - 3} more"
-        elif count > 1:
-            tail = f"{', '.join(names[:-1])} and {names[-1]}"
-        else:
-            tail = names[0]
-        return f"{lead} {tail}."
+            if len(names) > 3:
+                return f"{', '.join(names[:3])}, and {len(names) - 3} more"
+            if len(names) > 1:
+                return f"{', '.join(names[:-1])} and {names[-1]}"
+            return names[0] if names else ""
+
+        if not ready:
+            count = len(choose)
+            lead = f"<b>{count} update{' needs' if count == 1 else 's need'} a choice.</b>"
+            return f"{lead} {named(choose)}: choose which build to install."
+        count = len(ready)
+        text = f"<b>{count} update{'s' if count != 1 else ''} ready.</b> {named(ready)}."
+        if choose:
+            text += (
+                f" {len(choose)} more {'needs' if len(choose) == 1 else 'need'} a build choice: "
+                f"{named(choose)}."
+            )
+        return text
 
     def open_app(self, app_id: str) -> None:
         """Show the App page; the sidebar keeps the view it was opened from."""
@@ -1096,6 +1306,7 @@ class LauncherWindow(TrayMixin):
             return
         if self.pages.currentWidget() is not self.app_page:
             self.list_scroll = self.scroll_area.verticalScrollBar().value()
+            self.return_to = app_id
         self.app_page.show_app(app_id, "Updates" if self.view == "updates" else "Library")
         self.show_page(self.app_page)
         (self.nav_updates if self.view == "updates" else self.nav_library).setChecked(True)
@@ -1107,12 +1318,17 @@ class LauncherWindow(TrayMixin):
         """Return to the list with the view, filter, search and scroll position as they were."""
         if self.pages.currentWidget() is not self.app_page:
             return
+        keyboard = isinstance(QApplication.focusWidget(), QAbstractButton)
         self.app_page.app_id = None
         self.show_page(self.list_page)
         QTimer.singleShot(
             0, self, lambda: self.scroll_area.verticalScrollBar().setValue(self.list_scroll)
         )
         self.scroll_area.verticalScrollBar().setValue(self.list_scroll)
+        card = self.cards.get(self.return_to or "")
+        self.return_to = None
+        if keyboard and card is not None and card.isVisibleTo(self.list_page):
+            card.name_button.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def show_list(self) -> None:
         """Return to the Library or Updates list from whichever page is showing."""
@@ -1169,6 +1385,17 @@ class LauncherWindow(TrayMixin):
             tail = "" if app.manual else " Install it from its page."
             self.footer.setText(f"Added {app.name}.{tail}{warning}")
 
+    def app_added_install(self, app_id: str, warning: str) -> None:
+        """Add the app, then install it straight away ("Add and install")."""
+        self.catalog_changed()
+        if not any(app.id == app_id for app in self.apps):
+            return
+        if self.pages.currentWidget() is self.add_page:
+            self.open_app(app_id)
+        self.install_app(app_id)
+        if warning:
+            self.footer.setText(f"{self.footer.text()}{warning}")
+
     def choose_build(self, app_id: str) -> None:
         """Open the App page and ask which build of the app to use."""
         self.open_app(app_id)
@@ -1182,7 +1409,7 @@ class LauncherWindow(TrayMixin):
             try:
                 self.library.discard_orphans(dialog.selected())
             except (OSError, ValueError) as error:
-                MessageBox.warning(self, "Cannot update the library", describe_error(error))
+                MessageBox.warning(self, "Couldn't update the library", describe_error(error))
             self.scan_installed()
         dialog.deleteLater()
 
@@ -1288,10 +1515,11 @@ class LauncherWindow(TrayMixin):
         try:
             log = self.library.launch(app, installed)
         except (OSError, ValueError) as error:
-            MessageBox.warning(self, f"Cannot launch {app.name}", describe_error(error))
+            MessageBox.warning(self, f"Couldn't launch {app.name}", describe_error(error))
             return
         process = self.library.processes[app_id]
-        self.footer.setText(f"Launched {app.name} · Log: {log}")
+        self.footer.setText(f"Launched {app.name}.")
+        self.footer.setToolTip(f"Log: {log}")
         page, page_app = self.pages.currentWidget(), self.app_page.app_id
 
         def check_startup() -> None:
@@ -1325,7 +1553,9 @@ class LauncherWindow(TrayMixin):
     ) -> None:
         if self.busy:
             return
-        self.failure = failure or f"Couldn't finish: {message.rstrip('…. ')}"
+        self.failure = failure or self.page_failure(page)
+        self.task_name = lower_first(message.rstrip("…. "))
+        self.work_progress = None
         self.working = working or {}
         self.task = Task(operation)
         self.task.signals.progress.connect(self.task_progress)
@@ -1343,6 +1573,17 @@ class LauncherWindow(TrayMixin):
         self.cancel_button.setVisible(cancellable)
         self.refresh()
         QThreadPool.globalInstance().start(self.task)
+
+    def page_failure(self, page: AppPage | None) -> str:
+        """The dialog title for a task an App page started without naming its failure."""
+        app = next((app for app in self.apps if page is not None and app.id == page.app_id), None)
+        name = app.name if app is not None else "the app"
+        kinds = {
+            "build": f"Couldn't check the builds for {name}",
+            "icons": f"Couldn't look for icons for {name}",
+            "check": f"Couldn't check releases for {name}",
+        }
+        return kinds.get(page.pending if page is not None else "", f"Couldn't finish for {name}")
 
     def check_releases(self, app_id: str, page: AppPage | None = None) -> None:
         """A full release check of one app, even an uninstalled one (never downloads the app)."""
@@ -1388,7 +1629,8 @@ class LauncherWindow(TrayMixin):
     def shortcut_failed(self, error: str) -> None:
         self.menu_task = None
         if not self.quitting:
-            MessageBox.warning(self, "Cannot create shortcut", error)
+            name = self.menu_app.name if self.menu_app is not None else "the app"
+            MessageBox.warning(self, f"Couldn't create the menu shortcut for {name}", error)
 
     def app_running(self, app_id: str) -> bool:
         """Whether an app AppGlider installed is running now, however it was started."""
@@ -1418,6 +1660,33 @@ class LauncherWindow(TrayMixin):
         box.exec()
         if box.clickedButton() is force:
             self.force_close_app(app_id)
+
+    def offer_force_close_many(self, app_ids: list[str]) -> None:
+        """Update all skipped running apps: list them, with a Force close… button for each."""
+        apps = [app for app in self.apps if app.id in app_ids]
+        if not apps:
+            return
+        names = ", ".join(app.name for app in apps)
+        box = MessageBox(
+            QMessageBox.Icon.Warning,
+            "Some apps are running",
+            f"Update all skipped {names} because "
+            f"{'it is' if len(apps) == 1 else 'they are'} running.",
+            parent=self,
+        )
+        box.setInformativeText(
+            "Close them and press Update all again, or force close them here. "
+            "Unsaved work in a force closed app is lost."
+        )
+        box.addButton(QMessageBox.StandardButton.Ok)
+        buttons = {
+            box.addButton(f"Force close {app.name}…", QMessageBox.ButtonRole.ActionRole): app.id
+            for app in apps[:3]
+        }
+        box.exec()
+        clicked = box.clickedButton()
+        if isinstance(clicked, QPushButton) and clicked in buttons:
+            self.force_close_app(buttons[clicked])
 
     def force_close_app(self, app_id: str) -> None:
         """Ask, then close every process of the app off the Qt thread (it may wait seconds)."""
@@ -1456,7 +1725,8 @@ class LauncherWindow(TrayMixin):
     def force_close_failed(self, error: str) -> None:
         self.force_task = None
         if not self.quitting:
-            MessageBox.warning(self, "Cannot force close", error)
+            name = self.force_app.name if self.force_app is not None else "the app"
+            MessageBox.warning(self, f"Couldn't force close {name}", error)
 
     def refresh_desktop_database(self) -> None:
         """Let the desktop notice changed menu entries; the tool can take seconds."""
@@ -1466,12 +1736,21 @@ class LauncherWindow(TrayMixin):
     def task_progress(self, message: str, received: int, total: int) -> None:
         self.footer.setText(message)
         self.progress_bar.setRange(0, 100 if total > 0 else 0)
-        if total > 0:
-            self.progress_bar.setValue(min(100, int(received * 100 / total)))
+        percent = min(100, int(received * 100 / total)) if total > 0 else None
+        if percent is not None:
+            self.progress_bar.setValue(percent)
+        if percent != self.work_progress:
+            self.work_progress = percent
+            # The chip of the app being worked on shows the same percentage.
+            for app_id, state in self.working.items():
+                card = self.cards.get(app_id)
+                if card is not None and state != WAITING:
+                    self.apply_row(card)
 
     def reset_task(self) -> None:
         self.task = None
         self.working = {}
+        self.work_progress = None
         self.progress_bar.hide()
         self.cancel_button.hide()
         self.scan_installed()
@@ -1511,15 +1790,23 @@ class LauncherWindow(TrayMixin):
         self.reset_task()
         self.footer.setText(self.with_move_notice(self.with_warnings(result)))
         if result.message and not self.close_after_task and not self.quitting:
-            self.tray_message("Finished", result.message)
+            self.tray_message(result.title or "AppGlider", result.message)
         if result.downloaded is not None:
             self.self_update_downloaded(result.downloaded)
         if result.placed is not None:
             self.self_moved(result.placed)
-        if result.build_choices and not self.close_after_task:
+        if result.stopped and not self.close_after_task:
+            MessageBox.warning(self, "Update all stopped", result.message)
+        if (
+            len(result.build_choices) == 1
+            and len(result.choice_apps) <= 1
+            and not self.close_after_task
+        ):
             self.choose_build(next(iter(result.build_choices)))
         if result.running and not self.close_after_task:
             self.offer_force_close(result.running, result.message)
+        if result.skipped_running and not self.close_after_task:
+            self.offer_force_close_many(result.skipped_running)
         if result.warnings and not self.close_after_task:
             MessageBox.warning(
                 self, "An install command needs a look", "\n\n".join(result.warnings.values())
@@ -1529,7 +1816,7 @@ class LauncherWindow(TrayMixin):
             errors = "\n\n".join(
                 f"{names.get(key, key)}: {value}" for key, value in result.errors.items()
             )
-            MessageBox.warning(self, self.failure or "Some operations could not finish", errors)
+            MessageBox.warning(self, self.failure, errors)
         if self.close_after_task:
             self.close()
         else:
@@ -1558,6 +1845,7 @@ class LauncherWindow(TrayMixin):
         if self.task is None or app_id not in self.working:
             return
         del self.working[app_id]
+        self.work_progress = None
         following = next((key for key, state in self.working.items() if state == WAITING), None)
         if following is not None:
             self.working[following] = "Updating"
@@ -1573,7 +1861,7 @@ class LauncherWindow(TrayMixin):
         if self.close_after_task:
             self.close()
         else:
-            MessageBox.warning(self, self.failure or "Operation could not finish", error)
+            MessageBox.warning(self, self.failure, error)
             self.notify_when_idle()
 
     def cancel_task(self) -> None:
@@ -1693,9 +1981,14 @@ class LauncherWindow(TrayMixin):
         self.self_task = None
         if self.quitting:
             return
-        self.self_explicit = False
+        explicit, self.self_explicit = self.self_explicit, False
         self.self_retry = False
         self.self_state = self_update.SelfUpdate(time.time(), tag if isinstance(tag, str) else "")
+        if explicit and not self.installed and self.task is None and not self.checks.busy:
+            version = self.self_state.version
+            self.footer.setText(
+                f"AppGlider {version} is available." if version else "AppGlider is up to date."
+            )
         self.finish_self_check()
 
     def self_check_failed(self, error: str) -> None:
@@ -1748,7 +2041,11 @@ class LauncherWindow(TrayMixin):
             self.self_update_button.setAccessibleName(f"Restart now to use AppGlider {version}")
             self.self_update_button.setEnabled(not self.busy and not self.checks.busy)
             self.self_update_button.setToolTip(
-                "Waits for the update check to finish." if self.checks.busy else ""
+                WAIT_TIP
+                if self.busy
+                else "Waits for the update check to finish."
+                if self.checks.busy
+                else ""
             )
             return
         image = self_update.running_image()
@@ -1762,7 +2059,7 @@ class LauncherWindow(TrayMixin):
         self.self_update_button.setAccessibleName(
             "Update AppGlider" if replaceable else "AppGlider releases on GitHub"
         )
-        self.self_update_button.setToolTip("")
+        self.self_update_button.setToolTip(WAIT_TIP if self.busy and replaceable else "")
         self.self_update_button.setEnabled(not self.busy or not replaceable)
 
     def open_self_release(self) -> None:
@@ -1894,7 +2191,10 @@ class LauncherWindow(TrayMixin):
         self.background_enabled = True
         self.scan_installed()
         if not self.installed:
-            self.footer.setText("Install an application to enable release checks.")
+            if force and self.apps:
+                self.footer.setText(
+                    "No apps are installed yet, so only AppGlider itself is being checked."
+                )
             return
         self.checks.force = force
         self.checks.add([app.id for app in self.apps if app.id in self.installed])
@@ -1955,22 +2255,28 @@ class LauncherWindow(TrayMixin):
             self.tray_check_result()
         offline = bool(self.offline_apps())
         if self.task is None and self.offline_timer.isActive():
-            seconds = self.offline_timer.remainingTime() // 1000 + 1
-            self.footer.setText(f"Could not reach GitHub. Trying again in {seconds} seconds…")
+            self.footer.setText(self.retry_message())
         elif self.task is None and offline:
-            self.footer.setText("Could not reach GitHub. Rows show what was known before.")
+            self.footer.setText("Couldn't reach GitHub. Rows show what was known before.")
         elif self.task is None:
-            failed = any(app_id in self.installed for app_id in self.release_errors)
-            self.footer.setText(
-                self.with_move_notice(
-                    "Update check finished."
-                    + (
-                        " Some checks failed; rows keep previously known information."
-                        if failed
-                        else ""
-                    )
-                )
-            )
+            self.footer.setText(self.with_move_notice(self.check_outcome()))
+
+    def check_outcome(self) -> str:
+        """The footer line after a check: it names the app and the reason when checks failed."""
+        names = {app.id: app.name for app in self.apps}
+        failed = [
+            (names.get(app_id, app_id), reason)
+            for app_id, reason in self.release_errors.items()
+            if app_id in self.installed and reason != UNREACHABLE
+        ]
+        if not failed:
+            return "Update check finished."
+        if len(failed) == 1:
+            name, reason = failed[0]
+            return f"Check failed for {name}: {shortened(reason, 120)}"
+        listed = ", ".join(f"{name} ({shortened(reason, 40)})" for name, reason in failed[:2])
+        more = f", and {len(failed) - 2} more" if len(failed) > 2 else ""
+        return f"{len(failed)} checks failed: {listed}{more}. Rows keep what was known before."
 
     def offline_apps(self) -> list[str]:
         errors = self.release_errors
@@ -2014,7 +2320,11 @@ class LauncherWindow(TrayMixin):
             progress(f"Checking {app.name} release…", 0, 0)
             release = latest_release(app, cancel, self.library.data_dir / "release-cache")
             if installed and not release.newer_than(installed.version):
-                return TaskResult(f"{app.name} is already up to date.", {app_id: release})
+                return TaskResult(
+                    f"{app.name} is already up to date.",
+                    {app_id: release},
+                    title=f"{app.name} is up to date",
+                )
             found: list[str] = []
             self.library.install(
                 app,
@@ -2024,9 +2334,10 @@ class LauncherWindow(TrayMixin):
                 found,
             )
             return TaskResult(
-                f"{app.name} v{release.version} is ready to launch.",
+                f"{app.name} {version_text(release.version)} is ready to launch.",
                 {app_id: release},
                 warnings={app_id: found[0]} if found else {},
+                title=f"{app.name} {'updated' if installed else 'installed'}",
             )
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
@@ -2067,12 +2378,19 @@ class LauncherWindow(TrayMixin):
                 )
             return release
 
+        names = {app.id: app.name for app in self.apps}
+        choose_first = [app.id for app in self.apps if self.has_update(app.id) and app not in apps]
+
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             result = TaskResult("")
             updated: list[str] = []
+            skipped: list[str] = []
+            cancelled = False
             stopped = ""
             for app in apps:
-                check_cancel(cancel)
+                if cancel.is_set():
+                    cancelled = True
+                    break
                 progress(f"Checking {app.name}…", 0, 0)
                 part = TaskResult("")
                 found: list[str] = []
@@ -2084,9 +2402,13 @@ class LauncherWindow(TrayMixin):
                     if release.newer_than(versions[app.id]):
                         updated.append(app.id)
                 except Cancelled:
-                    raise
+                    cancelled = True
+                    steps.emit(app.id, part)
+                    break
                 except BuildChoiceRequired as error:
                     result.build_choices[app.id] = error
+                except AppRunning:
+                    skipped.append(app.id)
                 except (RateLimited, Unreachable) as error:
                     # The next apps would fail the same way: stop, and say so once.
                     stopped = str(error)
@@ -2099,7 +2421,21 @@ class LauncherWindow(TrayMixin):
                 if found:
                     result.warnings[app.id] = found[0]
                 steps.emit(app.id, part)
-            result.message = update_all_message(len(updated), len(result.errors), stopped)
+            result.skipped_running = skipped
+            result.stopped = stopped
+            result.updated = len(updated)
+            result.choice_apps = list(dict.fromkeys([*choose_first, *result.build_choices]))
+            result.message = update_all_message(
+                len(updated),
+                len(result.errors),
+                stopped,
+                [names[app_id] for app_id in skipped],
+                [names[app_id] for app_id in result.choice_apps],
+                cancelled,
+            )
+            count = len(updated)
+            plural = "" if count == 1 else "s"
+            result.title = f"Updated {count} app{plural}" if count else "Update all finished"
             return result
 
         working = {app.id: WAITING for app in apps}
@@ -2108,7 +2444,7 @@ class LauncherWindow(TrayMixin):
             "Updating installed apps…",
             operation,
             working=working,
-            failure="Couldn't update all apps",
+            failure="Some apps couldn't be updated",
         )
 
     def replace_file(self, app_id: str) -> None:
@@ -2155,20 +2491,40 @@ class LauncherWindow(TrayMixin):
 
     def rollback_app(self, app_id: str) -> None:
         app = next(app for app in self.apps if app.id == app_id)
+        if self.busy:
+            return
+        if self.app_running(app_id):
+            self.offer_force_close(
+                app_id, f"Close {app.name} before rolling it back, or force close it."
+            )
+            return
         previous = previous_copy(self.installed.get(app_id))
-        answer = MessageBox.question(
+        target = version_text(previous.version) if previous else "the previous version"
+        can_hold = not app.manual and not app.hold_updates
+        accepted, hold = MessageBox.confirm(
             self,
             f"Roll back {app.name}?",
-            f"Go back to {version_text(previous.version) if previous else 'the previous version'}"
-            f" of {app.name}? The current version is kept, so you can switch back to it.",
+            f"Go back to {target} of {app.name}? The current version is kept, so you can "
+            "switch back to it.",
+            "Roll back",
+            f"Hold at {target} so the newer version isn't offered again" if can_hold else None,
+            checked=True,
         )
-        if answer != QMessageBox.StandardButton.Yes:
+        if not accepted:
             return
+        hold = hold and can_hold
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
             check_cancel(cancel)
             self.library.rollback(app)
-            return TaskResult(f"Restored the previous {app.name} version.")
+            message = f"Restored the previous {app.name} version."
+            if hold:
+                try:
+                    self.library.set_update_hold(app.id, True)
+                    message += f" It is held at {target}, so the newer version isn't offered."
+                except (OSError, ValueError) as error:
+                    message += f" It could not be held: {describe_error(error)}"
+            return TaskResult(message, title=f"{app.name} rolled back")
 
         self.start_task(
             f"Restoring {app.name}…",
@@ -2178,20 +2534,35 @@ class LauncherWindow(TrayMixin):
         )
 
     def remove_app(self, app_id: str) -> None:
+        """Uninstall the app's file. A GitHub app stays in the library unless asked otherwise."""
         app = next(app for app in self.apps if app.id == app_id)
+        if self.busy:
+            return
+        if self.app_running(app_id):
+            self.offer_force_close(
+                app_id, f"Close {app.name} before uninstalling it, or force close it."
+            )
+            return
         if app.manual:
-            question = (
-                f"Remove {app.name} and its previous file from AppGlider?\n"
-                "The original file you added is not touched. "
-                "Your documents and application settings will be kept."
+            accepted, _ = MessageBox.confirm(
+                self,
+                f"Uninstall {app.name}?",
+                f"{app.name} was added from a file, so it also leaves your library. "
+                "The file you added is not touched. Your documents and the app's settings "
+                "are kept.",
+                "Uninstall",
             )
+            also = True
         else:
-            question = (
-                "Remove this app and its previous version from AppGlider?\n"
-                "Your documents and application settings will be kept."
+            accepted, also = MessageBox.confirm(
+                self,
+                f"Uninstall {app.name}?",
+                "This deletes the app file and the kept previous copy, and releases any hold "
+                "on updates. Your documents and the app's settings are kept.",
+                "Uninstall",
+                "Also remove from my library",
             )
-        answer = MessageBox.question(self, f"Uninstall {app.name}?", question)
-        if answer != QMessageBox.StandardButton.Yes:
+        if not accepted:
             return
 
         def operation(cancel: Event, progress: Progress) -> TaskResult:
@@ -2200,12 +2571,21 @@ class LauncherWindow(TrayMixin):
                 self.library.remove_file_app(app)  # nothing is left to install, so it goes too
             else:
                 self.library.remove(app)
-            return TaskResult(f"Removed {app.name}.")
+                if also:
+                    self.library.remove_repository(app.id)
+            if also:
+                message = f"Uninstalled {app.name} and removed it from your library."
+            else:
+                message = (
+                    f"Uninstalled {app.name}. It stays in your library, "
+                    "so you can install it again."
+                )
+            return TaskResult(message, title=f"{app.name} uninstalled")
 
         self.start_task(
-            f"Removing {app.name}…",
+            f"Uninstalling {app.name}…",
             operation,
-            failure=f"Couldn't remove {app.name}",
+            failure=f"Couldn't uninstall {app.name}",
             cancellable=False,
         )
 
@@ -2214,53 +2594,79 @@ class LauncherWindow(TrayMixin):
         missing = self.missing.get(app_id)
         if self.busy or missing is None:
             return
-        answer = MessageBox.question(
-            self,
-            f"Forget the missing {app.name} copy?",
-            f"AppGlider will stop tracking the AppImage it installed at\n{missing.path}\n"
-            + (
-                f"{app.name} is removed from the library, and its kept previous file and "
-                "folder in AppGlider's apps folder are deleted."
-                if app.manual
-                else "No files are deleted. You can install the app again afterwards."
-            ),
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        if app.manual:
+            accepted, _ = MessageBox.confirm(
+                self,
+                f"Forget {app.name}?",
+                f"The file AppGlider kept at\n{missing.path}\nis gone. {app.name} is removed "
+                "from your library, and its kept previous copy in AppGlider's apps folder is "
+                "deleted. The file you added is not touched.",
+                "Forget",
+            )
+            also = True
+        else:
+            accepted, also = MessageBox.confirm(
+                self,
+                f"Forget the missing {app.name} copy?",
+                f"AppGlider will stop tracking the AppImage it installed at\n{missing.path}\n"
+                "No files are deleted. You can install the app again afterwards.",
+                "Forget",
+                "Also remove from my library",
+            )
+        if not accepted:
             return
         try:
             self.library.forget_missing(app_id)
-            if app.manual:
+            if also:
                 self.library.remove_repository(app_id)
         except (OSError, ValueError) as error:
-            MessageBox.warning(self, "Cannot forget the copy", str(error))
+            MessageBox.warning(self, f"Couldn't forget {app.name}", describe_error(error))
+            self.scan_installed()
             return
         self.scan_installed()
-        self.footer.setText(
-            f"Removed {app.name} from the library."
-            if app.manual
-            else f"Forgot the missing {app.name} copy. No files were deleted."
-        )
+        if app.manual:
+            self.footer.setText(f"Forgot {app.name} and removed it from your library.")
+        elif also:
+            self.footer.setText(
+                f"Forgot the missing {app.name} copy and removed it from your library. "
+                "No files were deleted."
+            )
+        else:
+            self.footer.setText(f"Forgot the missing {app.name} copy. No files were deleted.")
 
     def remove_from_library(self, app_id: str) -> None:
-        """Remove a repository whose app is not installed, after a confirmation."""
+        """Remove a repository whose app is neither installed nor missing, after asking."""
         app = next((app for app in self.apps if app.id == app_id), None)
-        if app is None or self.busy or app_id in self.installed:
+        if app is None or self.busy or app_id in self.installed or app_id in self.missing:
             return
-        answer = MessageBox.question(
+        accepted, _ = MessageBox.confirm(
             self,
             f"Remove {app.name} from the library?",
             f"{app.name} will no longer be listed. No application files are deleted.",
+            "Remove",
         )
-        if answer != QMessageBox.StandardButton.Yes:
+        if not accepted:
             return
         try:
             self.library.remove_repository(app_id)
         except (OSError, ValueError) as error:
-            MessageBox.warning(self, "Cannot remove the app", describe_error(error))
+            MessageBox.warning(self, f"Couldn't remove {app.name}", describe_error(error))
             return
         self.catalog_changed()
         self.footer.setText(
             f"Removed {app.name} from the library. No application files were deleted."
+        )
+
+    def first_hide_hint(self) -> None:
+        """The first time closing only hides the window, say where AppGlider went."""
+        if self.settings.value(FIRST_HIDE_KEY, False, type=bool):
+            return
+        self.settings.setValue(FIRST_HIDE_KEY, True)
+        self.tray.showMessage(
+            "AppGlider is still running",
+            "Use the tray icon to open it again, or choose Quit AppGlider there to exit.",
+            self.tray_icons[0],
+            15000,
         )
 
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -2272,15 +2678,18 @@ class LauncherWindow(TrayMixin):
             and QSystemTrayIcon.isSystemTrayAvailable()
         ):
             self.hide()
+            self.first_hide_hint()
             event.ignore()
             return
         if self.task is not None:
-            answer = MessageBox.question(
+            accepted, _ = MessageBox.confirm(
                 self,
-                "Operation in progress",
-                "Cancel the current operation and close when it has stopped?",
+                f"Stop {self.task_name} and quit?",
+                "AppGlider will cancel it, wait for it to stop, then quit. A version you "
+                "already have installed is kept.",
+                "Stop and quit",
             )
-            if answer == QMessageBox.StandardButton.Yes:
+            if accepted:
                 self.quitting = True
                 self.close_after_task = True
                 self.cancel_task()
