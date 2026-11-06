@@ -199,13 +199,19 @@ def nixos_cannot_start() -> bool:
 
 
 def running(path: Path) -> bool:
+    # The exe link already holds the kernel's resolved path, so read it rather than
+    # resolving it: resolve() walks every part of the path and made this take seconds.
     target = os.fsencode(path.resolve())
+    uid = os.getuid()
     for process in Path("/proc").iterdir():
         if not process.name.isdigit():
             continue
         try:
-            if (process / "exe").resolve() == path.resolve():
-                return True
+            if process.stat().st_uid != uid:
+                continue
+            with contextlib.suppress(OSError):
+                if os.fsencode(os.readlink(process / "exe")) == target:
+                    return True
             with (process / "environ").open("rb") as source:
                 environment = source.read(1024 * 1024).split(b"\0")
             if b"APPIMAGE=" + target in environment:

@@ -25,6 +25,7 @@ from appglider.core.storage import atomic_json
 from appglider.github.assets import Release, select_release
 from appglider.github.download import download, latest_release
 from appglider.github.versions import Cancelled, architecture, version_key
+from appglider.install import library as library_module
 from appglider.install.appimage import check_appimage
 from appglider.install.library import (
     AppRunning,
@@ -1328,6 +1329,38 @@ class ReleaseTests(unittest.TestCase):
         self.assertGreater(version_key("1.10.0"), version_key("1.9.0"))
         self.assertGreater(version_key("1.0.0"), version_key("1.0.0-rc.1"))
         self.assertFalse(release_for("1.0.0", appimage_bytes()).newer_than(None))
+
+
+class RunningTests(unittest.TestCase):
+    """`running` finds a process by its executable or by the APPIMAGE it was started from."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.image = self.root / "App.AppImage"
+        shutil.copy2(shutil.which("sleep") or "/bin/sleep", self.image)
+
+    def start(self, argv: list[str], env: dict[str, str] | None = None) -> None:
+        process = subprocess.Popen(argv, env={**os.environ, **(env or {})})
+        self.addCleanup(process.wait)
+        self.addCleanup(process.kill)
+
+    def seen(self, path: Path) -> bool:
+        # The new process shows its own executable only once exec has finished.
+        deadline = time.monotonic() + 5
+        while not library_module.running(path) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return library_module.running(path)
+
+    def test_finds_the_executable_and_the_appimage_variable_and_nothing_else(self) -> None:
+        self.assertFalse(library_module.running(self.image))
+        self.start([str(self.image), "30"])
+        self.assertTrue(self.seen(self.image))
+        other = self.root / "Other.AppImage"
+        other.touch()
+        self.assertFalse(library_module.running(other))
+        self.start([shutil.which("sleep") or "/bin/sleep", "30"], {"APPIMAGE": str(other)})
+        self.assertTrue(self.seen(other))
 
 
 if __name__ == "__main__":
