@@ -75,15 +75,34 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(CUSTOM.asset_stem, other.asset_stem)
         self.assertEqual(CUSTOM.icon, APP_ICON)
 
+    def test_addresses_as_people_copy_them_are_accepted(self):
+        # Issue #15: github.com/owner/app without https:// was refused.
+        for address in (
+            "github.com/emmertex/lightcraft-classic",
+            "www.github.com/emmertex/lightcraft-classic",
+            "GitHub.com/Emmertex/Lightcraft-Classic/",
+            "http://github.com/emmertex/lightcraft-classic",
+            "https://www.github.com/emmertex/lightcraft-classic.git",
+            "https://github.com/emmertex/lightcraft-classic/releases",
+            "https://github.com/emmertex/lightcraft-classic/releases/tag/v1.0",
+            "https://github.com/emmertex/lightcraft-classic?tab=readme-ov-file",
+            "https://github.com/emmertex/lightcraft-classic#readme",
+        ):
+            with self.subTest(address=address):
+                self.assertEqual(custom_app(address, CUSTOM.name), CUSTOM)
+
     def test_invalid_sources_names_and_path_traversal_are_rejected(self):
         for address in (
-            "http://github.com/owner/app",
+            "ftp://github.com/owner/app",
             "https://github.com.evil.test/owner/app",
+            "github.com.evil.test/owner/app",
             "https://user@github.com/owner/app",
             "https://github.com:443/owner/app",
-            "https://github.com/owner/app?download=true",
-            "https://github.com/owner/app#readme",
-            "https://github.com/owner/app/releases",
+            "https://gitlab.com/owner/app",
+            "github.com/owner",
+            "github.com/owner/app/../other",
+            "https://github.com/owner/../app",
+            "owner/app/releases",
             "owner/..",
             "../app",
             "owner/app/../other",

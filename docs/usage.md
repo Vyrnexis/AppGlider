@@ -184,7 +184,9 @@ AppGlider installs apps from public GitHub repositories. To add one:
 ![The Add app page after inspecting a repository](previews/guide-add-app.png)
 
 1. Choose **Add app** in the sidebar and paste the repository's address, such as
-   `https://github.com/owner/project`. You can change the **Name** it gets in your library.
+   `https://github.com/owner/project`. `github.com/owner/project`, `owner/project` or a link to
+   one of its pages, such as its releases, work too. You can change the **Name** it gets in
+   your library.
 2. Leave **Release channel** on **Stable** unless you want to try test versions
    ([previews](#stable-versions-and-previews)).
 3. Choose **Look up app** (or press **Enter**). If you change **Release channel** afterwards,

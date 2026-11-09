@@ -105,7 +105,7 @@ name = 5
         self.assertEqual(len(catalog.skipped), 7)
         joined = "\n".join(catalog.skipped)
         for expected in (
-            "GitHub repository URL",
+            "GitHub repository address",
             "repo is required",
             "stable_only",
             "Invalid AppImage build",

@@ -88,6 +88,9 @@ def valid_description(value: object) -> bool:
     )
 
 
+GITHUB_HOSTS_SLASH = ("github.com/", "www.github.com/")
+
+
 def custom_app(
     repository: str,
     name: str | None = None,
@@ -105,18 +108,23 @@ def custom_app(
     value = repository.strip()
     if any(ord(c) < 32 or ord(c) == 127 for c in value):
         raise ValueError("The repository address contains control characters.")
+    # Addresses as people copy them: without https://, with www., http:// or a page of the
+    # repository such as /releases. Only owner/repository is kept; nothing is fetched from it.
+    if value.lower().startswith(GITHUB_HOSTS_SLASH):
+        value = "https://" + value
     if "://" in value:
         parsed = urlsplit(value)
-        if (
-            parsed.scheme != "https"
-            or parsed.netloc.lower() != "github.com"
-            or parsed.query
-            or parsed.fragment
+        if parsed.scheme.lower() not in ("http", "https") or parsed.netloc.lower() not in (
+            "github.com",
+            "www.github.com",
         ):
             raise ValueError(
-                "Use a public GitHub repository URL, such as https://github.com/owner/app."
+                "Use a public GitHub repository address, such as github.com/owner/app."
             )
-        value = parsed.path.strip("/")
+        parts = parsed.path.split("/")[1:]
+        if any(part in (".", "..") for part in parts):
+            raise ValueError("The repository address is invalid.")
+        value = "/".join(parts[:2])
     value = value.removesuffix(".git")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}", value):
         raise ValueError("Enter a GitHub repository URL or owner/repository, without extra paths.")
