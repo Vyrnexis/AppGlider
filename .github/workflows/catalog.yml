@@ -1,0 +1,35 @@
+name: Community catalog
+
+on:
+  push:
+    paths:
+      - 'docs/catalogs/**'
+      - 'packaging/check_catalog.py'
+      - '.github/workflows/catalog.yml'
+  pull_request:
+    paths:
+      - 'docs/catalogs/**'
+      - 'packaging/check_catalog.py'
+      - '.github/workflows/catalog.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Install AppGlider
+        # The check uses AppGlider's release discovery, which needs no Qt.
+        run: python -m pip install --no-deps .
+      - name: Check the community catalog
+        env:
+          # Read-only token for GitHub's larger request limit; the check sends it to the API only.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python packaging/check_catalog.py docs/catalogs/community.toml

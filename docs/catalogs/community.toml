@@ -1,0 +1,91 @@
+# AppGlider community catalog: open-source apps that publish AppImages in their GitHub releases.
+# Anyone can add an app by pull request; see CONTRIBUTING.md. A check on the pull request
+# confirms each entry is valid, not a duplicate, and installable by AppGlider.
+# Keep entries in alphabetical order by name.
+format = 1
+name = "AppGlider community catalog"
+
+[[app]]
+repo = "AppFlowy-IO/AppFlowy"
+name = "AppFlowy"
+description = "Open-source notes, wikis and project management that you can host yourself"
+stable_only = true
+
+[[app]]
+repo = "bambulab/BambuStudio"
+name = "Bambu Studio"
+description = "Slicer for 3D printers, made by Bambu Lab"
+stable_only = true
+build = "BambuStudio_ubu24-v{version}-{timestamp}.AppImage"
+
+[[app]]
+repo = "jgraph/drawio-desktop"
+name = "draw.io"
+description = "Diagrams and flowcharts, desktop version"
+stable_only = true
+
+[[app]]
+repo = "FreeCAD/FreeCAD"
+name = "FreeCAD"
+description = "Parametric 3D modeler for design and engineering"
+stable_only = true
+
+[[app]]
+repo = "Heroic-Games-Launcher/HeroicGamesLauncher"
+name = "Heroic Games Launcher"
+description = "Open-source launcher for games from Epic, GOG and Amazon"
+stable_only = true
+
+[[app]]
+repo = "localsend/localsend"
+name = "LocalSend"
+description = "Share files with nearby devices over your local network, with no internet needed"
+stable_only = true
+
+[[app]]
+repo = "logseq/logseq"
+name = "Logseq"
+description = "Privacy-first outliner for notes and knowledge, stored as local files"
+stable_only = true
+
+[[app]]
+repo = "mifi/lossless-cut"
+name = "LosslessCut"
+description = "Cut and trim video and audio files quickly without re-encoding"
+stable_only = true
+
+[[app]]
+repo = "obsidianmd/obsidian-releases"
+name = "Obsidian"
+description = "Note-taking app that works on local Markdown files"
+stable_only = true
+
+[[app]]
+repo = "OrcaSlicer/OrcaSlicer"
+name = "OrcaSlicer"
+description = "Slicer for 3D printers, with calibration tools and many printer profiles"
+stable_only = true
+
+[[app]]
+repo = "pear-devs/pear-desktop"
+name = "Pear Desktop"
+description = "YouTube Music desktop app with plugins and customization"
+stable_only = true
+
+[[app]]
+repo = "pbek/QOwnNotes"
+name = "QOwnNotes"
+description = "Plain-text notes with Markdown, which can sync with Nextcloud"
+stable_only = true
+
+[[app]]
+repo = "Ultimaker/Cura"
+name = "UltiMaker Cura"
+description = "Slicer that prepares 3D models for printing"
+stable_only = true
+
+[[app]]
+repo = "VSCodium/vscodium"
+name = "VSCodium"
+description = "Community build of VS Code without Microsoft telemetry"
+stable_only = true

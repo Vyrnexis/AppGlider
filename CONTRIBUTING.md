@@ -41,6 +41,28 @@ AppImageHub or other forges), and installing files without a published checksum.
 The [roadmap](docs/roadmap.md) lists ideas that may come next. Being listed there does not
 mean an idea is approved, so an issue is still the place to start.
 
+## Add an app to the community catalog
+
+[`docs/catalogs/community.toml`](docs/catalogs/community.toml) is a shared list of apps that
+anyone can import from **Settings → Catalogs → Import from an address**. You can add an app
+with a pull request. It qualifies when:
+
+- it is open source or freely available,
+- it publishes x86_64 AppImages in its GitHub releases,
+- it is actively maintained, and
+- it is not already in the catalog or in the built-in example catalog.
+
+Add an `[[app]]` entry with `repo`, a plain `name` and a short `description`, in
+alphabetical order by name. Add `build = "…"` only when the project publishes several x86_64
+AppImages and AppGlider cannot choose one. The format is described under
+[Catalogs](docs/usage.md#catalogs-sharing-a-list-of-apps).
+
+A check runs on the pull request. It confirms that the entry is valid and not a duplicate,
+that the repository exists, and that its latest release has an AppImage AppGlider can
+install. You can run it yourself with
+`python packaging/check_catalog.py docs/catalogs/community.toml`. If GitHub's request limit
+stops it, run it again later. The maintainer reads each pull request and merges it by hand.
+
 ## Interface changes
 
 The interface follows the [design brief](docs/design.md): a sidebar, compact rows with one

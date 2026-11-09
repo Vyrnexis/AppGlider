@@ -128,6 +128,7 @@ AppGlider starts empty. Add apps in either of two ways:
 - **Import catalog…** (on the welcome screen, or under **Settings → Catalogs**): add a whole
   list at once from a plain text file. **Example catalog** adds a ready-made list of the
   ArtCraft apps and SolidCraft ([`docs/catalogs/artcraft.toml`](docs/catalogs/artcraft.toml)).
+  The [community catalog](docs/catalogs/community.toml) is another list you can import by address.
 
 Adding an app only puts a row in your library. Press **Install** on the row to download it,
 and click the row any time to open the app's page. The project needs a published release with

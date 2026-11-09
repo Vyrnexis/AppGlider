@@ -556,6 +556,11 @@ your list, or to share it with a friend. Under **Settings → Catalogs**:
   preview first, as with a file.
 - **Export catalog…** saves your own list to a file.
 
+The community catalog is a shared list that anyone can add an app to by pull request. To
+use it, paste this address into **Import from an address**:
+`github.com/Vyrnexis/AppGlider/blob/main/docs/catalogs/community.toml`. To add an app, see
+[Contributing](../CONTRIBUTING.md#add-an-app-to-the-community-catalog).
+
 Importing only adds apps to your list; nothing is downloaded until you press **Install**.
 Apps you already have are never changed. If some entries have a problem, AppGlider skips
 them, says why, and imports the rest.
