@@ -89,6 +89,7 @@ def valid_description(value: object) -> bool:
 
 
 GITHUB_HOSTS_SLASH = ("github.com/", "www.github.com/")
+REPOSITORY_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}")
 
 
 def custom_app(
@@ -126,7 +127,7 @@ def custom_app(
             raise ValueError("The repository address is invalid.")
         value = "/".join(parts[:2])
     value = value.removesuffix(".git")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}", value):
+    if not REPOSITORY_PATTERN.fullmatch(value):
         raise ValueError("Enter a GitHub repository URL or owner/repository, without extra paths.")
     owner, slug = value.lower().split("/")
     if slug in (".", ".."):

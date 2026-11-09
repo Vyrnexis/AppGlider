@@ -16,6 +16,7 @@ from urllib.request import HTTPRedirectHandler, OpenerDirector, Request, build_o
 
 from appglider import APP_VERSION
 from appglider.core.catalog import App
+from appglider.core.catalogfile import MAX_BYTES
 from appglider.core.storage import atomic_json
 from appglider.github import status as github_status
 from appglider.github.versions import check_cancel, release_version
@@ -297,6 +298,17 @@ def raw_bytes(repo: str, path: str, limit: int, cancel: Event) -> bytes:
     """A file of the default branch from raw.githubusercontent.com (no API request)."""
     check_cancel(cancel)
     return _fetch(f"https://raw.githubusercontent.com/{repo}/HEAD/{quote(path)}", {}, limit)[0]
+
+
+def catalog_bytes(url: str, cancel: Event) -> bytes:
+    """A catalog file from raw.githubusercontent.com (no API request)."""
+    check_cancel(cancel)
+    try:
+        return _fetch(url, {}, MAX_BYTES)[0]
+    except ValueError as error:
+        if isinstance(error.__cause__, HTTPError) and error.__cause__.code == 404:
+            raise ValueError("No catalog file was found there.") from error
+        raise
 
 
 def web_listing(repo: str, path: str, cancel: Event) -> tuple[list[dict[str, str]], str]:

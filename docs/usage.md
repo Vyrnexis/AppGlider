@@ -502,7 +502,8 @@ no Save button.
    - **General**: theme, accent colour and how the window behaves.
    - **Updates**: how often to check for updates, notifications, and an **Install commands**
      panel for programs to run before and after installing.
-   - **Catalogs**: import a list of apps, add the example list, or export your own.
+   - **Catalogs**: import a list of apps from a file or a GitHub link, add the example list,
+     or export your own.
    - **Storage**: the folder new apps are installed in, moving AppGlider there, and the space
      they use.
    - **About**: the version, **Check now** for a new AppGlider, **What's new in …** for the
@@ -542,14 +543,18 @@ running.
 A catalog is a plain text file that lists apps. Use it to add many apps at once, to back up
 your list, or to share it with a friend. Under **Settings → Catalogs**:
 
+- **Example catalog** adds the built-in list of the ArtCraft apps and SolidCraft. The same
+  file is [`catalogs/artcraft.toml`](catalogs/artcraft.toml), also attached to each
+  release.
 - **Import catalog…** adds the apps from a catalog file. It first shows what it would add,
   and adds nothing until you confirm. If everything in the file is already in your list, the
   preview just has a **Close** button. The result is shown under the buttons as well as in
   the footer.
+- **Import from an address** adds the apps from a catalog file on GitHub. Paste a link to
+  the file's page on github.com, such as `github.com/owner/repo/blob/main/apps.toml`, or its
+  raw link, and press **Import**. Link to the file itself, not to the repository. You see the
+  preview first, as with a file.
 - **Export catalog…** saves your own list to a file.
-- **Example catalog** adds the built-in list of the ArtCraft apps and SolidCraft. The same
-  file is [`catalogs/artcraft.toml`](catalogs/artcraft.toml), also attached to each
-  release.
 
 Importing only adds apps to your list; nothing is downloaded until you press **Install**.
 Apps you already have are never changed. If some entries have a problem, AppGlider skips

@@ -4,8 +4,16 @@ import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
-from appglider.core.catalog import MAX_DESCRIPTION, App, custom_app, default_description
+from appglider.core.catalog import (
+    GITHUB_HOSTS_SLASH,
+    MAX_DESCRIPTION,
+    REPOSITORY_PATTERN,
+    App,
+    custom_app,
+    default_description,
+)
 
 EXAMPLE_CATALOG = Path(__file__).parent.parent / "assets" / "catalogs" / "artcraft.toml"
 FORMAT = 1
@@ -14,6 +22,58 @@ MAX_APPS = 100
 
 TOP_KEYS = {"format", "name", "app"}
 APP_KEYS = {"repo", "name", "description", "stable_only", "build"}
+
+
+RAW_HOST = "raw.githubusercontent.com"
+FILE_LINK_HINT = (
+    "Link to the catalog file itself, such as github.com/owner/repo/blob/main/apps.toml."
+)
+
+
+def _control(text: str) -> bool:
+    return any(ord(c) < 32 or ord(c) == 127 for c in text)
+
+
+def catalog_address(text: str) -> str:
+    """The raw.githubusercontent.com address of a catalog file linked on GitHub.
+
+    Takes a file's page on github.com (`/blob/` or `/raw/`) or its raw address, with or
+    without the scheme. Nothing is fetched; a query or fragment is dropped.
+    """
+    value = text.strip()
+    if not value:
+        raise ValueError("Enter the address of a catalog file on GitHub.")
+    if _control(value):
+        raise ValueError("The address contains control characters.")
+    if value.lower().startswith((*GITHUB_HOSTS_SLASH, f"{RAW_HOST}/")):
+        value = "https://" + value
+    parsed = urlsplit(value)
+    host = parsed.netloc.lower()
+    if parsed.scheme.lower() not in ("http", "https") or host not in (
+        "github.com",
+        "www.github.com",
+        RAW_HOST,
+    ):
+        raise ValueError(
+            "Use a link to a file on github.com or raw.githubusercontent.com. " + FILE_LINK_HINT
+        )
+    parts = parsed.path.split("/")[1:]
+    if len(parts) < 2 or not REPOSITORY_PATTERN.fullmatch(f"{parts[0]}/{parts[1]}"):
+        raise ValueError("The address does not name a GitHub repository. " + FILE_LINK_HINT)
+    if parts[1] in (".", ".."):
+        raise ValueError("The address is invalid.")
+    rest = parts[2:]
+    if host != RAW_HOST:
+        if len(rest) < 3 or rest[0] not in ("blob", "raw"):
+            raise ValueError(FILE_LINK_HINT)
+        rest = rest[1:]
+    if len(rest) < 2:
+        raise ValueError(FILE_LINK_HINT)
+    for part in rest:
+        decoded = unquote(part)
+        if not part or decoded in (".", "..") or _control(decoded):
+            raise ValueError("The address is invalid.")
+    return f"https://{RAW_HOST}/{parts[0]}/{parts[1]}/" + "/".join(rest)
 
 
 class CatalogError(ValueError):

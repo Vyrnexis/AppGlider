@@ -8,9 +8,20 @@ import os
 import shutil
 import stat
 from pathlib import Path
+from threading import Event
 from typing import TYPE_CHECKING
+from urllib.parse import unquote
 
-from PySide6.QtCore import QSettings, QSignalBlocker, QStandardPaths, Qt, QTimer, QUrl
+from PySide6.QtCore import (
+    QSettings,
+    QSignalBlocker,
+    QStandardPaths,
+    Qt,
+    QThreadPool,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QDesktopServices, QFont, QShowEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -33,7 +44,15 @@ from PySide6.QtWidgets import (
 )
 
 from appglider import APP_NAME, APP_VERSION
-from appglider.core.catalogfile import EXAMPLE_CATALOG, CatalogError, read, render
+from appglider.core.catalogfile import (
+    EXAMPLE_CATALOG,
+    CatalogError,
+    ParsedCatalog,
+    catalog_address,
+    parse,
+    read,
+    render,
+)
 from appglider.core.preferences import (
     ACCENTS,
     AFTER_COMMAND_KEY,
@@ -45,11 +64,14 @@ from appglider.core.preferences import (
     install_commands,
 )
 from appglider.core.storage import atomic_bytes
+from appglider.github.download import Progress
+from appglider.github.http import catalog_bytes
 from appglider.install import self_update
 from appglider.install.hooks import InstallCommands, command_problem
 from appglider.install.library import appimagelauncher_folder, previous_copy
 from appglider.ui.controls import MessageBox, Segmented, SpaceBar, SpaceSwatch, Switch
 from appglider.ui.errors import describe_error
+from appglider.ui.jobs import Task, TaskResult
 from appglider.ui.pages.app_page import (
     SettingRow,
     add_setting_rows,
@@ -134,10 +156,14 @@ def drive_free_space(folder: Path) -> int | None:
 class SettingsPage(QWidget):
     """Reads and writes the window's QSettings and calls the window's handlers."""
 
+    import_changed = Signal()  # a catalog download started or ended
+
     def __init__(self, launcher: "LauncherWindow") -> None:
         super().__init__()
         self.launcher = launcher
         self.settings: QSettings = launcher.settings
+        self.task: Task | None = None
+        self.importing = False  # a catalog is being downloaded from an address
         self.setObjectName("settingsPage")
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 12)
@@ -473,18 +499,39 @@ class SettingsPage(QWidget):
         self.export_button = QPushButton("Export catalog…")
         self.export_button.setToolTip("Save your repositories as a catalog file.")
         self.export_button.clicked.connect(self.export_catalog)
+        self.address = QLineEdit()
+        self.address.setAccessibleName("Catalog address")
+        self.address.setPlaceholderText("github.com/owner/repo/blob/main/apps.toml")
+        self.address.textChanged.connect(self.update_state)
+        self.address.returnPressed.connect(self.import_address)
+        self.address_button = QPushButton("Import")
+        self.address_button.setToolTip("Download the catalog and show what it would add.")
+        self.address_button.clicked.connect(self.import_address)
+        address_holder = QWidget()
+        address_layout = QHBoxLayout(address_holder)
+        address_layout.setContentsMargins(0, 0, 0, 0)
+        address_layout.setSpacing(8)
+        address_layout.addWidget(self.address, stretch=1)
+        address_layout.addWidget(self.address_button)
+        address_holder.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         add_setting_rows(
             layout,
             (
+                SettingRow(
+                    "Example catalog",
+                    "The ArtCraft apps and SolidCraft",
+                    self.example_button,
+                ),
                 SettingRow(
                     "Import a catalog",
                     "A plain-text list of repositories; you see it before it is added",
                     self.import_button,
                 ),
                 SettingRow(
-                    "Example catalog",
-                    "The ArtCraft apps and SolidCraft",
-                    self.example_button,
+                    "Import from an address",
+                    "A link to a catalog file on GitHub; you see it before it is added",
+                    address_holder,
+                    below=True,
                 ),
                 SettingRow(
                     "Export your catalog",
@@ -815,10 +862,12 @@ class SettingsPage(QWidget):
             self.import_button,
             self.example_button,
             self.export_button,
+            self.address,
             self.folder,
             self.browse_button,
         ):
             widget.setEnabled(idle)
+        self.address_button.setEnabled(idle and bool(self.address.text().strip()))
         self.move_button.setEnabled(idle and not self.launcher.checks.busy)
         for note in self.wait_notes:
             note.setVisible(not idle)
@@ -886,32 +935,81 @@ class SettingsPage(QWidget):
             self.import_from(EXAMPLE_CATALOG)
 
     def import_from(self, source: Path) -> None:
-        library = self.launcher.library
         try:
             catalog = read(source)
-            plan = library.plan_import(catalog.entries)
         except (CatalogError, OSError, ValueError) as error:
             self.say_catalog(f"Cannot import {source.name}: {describe_error(error)}", error=True)
             return
+        self.review_catalog(catalog, source.name)
+
+    def import_address(self) -> None:
+        """Download a catalog linked on GitHub, off the Qt thread, then review it as a file."""
+        text = self.address.text().strip()
+        if self.launcher.busy or not text:
+            return
+        try:
+            url = catalog_address(text)
+        except ValueError as error:
+            self.say_catalog(f"Cannot import from that address: {error}", error=True)
+            return
+
+        def operation(cancel: Event, progress: Progress) -> TaskResult:
+            return TaskResult("", chosen=parse(catalog_bytes(url, cancel)))
+
+        name = unquote(url.rsplit("/", 1)[1])
+        self.task = Task(operation)
+        self.task.signals.finished.connect(lambda result: self.address_downloaded(result, name))
+        self.task.signals.failed.connect(self.address_failed)
+        self.importing = True
+        self.say_catalog("Downloading the catalog…")
+        self.import_changed.emit()
+        QThreadPool.globalInstance().start(self.task)
+
+    def address_done(self) -> None:
+        self.task = None
+        self.importing = False
+        self.import_changed.emit()
+
+    def address_failed(self, error: str) -> None:
+        self.address_done()
+        self.say_catalog(f"Cannot import from that address: {error}", error=True)
+
+    def address_downloaded(self, result: TaskResult, name: str) -> None:
+        self.address_done()
+        if not isinstance(result.chosen, ParsedCatalog):
+            self.say_catalog(f"Cannot import from that address: {result.message}", error=True)
+            return
+        if self.review_catalog(result.chosen, name):
+            self.address.clear()
+
+    def review_catalog(self, catalog: ParsedCatalog, name: str) -> bool:
+        """Show what a catalog would add and add it once confirmed; True when apps were added."""
+        library = self.launcher.library
+        try:
+            plan = library.plan_import(catalog.entries)
+        except (OSError, ValueError) as error:
+            self.say_catalog(f"Cannot import {name}: {describe_error(error)}", error=True)
+            return False
         preview = CatalogPreviewDialog(catalog, plan, self)
         accepted = preview.exec() == QDialog.DialogCode.Accepted
         preview.deleteLater()
         if not plan.new:
-            self.say_catalog(f"Nothing new in {source.name}: its apps are already in your library.")
-            return
+            self.say_catalog(f"Nothing new in {name}: its apps are already in your library.")
+            return False
         if not accepted:
-            return
+            return False
         try:
             added = library.import_catalog(plan.new)
         except (OSError, ValueError) as error:
             self.say_catalog(f"Nothing was imported: {describe_error(error)}", error=True)
-            return
+            return False
         self.launcher.catalog_changed()
         count = len(added.new)
         self.say_catalog(
-            f"Added {count} {'app' if count == 1 else 'apps'} from {source.name}. "
+            f"Added {count} {'app' if count == 1 else 'apps'} from {name}. "
             "Open an app to choose its icon."
         )
+        return True
 
     def export_catalog(self) -> None:
         if self.launcher.busy:

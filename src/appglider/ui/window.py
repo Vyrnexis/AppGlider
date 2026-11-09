@@ -464,6 +464,7 @@ class LauncherWindow(TrayMixin):
         self.pages.addWidget(self.app_page)
         self.settings_page = SettingsPage(self)
         self.pages.addWidget(self.settings_page)
+        self.settings_page.import_changed.connect(self.copy_changed)
         self.add_page = AddPage(self)
         self.add_page.added.connect(self.app_added)
         self.add_page.add_and_install.connect(self.app_added_install)
@@ -1212,10 +1213,15 @@ class LauncherWindow(TrayMixin):
 
     @property
     def busy(self) -> bool:
-        """A window task or an Add-page file copy is running; actions that change files wait."""
+        """A window task, file copy or catalog download is running; file changes wait."""
         # The pages are built after the first reads of this, so the Add page may not exist yet.
         add_page = getattr(self, "add_page", None)
-        return self.task is not None or (add_page is not None and add_page.copying)
+        settings_page = getattr(self, "settings_page", None)
+        return (
+            self.task is not None
+            or (add_page is not None and add_page.copying)
+            or (settings_page is not None and settings_page.importing)
+        )
 
     @property
     def installed_only(self) -> bool:
