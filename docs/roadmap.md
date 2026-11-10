@@ -42,6 +42,14 @@ None of these are approved or scheduled.
 
 Roughly newest first. Where shown, the version is the release that first included the work.
 
+- **Catalogs from an address (1.0.0):** **Settings → Catalogs → Import from an address** reads
+  a catalog straight from a GitHub link, so a shared list no longer has to be downloaded
+  first. Idea from issue #14.
+- **Community catalog (1.0.0):** a shared list of apps in this repository that anyone can add
+  to with a pull request. A check on each pull request confirms the app is valid, not listed
+  twice, and publishes AppImages AppGlider can install. Idea from issue #14.
+- **Shorter GitHub addresses (1.0.0):** an address such as `github.com/owner/app`, without
+  `https://`, or a link to a page inside the repository is accepted. Reported in issue #15.
 - **Commands before and after installing (0.9.9):** **Settings → Updates** can run your own
   command before each install, for example a virus scan that stops the install if it fails,
   and another one after it. Idea from issue #10.
