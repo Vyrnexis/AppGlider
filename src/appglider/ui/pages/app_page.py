@@ -66,6 +66,7 @@ from appglider.ui.app_status import version_text as version_text
 from appglider.ui.controls import MessageBox, Segmented, Switch, repolish
 from appglider.ui.errors import describe_error
 from appglider.ui.jobs import TaskResult
+from appglider.ui.pages.icon_picker import choose_icon_candidate
 
 if TYPE_CHECKING:
     from appglider.ui.window import LauncherWindow
@@ -1403,13 +1404,10 @@ class AppPage(QScrollArea):
     def pick_icon(self, icons: tuple[IconCandidate, ...]) -> None:
         index = 0
         if len(icons) > 1:
-            names = [Path(icon.name).name for icon in icons]
-            text, accepted = QInputDialog.getItem(
-                self, "Choose an icon", "Icons found in the repository:", names, 0, False
-            )
-            if not accepted:
+            chosen = choose_icon_candidate(self, [(icon.name, icon.png) for icon in icons])
+            if chosen is None:
                 return
-            index = names.index(text)
+            index = chosen
         self.save_icon(icons[index].png)
 
     def choose_icon(self) -> None:

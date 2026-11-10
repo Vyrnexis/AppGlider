@@ -499,7 +499,7 @@ class AppPageTests(unittest.TestCase):
         self.assertEqual(self.page.icon_hint.text(), "Default icon")
         with (
             patch("appglider.ui.pages.app_page.discover_icons", return_value=found[:1]),
-            patch("appglider.ui.pages.app_page.QInputDialog.getItem") as picker,
+            patch("appglider.ui.pages.app_page.choose_icon_candidate") as picker,
         ):
             self.page.find_icons_action.trigger()
             self.wait_for_task()
@@ -513,13 +513,13 @@ class AppPageTests(unittest.TestCase):
         self.assertEqual(self.page.icon.pixmap().toImage().pixelColor(0, 0).name(), "#ff0000")
         with (
             patch("appglider.ui.pages.app_page.discover_icons", return_value=found),
-            patch(
-                "appglider.ui.pages.app_page.QInputDialog.getItem", return_value=("blue.svg", True)
-            ) as picker,
+            patch("appglider.ui.pages.app_page.choose_icon_candidate", return_value=1) as picker,
         ):
             self.page.find_icons_action.trigger()
             self.wait_for_task()
-            self.assertEqual(picker.call_args.args[3], ["red.svg", "blue.svg"])
+            self.assertEqual(
+                picker.call_args.args[1], [("assets/red.svg", red), ("assets/blue.svg", blue)]
+            )
         self.assertEqual(cached.read_bytes(), blue)
         self.assertEqual(
             Library(self.library.data_dir, self.library.apps_dir).icon_path(APP), cached
