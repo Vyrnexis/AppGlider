@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://appglider.org/sitemap.xml
+Sitemap: https://appglider.org/docs/sitemap.xml

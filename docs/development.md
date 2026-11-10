@@ -7,8 +7,8 @@ src/appglider/   Application code, icons and asset licences
 tests/           Automated application tests
 packaging/       AppImage scripts, entry point and dependency locks
 .github/         GitHub Actions workflow
-docs/            User guide, technical notes, design brief, roadmap, development and
-                 build docs, screenshots, example catalogs and branding sources
+docs/            User guide and how-it-works pages, changelog, roadmap, design brief,
+                 development and build docs, screenshots, catalogs and branding sources
 ```
 
 Local generated directories are ignored by Git:
@@ -159,7 +159,7 @@ Keep `.backups/` separate from build output, and retain `dist/` while testing th
 AppImage. Recreating `build/packaging-env` and cached downloads requires network access.
 
 See [GitHub Actions](builds.md) for the automated build process, and the
-[technical notes](technical-notes.md) for how the application itself behaves.
+[how-it-works pages](how-it-works/files-and-folders.md) for how the application itself behaves.
 
 ## Documentation
 
@@ -167,19 +167,26 @@ Each topic has one home; link to it from elsewhere instead of repeating it.
 
 | Document | Holds |
 | --- | --- |
-| `README.md` | What AppGlider is, features, install, first steps and links; short |
-| `docs/usage.md` | Everyday behaviour, buttons and settings, in plain language, plus what to try when something goes wrong |
-| `docs/technical-notes.md` | How it works: release matching, request budgets, files, identifiers, recovery |
+| `README.md` | What AppGlider is, install and links to the docs; short |
+| `docs/index.md` and `docs/get-started/` | The documentation home, installing and the first app |
+| `docs/using/`, `docs/catalogs.md`, `docs/troubleshooting.md` | Everyday behaviour, buttons and settings, in plain language, plus what to try when something goes wrong |
+| `docs/how-it-works/` | How it works: release matching, request budgets, files, identifiers, recovery, security |
+| `docs/changelog.md` | What changed in each release, newest first |
+| `docs/roadmap.md` | Unapproved ideas |
+| `CONTRIBUTING.md` | How to contribute (published as a docs page too) |
 | `docs/development.md` | Contributor setup, source layout, checks and local builds (this page) |
 | `docs/builds.md` | GitHub Actions and the release process |
 | `docs/design.md` | Interface layout, tokens and wording rules |
 | `docs/branding.md` | Icons and brand colours |
-| `docs/roadmap.md` | Shipped work and unapproved ideas |
 | `site/` | The website, appglider.org |
 
-The README and the user guide are for everyday users, who are not expected to be technical:
+`docs/nav.toml` lists the pages that are published at `https://appglider.org/docs/<slug>/`, in sidebar order, with a file and a slug for each. The first `# ` heading of a file is the page title and its first paragraph is the page description. `design.md`, `branding.md`, `builds.md` and `development.md` stay in the repository only. To add a page, write the Markdown file in its section folder and add it to `docs/nav.toml`.
+
+Run `python packaging/build_docs.py` to build the pages into `site/docs/`, and preview the site with `python -m http.server -d site`. Link between pages with relative links to the `.md` files, so they also work on GitHub, and use GitHub's alert syntax (`> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`) for callouts.
+
+The README and the user guide pages are for everyday users, who are not expected to be technical:
 plain language, no jargon, and what to try when something goes wrong. Update
-`docs/usage.md` whenever a button, menu item or setting changes, and re-take the screenshots
+the pages under `docs/using/` whenever a button, menu item or setting changes, and re-take the screenshots
 in `docs/previews/` after visible interface changes or a version change (the version shows in
 the sidebar). Take them in the Dark theme from a disposable library, with the window at
 1040×720; the app page (1040×1110) and the Add app page (1040×980) are taller so the whole

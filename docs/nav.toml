@@ -1,0 +1,57 @@
+# Pages of the documentation at https://appglider.org/docs/, in sidebar order.
+# packaging/build_docs.py turns each Markdown file into /docs/<slug>/.
+# Paths are relative to the repository root. A page's title is its first "# " heading;
+# an optional label replaces it in the sidebar and the previous/next links.
+# Markdown files not listed here (design, branding, builds, development) stay in the
+# repository only.
+
+home = { file = "docs/index.md", slug = "", label = "Overview" }
+
+[[section]]
+title = "Get started"
+pages = [
+  { file = "docs/get-started/install.md", slug = "install" },
+  { file = "docs/get-started/first-app.md", slug = "first-app" },
+  { file = "docs/get-started/updating-appglider.md", slug = "updating-appglider" },
+]
+
+[[section]]
+title = "Using AppGlider"
+pages = [
+  { file = "docs/using/window.md", slug = "window" },
+  { file = "docs/using/adding-apps.md", slug = "adding-apps" },
+  { file = "docs/using/updates-and-versions.md", slug = "updates-and-versions" },
+  { file = "docs/using/launch-options.md", slug = "launch-options" },
+  { file = "docs/using/install-commands.md", slug = "install-commands" },
+  { file = "docs/using/desktop.md", slug = "desktop" },
+  { file = "docs/using/settings.md", slug = "settings" },
+]
+
+[[section]]
+title = "Catalogs"
+pages = [
+  { file = "docs/catalogs.md", slug = "catalogs", label = "Catalogs" },
+]
+
+[[section]]
+title = "Troubleshooting"
+pages = [
+  { file = "docs/troubleshooting.md", slug = "troubleshooting" },
+]
+
+[[section]]
+title = "How it works"
+pages = [
+  { file = "docs/how-it-works/release-checks.md", slug = "release-checks" },
+  { file = "docs/how-it-works/github-requests.md", slug = "github-requests" },
+  { file = "docs/how-it-works/files-and-folders.md", slug = "files-and-folders" },
+  { file = "docs/how-it-works/security.md", slug = "security" },
+]
+
+[[section]]
+title = "Project"
+pages = [
+  { file = "docs/changelog.md", slug = "changelog" },
+  { file = "docs/roadmap.md", slug = "roadmap" },
+  { file = "CONTRIBUTING.md", slug = "contributing", label = "Contributing" },
+]

@@ -28,4 +28,4 @@ the sizes required by the window, sidebar, desktop shortcut and tray; no extra d
 needed. The bundled icons for the ArtCraft example catalog's apps remain separate.
 
 The names, file names and paths AppGlider uses are listed in the
-[technical notes](technical-notes.md#names-and-identifiers).
+[files and folders page](how-it-works/files-and-folders.md#names-and-identifiers).

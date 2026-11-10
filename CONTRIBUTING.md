@@ -55,7 +55,7 @@ with a pull request. It qualifies when:
 Add an `[[app]]` entry with `repo`, a plain `name` and a short `description`, in
 alphabetical order by name. Add `build = "…"` only when the project publishes several x86_64
 AppImages and AppGlider cannot choose one. The format is described under
-[Catalogs](docs/usage.md#catalogs-sharing-a-list-of-apps).
+[Catalogs](docs/catalogs.md#the-file-format).
 
 A check runs on the pull request. It confirms that the entry is valid and not a duplicate,
 that the repository exists, and that its latest release has an AppImage AppGlider can
@@ -104,7 +104,7 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -q
 - Write commit messages as lowercase
   [Conventional Commits](https://www.conventionalcommits.org/) under 72 characters, for
   example `fix(library): keep the old version when a download fails`.
-- Update the user guide or technical notes when behaviour that users see changes.
+- Update the pages under `docs/` (the user guide and the "How it works" pages) when behaviour that users see changes.
 
 ## Security problems
 

@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: User guide
-    url: https://github.com/Vyrnexis/AppGlider/blob/main/docs/usage.md#if-something-goes-wrong
+    url: https://appglider.org/docs/troubleshooting/
     about: Answers to common problems, such as FUSE errors, a missing tray icon or a missing app file.
   - name: Ask a question
     url: https://github.com/Vyrnexis/AppGlider/discussions

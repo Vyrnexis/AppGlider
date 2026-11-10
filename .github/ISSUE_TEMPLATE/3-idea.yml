@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Ideas are welcome. The [roadmap](https://github.com/Vyrnexis/AppGlider/blob/main/docs/roadmap.md)
+        Ideas are welcome. The [roadmap](https://appglider.org/docs/roadmap/)
         lists what has been done and what is being considered, so have a quick look first.
 
   - type: textarea

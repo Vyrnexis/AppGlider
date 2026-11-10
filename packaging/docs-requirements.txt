@@ -1,0 +1,2 @@
+# Needed only to build the documentation site (packaging/build_docs.py).
+Markdown==3.11.3

@@ -218,5 +218,5 @@ mention GitHub's API; say "GitHub's allowance".
 
 The redesign changes presentation only. Install safety, checksums, rollback, holds, release
 checks and their request budget, tray and single-instance behaviour, ownership rules and
-stored data stay as described in the [technical notes](technical-notes.md). Settings keep
+stored data stay as described in the [how-it-works pages](how-it-works/files-and-folders.md). Settings keep
 their QSettings keys unless a migration is written and tested.
