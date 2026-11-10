@@ -2,6 +2,10 @@
 
 What changed in each release of AppGlider, newest first. Releases up to 0.3.0 were published as AppHarbour. Full notes for each release are on the [Releases page](https://github.com/Vyrnexis/AppGlider/releases). Ideas that may come next are on the [roadmap](roadmap.md).
 
+## 1.0.1 — 10 November 2026
+
+- **See the icons when choosing one found online.** On an app's page, **Change… → Find online** now shows each icon found in the repository as a picture with its file name, instead of a list of file names only.
+
 ## 1.0.0 — 10 November 2026
 
 - **Import a catalog from an address** ([#14](https://github.com/Vyrnexis/AppGlider/issues/14)). **Settings → Catalogs → Import from an address** reads a catalog straight from a GitHub link (a `github.com/…/blob/…` or `raw.githubusercontent.com` address), so a shared list no longer has to be downloaded first. You see a preview before anything is added.
