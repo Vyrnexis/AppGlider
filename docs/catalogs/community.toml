@@ -37,6 +37,18 @@ description = "Open-source launcher for games from Epic, GOG and Amazon"
 stable_only = true
 
 [[app]]
+repo = "laurent22/joplin"
+name = "Joplin"
+description = "Private notes and to-do lists that sync between your devices"
+stable_only = true
+
+[[app]]
+repo = "keepassxreboot/keepassxc"
+name = "KeePassXC"
+description = "Password manager that keeps your passwords in an encrypted file on your computer"
+stable_only = true
+
+[[app]]
 repo = "localsend/localsend"
 name = "LocalSend"
 description = "Share files with nearby devices over your local network, with no internet needed"
