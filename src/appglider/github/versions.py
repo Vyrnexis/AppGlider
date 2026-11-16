@@ -44,23 +44,38 @@ def release_version(tag: object) -> str | None:
     return match[1] if match else None
 
 
+def prerelease_date(parts: list[str]) -> int:
+    """The first YYYYMMDD part of a prerelease suffix, or 0 when it has none."""
+    for part in parts:
+        if len(part) == 8 and part.isdigit():
+            year, month, day = int(part[:4]), int(part[4:6]), int(part[6:])
+            if 1970 <= year <= 2199 and 1 <= month <= 12 and 1 <= day <= 31:
+                return int(part)
+    return 0
+
+
 def version_key(
     version: str | None,
-) -> tuple[int, int, int, int, int, tuple[tuple[int, int, str], ...]]:
+) -> tuple[int, int, int, int, int, int, tuple[tuple[int, int, str], ...]]:
+    """Order versions; prereleases of one version by date when their tags carry one.
+
+    Labels sort by name (alpha < beta < rc), so a project renaming its test builds, such as
+    "preview" to "nightly", would otherwise make every newer build look older.
+    """
     match = re.fullmatch(
         r"(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([^+]+))?(?:\+.*)?", version or ""
     )
     if not match:
-        return (0, 0, 0, 0, 0, ())
+        return (0, 0, 0, 0, 0, 0, ())
     suffix = match[5] or ""
-    identifiers = tuple(
-        (0, int(part), "") if part.isdigit() else (1, 0, part) for part in suffix.split(".") if part
-    )
+    parts = [part for part in suffix.split(".") if part]
+    identifiers = tuple((0, int(part), "") if part.isdigit() else (1, 0, part) for part in parts)
     return (
         int(match[1]),
         int(match[2]),
         int(match[3] or 0),
         int(match[4] or 0),
         int(not suffix),
+        prerelease_date(parts),
         identifiers,
     )

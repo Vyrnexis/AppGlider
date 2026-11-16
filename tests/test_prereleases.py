@@ -98,6 +98,26 @@ class PrereleaseTests(unittest.TestCase):
             versions.version_key("1.2.3+build.2"), versions.version_key("1.2.3+build.10")
         )
 
+    def test_dated_prereleases_order_by_date_when_the_label_is_renamed(self):
+        # T3 Code renamed "preview" builds to "nightly"; the newer nightlies must win.
+        ordered = [
+            "0.1.10-preview.20261111.4547",
+            "0.1.10-preview.20261112.4571",
+            "0.1.10-nightly.20261113.4616",
+            "0.1.10-nightly.20261116.4761",
+            "0.1.10",
+        ]
+        self.assertEqual(sorted(reversed(ordered), key=versions.version_key), ordered)
+        # Same day: the build number after the date decides.
+        self.assertLess(
+            versions.version_key("1.0.0-nightly.20261115.4723"),
+            versions.version_key("1.0.0-nightly.20261115.4749"),
+        )
+        # Numbers that are not dates leave label ordering alone.
+        self.assertLess(
+            versions.version_key("1.0.0-beta.12345678"), versions.version_key("1.0.0-rc.1")
+        )
+
     def test_stable_default_and_opted_in_selection(self):
         stable = metadata("1.2.3")
         entries = [
