@@ -1,5 +1,6 @@
 """The App page: one application's status, release notes, versions and preferences."""
 
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import date, datetime
@@ -108,6 +109,57 @@ def release_page_url(release: Release) -> str:
     return f"{base}/releases/tag/{rest.split('/', 1)[0]}"
 
 
+# Tags GitHub renders in release notes. Qt's Markdown reader hides everything after any raw
+# tag it cannot pair up, so these are taken out and anything else that looks like a tag is
+# shown as the text it most likely is, such as <repo> in a path.
+HTML_TAGS = frozenset(
+    "a abbr address article aside b bdi bdo big blockquote br caption center cite code col"
+    " colgroup dd del details dfn div dl dt em figcaption figure font footer h1 h2 h3 h4 h5 h6"
+    " header hr i img ins kbd li main mark nav ol p picture pre q rp rt ruby s samp section"
+    " small source span strike strong sub summary sup table tbody td tfoot th thead time tr"
+    " tt u ul var video wbr".split()
+)
+BLOCK_TAGS = frozenset(
+    "address article aside blockquote center details div dl figure footer h1 h2 h3 h4 h5 h6"
+    " header hr main nav ol p picture section table ul".split()
+)
+CODE = re.compile(
+    r"^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?(?:^ {0,3}\1[ \t]*$|\Z)|(`+)[^`].*?\2", re.M | re.S
+)
+TAG = re.compile(r"<!--.*?-->|<(/?)([A-Za-z][A-Za-z0-9-]*)((?:\s[^<>]*)?)(/?)>", re.S)
+
+
+def readable_notes(text: str) -> str:
+    """Make release notes safe for Qt's Markdown reader, keeping code exactly as written.
+
+    Known HTML tags are dropped (a summary becomes a bold line, a line break stays one),
+    comments vanish, and unknown tags are escaped so they show as text.
+    """
+    parts: list[str] = []
+    position = 0
+    for code in CODE.finditer(text):
+        parts.append(TAG.sub(readable_tag, text[position : code.start()]))
+        parts.append(code.group())
+        position = code.end()
+    parts.append(TAG.sub(readable_tag, text[position:]))
+    return "".join(parts)
+
+
+def readable_tag(match: re.Match[str]) -> str:
+    if match.group(2) is None:
+        return ""  # a comment
+    closing, name = match.group(1), match.group(2).lower()
+    if name not in HTML_TAGS:
+        return "&lt;" + match.group()[1:]
+    if name == "summary":
+        return "**\n\n" if closing else "\n\n**"
+    if name == "br":
+        return "  \n"
+    if name in BLOCK_TAGS:
+        return "\n\n"
+    return ""
+
+
 class NotesBrowser(QTextBrowser):
     """Release notes as Markdown: read-only, never loading anything and opening web links only."""
 
@@ -140,7 +192,7 @@ class NotesBrowser(QTextBrowser):
             QDesktopServices.openUrl(url)
 
     def set_notes(self, text: str) -> None:
-        self.setMarkdown(text)
+        self.setMarkdown(readable_notes(text))
         self.fit()
 
     def preview_height(self) -> int:

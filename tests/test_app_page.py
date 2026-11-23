@@ -922,6 +922,28 @@ class AppPageTests(unittest.TestCase):
                     browser.set_notes(f"![x]({reference})")
                     self.assertEqual(browser.document().size().height(), missing)
 
+    def test_html_in_notes_never_hides_the_rest(self) -> None:
+        # Issue 17: Qt's Markdown reader hid everything after a raw tag it could not pair up.
+        browser = NotesBrowser()
+        self.addCleanup(browser.deleteLater)
+        cases = {
+            "<details>\n<summary>See the full list</summary>\n\n* Fix one\n* Fix two\n</details>": (
+                "See the full list\nFix one\nFix two"
+            ),
+            "* skills in <repo>/.prime by @a\n* two": "skills in <repo>/.prime by @a\ntwo",
+            '<p align="center">\n<img src="x.png">\n</p>\n\n# Title': "Title",
+            "one <img src=x> two": "one  two",
+            "<!-- template -->\nshown": "shown",
+            "a<br>b": "a\nb",
+            "press <kbd>Ctrl</kbd>+<kbd>C</kbd>": "press Ctrl+C",
+            "`<div>` and <https://x.org> and a < b": "<div> and https://x.org and a < b",
+            "```\n<span>\n```": "<span>",
+        }
+        for notes, shown in cases.items():
+            with self.subTest(notes=notes):
+                browser.set_notes(notes + "\n\nAfter")
+                self.assertEqual(browser.document().toPlainText().strip(), shown + "\nAfter")
+
     def test_message_boxes_show_names_as_plain_text(self) -> None:
         # Names come from catalogs and repositories; markup there must stay text.
         box = MessageBox(QMessageBox.Icon.Warning, "t", '<img src="/x.png"><b>X</b> is running.')
