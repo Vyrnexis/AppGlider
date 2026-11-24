@@ -2,6 +2,11 @@
 
 What changed in each release of AppGlider, newest first. Releases up to 0.3.0 were published as AppHarbour. Full notes for each release are on the [Releases page](https://github.com/Vyrnexis/AppGlider/releases). Ideas that may come next are on the [roadmap](roadmap.md).
 
+## 1.0.2 — 24 November 2026
+
+- **Release notes show in full** ([#17](https://github.com/Vyrnexis/AppGlider/issues/17)). Notes that fold their change list into a collapsible section, or mention something like `<repo>` as plain text, no longer show empty bullets or stop part way. The section's title becomes a bold line above its list.
+- **Renamed test builds stay in order.** When a project renames its test builds, for example from "preview" to "nightly", builds whose tags carry a date are now ordered by that date, so the newest one is no longer taken for an older one.
+
 ## 1.0.1 — 10 November 2026
 
 - **See the icons when choosing one found online.** On an app's page, **Change… → Find online** now shows each icon found in the repository as a picture with its file name, instead of a list of file names only.
