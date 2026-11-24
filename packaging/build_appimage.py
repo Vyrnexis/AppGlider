@@ -46,7 +46,9 @@ def download(item: dict[str, str]) -> Path:
     if not path.exists():
         temporary = path.with_suffix(path.suffix + ".part")
         request = urllib.request.Request(
-            item["url"], headers={"Accept": "application/octet-stream"}
+            item["url"],
+            # The Ubuntu archive refuses Python's default User-Agent.
+            headers={"Accept": "application/octet-stream", "User-Agent": "AppGlider-build"},
         )
         with urllib.request.urlopen(request, timeout=120) as source:
             with temporary.open("wb") as target:
